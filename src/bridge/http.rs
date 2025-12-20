@@ -1,5 +1,4 @@
 use crate::error::RobloxMcpError;
-use rmcp::ErrorData;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

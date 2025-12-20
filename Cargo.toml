@@ -9,8 +9,8 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 # MCP
-rmcp = { version = "0.8.0", features = ["server", "transport-io", "macros"] }
-schemars = "0.8"  # Required for MCP tool parameter schemas
+rmcp = { version = "0.8.0", features = ["server", "transport-io", "macros", "schemars"] }
+# schemars re-exported by rmcp (version 1.0)
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -40,6 +40,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
+regex = "1"
+walkdir = "2"
 
 [dev-dependencies]
 mockito = "1"
