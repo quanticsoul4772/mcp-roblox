@@ -97,6 +97,71 @@ pub struct ToolMetricsSnapshot {
     pub p99_duration_ms: u64,
 }
 
+/// Connection status tracking
+#[derive(Debug, Default)]
+pub struct ConnectionMetrics {
+    /// Total connection checks performed
+    pub checks: AtomicU64,
+    /// Number of times connection was found connected
+    pub connected_checks: AtomicU64,
+    /// Number of times connection was found disconnected
+    pub disconnected_checks: AtomicU64,
+    /// Last known connection status
+    pub last_connected: std::sync::atomic::AtomicBool,
+}
+
+impl ConnectionMetrics {
+    pub fn new() -> Self {
+        Self {
+            checks: AtomicU64::new(0),
+            connected_checks: AtomicU64::new(0),
+            disconnected_checks: AtomicU64::new(0),
+            last_connected: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Record a connection status check
+    pub fn record_status(&self, connected: bool) {
+        self.checks.fetch_add(1, Ordering::Relaxed);
+        if connected {
+            self.connected_checks.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.disconnected_checks.fetch_add(1, Ordering::Relaxed);
+        }
+        self.last_connected
+            .store(connected, Ordering::Relaxed);
+    }
+
+    /// Get connection metrics snapshot
+    pub fn snapshot(&self) -> ConnectionMetricsSnapshot {
+        let checks = self.checks.load(Ordering::Relaxed);
+        let connected = self.connected_checks.load(Ordering::Relaxed);
+        let disconnected = self.disconnected_checks.load(Ordering::Relaxed);
+
+        ConnectionMetricsSnapshot {
+            total_checks: checks,
+            connected_checks: connected,
+            disconnected_checks: disconnected,
+            uptime_ratio: if checks > 0 {
+                connected as f64 / checks as f64
+            } else {
+                0.0
+            },
+            last_connected: self.last_connected.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Serializable connection metrics snapshot
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionMetricsSnapshot {
+    pub total_checks: u64,
+    pub connected_checks: u64,
+    pub disconnected_checks: u64,
+    pub uptime_ratio: f64,
+    pub last_connected: bool,
+}
+
 /// Server-wide metrics collector
 #[derive(Debug)]
 pub struct ServerMetrics {
@@ -104,6 +169,8 @@ pub struct ServerMetrics {
     tools: RwLock<std::collections::HashMap<String, Arc<ToolMetrics>>>,
     /// Server start time
     started_at: std::time::Instant,
+    /// Studio connection metrics
+    connection: ConnectionMetrics,
 }
 
 impl ServerMetrics {
@@ -111,7 +178,18 @@ impl ServerMetrics {
         Self {
             tools: RwLock::new(std::collections::HashMap::new()),
             started_at: std::time::Instant::now(),
+            connection: ConnectionMetrics::new(),
         }
+    }
+
+    /// Record Studio connection status
+    pub fn record_connection_status(&self, connected: bool) {
+        self.connection.record_status(connected);
+    }
+
+    /// Get connection metrics snapshot
+    pub fn connection_snapshot(&self) -> ConnectionMetricsSnapshot {
+        self.connection.snapshot()
     }
 
     /// Get or create metrics for a tool
@@ -144,6 +222,7 @@ impl ServerMetrics {
         ServerMetricsSnapshot {
             uptime_secs: self.started_at.elapsed().as_secs(),
             tools: tool_snapshots,
+            connection: self.connection.snapshot(),
         }
     }
 }
@@ -159,6 +238,7 @@ impl Default for ServerMetrics {
 pub struct ServerMetricsSnapshot {
     pub uptime_secs: u64,
     pub tools: std::collections::HashMap<String, ToolMetricsSnapshot>,
+    pub connection: ConnectionMetricsSnapshot,
 }
 
 #[cfg(test)]
@@ -238,5 +318,108 @@ mod tests {
         assert_eq!(snapshot.errors, 0);
         assert_eq!(snapshot.error_rate, 0.0);
         assert_eq!(snapshot.avg_duration_ms, 0.0);
+    }
+
+    // === CONNECTION METRICS TESTS ===
+
+    #[test]
+    fn test_connection_metrics_new() {
+        let metrics = ConnectionMetrics::new();
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.total_checks, 0);
+        assert_eq!(snapshot.connected_checks, 0);
+        assert_eq!(snapshot.disconnected_checks, 0);
+        assert_eq!(snapshot.uptime_ratio, 0.0);
+        assert!(!snapshot.last_connected);
+    }
+
+    #[test]
+    fn test_connection_metrics_record_connected() {
+        let metrics = ConnectionMetrics::new();
+
+        metrics.record_status(true);
+        metrics.record_status(true);
+        metrics.record_status(true);
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.total_checks, 3);
+        assert_eq!(snapshot.connected_checks, 3);
+        assert_eq!(snapshot.disconnected_checks, 0);
+        assert!((snapshot.uptime_ratio - 1.0).abs() < 0.001);
+        assert!(snapshot.last_connected);
+    }
+
+    #[test]
+    fn test_connection_metrics_record_disconnected() {
+        let metrics = ConnectionMetrics::new();
+
+        metrics.record_status(false);
+        metrics.record_status(false);
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.total_checks, 2);
+        assert_eq!(snapshot.connected_checks, 0);
+        assert_eq!(snapshot.disconnected_checks, 2);
+        assert_eq!(snapshot.uptime_ratio, 0.0);
+        assert!(!snapshot.last_connected);
+    }
+
+    #[test]
+    fn test_connection_metrics_mixed_status() {
+        let metrics = ConnectionMetrics::new();
+
+        // 3 connected, 2 disconnected = 60% uptime
+        metrics.record_status(true);
+        metrics.record_status(true);
+        metrics.record_status(false);
+        metrics.record_status(true);
+        metrics.record_status(false);
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.total_checks, 5);
+        assert_eq!(snapshot.connected_checks, 3);
+        assert_eq!(snapshot.disconnected_checks, 2);
+        assert!((snapshot.uptime_ratio - 0.6).abs() < 0.001);
+        assert!(!snapshot.last_connected); // Last was disconnected
+    }
+
+    #[test]
+    fn test_connection_metrics_last_status_tracking() {
+        let metrics = ConnectionMetrics::new();
+
+        metrics.record_status(true);
+        assert!(metrics.snapshot().last_connected);
+
+        metrics.record_status(false);
+        assert!(!metrics.snapshot().last_connected);
+
+        metrics.record_status(true);
+        assert!(metrics.snapshot().last_connected);
+    }
+
+    #[test]
+    fn test_server_metrics_connection_tracking() {
+        let server_metrics = ServerMetrics::new();
+
+        server_metrics.record_connection_status(true);
+        server_metrics.record_connection_status(true);
+        server_metrics.record_connection_status(false);
+
+        let snapshot = server_metrics.connection_snapshot();
+        assert_eq!(snapshot.total_checks, 3);
+        assert_eq!(snapshot.connected_checks, 2);
+        assert_eq!(snapshot.disconnected_checks, 1);
+    }
+
+    #[tokio::test]
+    async fn test_server_metrics_snapshot_includes_connection() {
+        let server_metrics = ServerMetrics::new();
+
+        server_metrics.record_connection_status(true);
+
+        let snapshot = server_metrics.snapshot().await;
+        assert_eq!(snapshot.connection.total_checks, 1);
+        assert!(snapshot.connection.last_connected);
     }
 }

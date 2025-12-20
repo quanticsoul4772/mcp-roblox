@@ -305,4 +305,94 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].url, "http://test.com/shared");
     }
+
+    #[tokio::test]
+    async fn test_mock_request_body_captured() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(200, b"ok"));
+
+        let body = serde_json::json!({"key": "value", "count": 42});
+        mock.post_json("http://test.com/api", &[], body.clone())
+            .await
+            .unwrap();
+
+        let requests = mock.requests();
+        assert_eq!(requests.len(), 1);
+
+        let captured_body = requests[0].body.as_ref().expect("body should be captured");
+        let parsed: serde_json::Value = serde_json::from_slice(captured_body).unwrap();
+        assert_eq!(parsed, body);
+    }
+
+    #[tokio::test]
+    async fn test_mock_request_body_binary() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(200, b"ok"));
+
+        let binary_data = vec![0x00, 0x01, 0x02, 0xFF, 0xFE];
+        mock.post_binary("http://test.com/upload", &[], binary_data.clone(), None)
+            .await
+            .unwrap();
+
+        let requests = mock.requests();
+        let captured = requests[0].body.as_ref().unwrap();
+        assert_eq!(captured, &binary_data);
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_last_request() {
+        let mock = MockHttpClient::new();
+        mock.queue_responses([
+            MockResponse::success(200, b"first"),
+            MockResponse::success(200, b"second"),
+            MockResponse::success(200, b"third"),
+        ]);
+
+        mock.get("http://test.com/1", &[]).await.unwrap();
+        mock.get("http://test.com/2", &[]).await.unwrap();
+        mock.get("http://test.com/3", &[]).await.unwrap();
+
+        let last = mock.last_request().expect("should have last request");
+        assert_eq!(last.url, "http://test.com/3");
+        assert_eq!(last.method, "GET");
+    }
+
+    #[test]
+    fn test_mock_client_last_request_empty() {
+        let mock = MockHttpClient::new();
+        assert!(mock.last_request().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_clear_requests() {
+        let mock = MockHttpClient::new();
+        mock.queue_responses([
+            MockResponse::success(200, b"1"),
+            MockResponse::success(200, b"2"),
+        ]);
+
+        mock.get("http://test.com/1", &[]).await.unwrap();
+        mock.get("http://test.com/2", &[]).await.unwrap();
+        assert_eq!(mock.requests().len(), 2);
+
+        mock.clear_requests();
+        assert_eq!(mock.requests().len(), 0);
+        assert!(mock.last_request().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_clear_requests_preserves_responses() {
+        let mock = MockHttpClient::new();
+        mock.queue_responses([
+            MockResponse::success(200, b"1"),
+            MockResponse::success(200, b"2"),
+        ]);
+
+        mock.get("http://test.com/1", &[]).await.unwrap();
+        mock.clear_requests();
+
+        // Queued responses should still be available
+        let response = mock.get("http://test.com/2", &[]).await.unwrap();
+        assert_eq!(response.body, b"2");
+    }
 }

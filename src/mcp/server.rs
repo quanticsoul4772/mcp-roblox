@@ -24,7 +24,8 @@ use crate::cloud::OpenCloudClient;
 use crate::mcp::instrumentation::InstrumentedCall;
 use crate::mcp::params::{
     // Cloud params
-    CloudDatastoreGetParams, CloudPublishPlaceParams, CloudUploadAssetParams,
+    CloudDatastoreGetParams, CloudDatastoreSetParams, CloudMessagingPublishParams,
+    CloudPublishPlaceParams, CloudUploadAssetParams,
     // Filesystem params
     FsDeleteScriptParams, FsGetChangesParams, FsGetTreeParams, FsLintScriptParams,
     FsReadScriptParams, FsSearchContentParams, FsWatchChangesParams, FsWriteScriptParams,
@@ -633,9 +634,47 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    // === STUDIO TOOLS (8) ===
+    // === STUDIO TOOLS (9) ===
     // These tools communicate with Roblox Studio via the HTTP plugin bridge.
     // The plugin must be connected for these tools to work.
+
+    #[tool(description = "Check if Roblox Studio plugin is connected and responsive. Use this before batch operations to avoid timeout errors.")]
+    async fn studio_health_check(&self) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_health_check");
+        let result = self.studio_health_check_impl().await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_health_check_impl(&self) -> Result<CallToolResult, ErrorData> {
+        let connected = self.bridge.is_connected().await;
+
+        // Record connection status in metrics
+        self.metrics.record_connection_status(connected);
+
+        // Get connection metrics snapshot for detailed stats
+        let connection_stats = self.metrics.connection_snapshot();
+
+        let result = json!({
+            "connected": connected,
+            "message": if connected {
+                "Studio plugin is connected and responsive"
+            } else {
+                "Studio plugin is not connected or heartbeat timed out"
+            },
+            "stats": connection_stats
+        });
+
+        // Use the raw CallToolResult to set is_error based on connection status
+        let call_result = CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]);
+
+        Ok(CallToolResult {
+            is_error: Some(!connected),
+            ..call_result
+        })
+    }
 
     #[tool(description = "Get currently selected instances in Roblox Studio. Returns array of selected instances with Name, ClassName, and Path.")]
     async fn studio_get_selection(&self) -> Result<CallToolResult, ErrorData> {
@@ -1048,6 +1087,95 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
                 "version": result.version,
                 "created_time": result.created_time,
                 "updated_time": result.updated_time
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Set a value in a Roblox DataStore via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    async fn cloud_datastore_set(
+        &self,
+        Parameters(params): Parameters<CloudDatastoreSetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_datastore_set");
+        let result = self.cloud_datastore_set_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_datastore_set_impl(
+        &self,
+        params: CloudDatastoreSetParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Check if cloud client is available
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        let result = client
+            .datastore_set(
+                params.universe_id,
+                &params.datastore_name,
+                &params.key,
+                params.value.clone(),
+                params.scope.as_deref(),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "success": true,
+                "value": result.value,
+                "version": result.version,
+                "created_time": result.created_time,
+                "updated_time": result.updated_time
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Publish a message to a Roblox MessagingService topic via Open Cloud API. Messages are delivered to all servers subscribed to the topic. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    async fn cloud_messaging_publish(
+        &self,
+        Parameters(params): Parameters<CloudMessagingPublishParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_messaging_publish");
+        let result = self.cloud_messaging_publish_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_messaging_publish_impl(
+        &self,
+        params: CloudMessagingPublishParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Check if cloud client is available
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        let result = client
+            .messaging_publish(params.universe_id, &params.topic, params.message.clone())
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "success": result.success,
+                "topic": result.topic,
+                "universe_id": params.universe_id,
+                "message_preview": if params.message.to_string().len() > 100 {
+                    format!("{}...", &params.message.to_string()[..100])
+                } else {
+                    params.message.to_string()
+                }
             }))
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
@@ -1895,5 +2023,132 @@ mod tests {
         // Verify metrics are tracked
         let metrics_result = server.server_get_metrics().await;
         assert!(metrics_result.is_ok());
+    }
+
+    // === HEALTH CHECK TESTS ===
+
+    #[tokio::test]
+    async fn test_studio_health_check_connected() {
+        let temp_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockBridge::new());
+        // Mock bridge starts connected by default
+
+        let server = RobloxMcpServer::with_mock_bridge(mock, temp_dir.path().to_path_buf());
+
+        let result = server.studio_health_check().await;
+        assert!(result.is_ok(), "studio_health_check should succeed");
+
+        let call_result = result.unwrap();
+        // is_error should be Some(false) when connected
+        assert_eq!(call_result.is_error, Some(false));
+
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            assert!(text_content.text.contains("\"connected\": true"));
+            assert!(text_content.text.contains("connected and responsive"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_studio_health_check_disconnected() {
+        let temp_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockBridge::new());
+        mock.set_disconnected();
+
+        let server = RobloxMcpServer::with_mock_bridge(mock, temp_dir.path().to_path_buf());
+
+        let result = server.studio_health_check().await;
+        assert!(result.is_ok(), "studio_health_check should succeed even when disconnected");
+
+        let call_result = result.unwrap();
+        // is_error should be Some(true) when disconnected
+        assert_eq!(call_result.is_error, Some(true));
+
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            assert!(text_content.text.contains("\"connected\": false"));
+            assert!(text_content.text.contains("not connected"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_studio_health_check_records_metrics() {
+        let temp_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockBridge::new());
+
+        let server = RobloxMcpServer::with_mock_bridge(mock.clone(), temp_dir.path().to_path_buf());
+
+        // Check while connected
+        server.studio_health_check().await.unwrap();
+
+        // Disconnect and check again
+        mock.set_disconnected();
+        server.studio_health_check().await.unwrap();
+
+        // Reconnect and check
+        mock.set_connected();
+        server.studio_health_check().await.unwrap();
+
+        // Verify connection metrics were recorded
+        let metrics_result = server.server_get_metrics().await;
+        assert!(metrics_result.is_ok());
+
+        if let RawContent::Text(text_content) = &*metrics_result.unwrap().content[0] {
+            // Should have connection metrics with 3 checks (2 connected, 1 disconnected)
+            assert!(text_content.text.contains("connection"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    // === TEST UTILITY TESTS ===
+
+    #[tokio::test]
+    async fn test_create_mock_server_basic() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        // Verify server is functional
+        let info = server.get_info();
+        assert!(info.instructions.is_some());
+        assert!(info.instructions.as_ref().unwrap().contains("Roblox Studio MCP Server"));
+    }
+
+    #[tokio::test]
+    async fn test_with_mock_bridge_and_linter() {
+        use crate::tools::linting::mock::MockLinter;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        // Create test file for linting (must be .luau extension)
+        let script_path = project_root.join("test.luau");
+        std::fs::write(&script_path, "local x = 1").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::with_warnings(vec![("unused_variable", "x is never used", 1)]);
+
+        let server = RobloxMcpServer::with_mock_bridge_and_linter(
+            mock_bridge.clone(),
+            project_root,
+            mock_linter.clone(),
+        );
+
+        // Verify server was created with custom linter
+        let info = server.get_info();
+        assert!(info.instructions.is_some());
+
+        // Verify linter injection works by linting a file (use full path)
+        let params = FsLintScriptParams {
+            file_path: script_path.display().to_string(),
+            config_path: None,
+        };
+        let result = server.fs_lint_script_impl(params).await;
+        assert!(result.is_ok(), "fs_lint_script_impl failed: {:?}", result.err());
+
+        // Verify custom linter was used (it should have recorded the call)
+        assert!(mock_linter.call_count() > 0);
     }
 }

@@ -134,15 +134,23 @@ impl Linter for SeleneLinter {
 #[cfg(test)]
 pub mod mock {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
+
+    /// Internal shared state for MockLinter
+    #[derive(Debug)]
+    struct MockState {
+        /// Queue of results to return (FIFO)
+        results: std::collections::VecDeque<Result<LintResult, RobloxMcpError>>,
+        /// Record of lint calls for verification
+        calls: Vec<MockLintCall>,
+    }
 
     /// Mock linter that returns pre-configured results
-    #[derive(Debug)]
+    ///
+    /// Clone is cheap - all clones share the same internal state via Arc.
+    #[derive(Debug, Clone)]
     pub struct MockLinter {
-        /// Queue of results to return (FIFO)
-        results: Mutex<std::collections::VecDeque<Result<LintResult, RobloxMcpError>>>,
-        /// Record of lint calls for verification
-        calls: Mutex<Vec<MockLintCall>>,
+        state: Arc<Mutex<MockState>>,
     }
 
     /// Recorded lint call for verification
@@ -162,38 +170,41 @@ pub mod mock {
         /// Create a new mock linter
         pub fn new() -> Self {
             Self {
-                results: Mutex::new(std::collections::VecDeque::new()),
-                calls: Mutex::new(Vec::new()),
+                state: Arc::new(Mutex::new(MockState {
+                    results: std::collections::VecDeque::new(),
+                    calls: Vec::new(),
+                })),
             }
         }
 
         /// Queue a successful result to be returned
         pub fn queue_result(&self, result: LintResult) {
-            self.results.lock().unwrap().push_back(Ok(result));
+            self.state.lock().unwrap().results.push_back(Ok(result));
         }
 
         /// Queue an error result to be returned
         pub fn queue_error(&self, error: RobloxMcpError) {
-            self.results.lock().unwrap().push_back(Err(error));
+            self.state.lock().unwrap().results.push_back(Err(error));
         }
 
         /// Get all recorded lint calls
         pub fn calls(&self) -> Vec<MockLintCall> {
-            self.calls.lock().unwrap().clone()
+            self.state.lock().unwrap().calls.clone()
         }
 
         /// Check if lint was called for a specific file
         pub fn was_called_with(&self, file_path: &str) -> bool {
-            self.calls
+            self.state
                 .lock()
                 .unwrap()
+                .calls
                 .iter()
                 .any(|c| c.file_path == file_path)
         }
 
         /// Get the number of times lint was called
         pub fn call_count(&self) -> usize {
-            self.calls.lock().unwrap().len()
+            self.state.lock().unwrap().calls.len()
         }
 
         /// Create a mock linter pre-configured with a clean result (no diagnostics)
@@ -268,22 +279,20 @@ pub mod mock {
             file_path: &Path,
             config_path: Option<&Path>,
         ) -> Result<LintResult, RobloxMcpError> {
+            let mut state = self.state.lock().unwrap();
+
             // Record the call
-            self.calls.lock().unwrap().push(MockLintCall {
+            state.calls.push(MockLintCall {
                 file_path: file_path.display().to_string(),
                 config_path: config_path.map(|p| p.display().to_string()),
             });
 
             // Return queued result or error if none queued
-            self.results
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| {
-                    Err(RobloxMcpError::ConfigError(
-                        "MockLinter: No result queued".into(),
-                    ))
-                })
+            state.results.pop_front().unwrap_or_else(|| {
+                Err(RobloxMcpError::ConfigError(
+                    "MockLinter: No result queued".into(),
+                ))
+            })
         }
     }
 }
@@ -605,11 +614,21 @@ mod tests {
             error_count: 0,
             warning_count: 0,
         });
+        mock.queue_result(LintResult {
+            file_path: String::new(),
+            diagnostics: vec![],
+            error_count: 0,
+            warning_count: 0,
+        });
 
-        mock.lint(Path::new("/path/to/test.luau"), None).await.unwrap();
+        mock.lint(Path::new("src/game.luau"), None).await.unwrap();
+        mock.lint(Path::new("src/utils.luau"), None).await.unwrap();
 
-        // Note: was_called_with expects the full path as displayed
-        assert!(mock.call_count() == 1);
+        // was_called_with should match the file path as displayed
+        assert!(mock.was_called_with("src/game.luau") || mock.was_called_with("src\\game.luau"));
+        assert!(mock.was_called_with("src/utils.luau") || mock.was_called_with("src\\utils.luau"));
+        assert!(!mock.was_called_with("src/other.luau"));
+        assert!(!mock.was_called_with("nonexistent.luau"));
     }
 
     #[tokio::test]

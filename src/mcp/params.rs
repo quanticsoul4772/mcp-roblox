@@ -173,6 +173,30 @@ pub struct CloudDatastoreGetParams {
     pub scope: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloudDatastoreSetParams {
+    #[schemars(description = "Universe ID containing the DataStore")]
+    pub universe_id: u64,
+    #[schemars(description = "Name of the DataStore")]
+    pub datastore_name: String,
+    #[schemars(description = "Entry key to set")]
+    pub key: String,
+    #[schemars(description = "JSON value to store")]
+    pub value: serde_json::Value,
+    #[schemars(description = "Scope (default: 'global')")]
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloudMessagingPublishParams {
+    #[schemars(description = "Universe ID to publish the message to")]
+    pub universe_id: u64,
+    #[schemars(description = "Topic name to publish to (servers subscribe to this topic)")]
+    pub topic: String,
+    #[schemars(description = "Message content (JSON value, will be stringified for delivery)")]
+    pub message: serde_json::Value,
+}
+
 // === LINTING PARAMS ===
 
 #[derive(Debug, Deserialize, JsonSchema)]

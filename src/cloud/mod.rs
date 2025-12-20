@@ -4,10 +4,12 @@
 //! - Publish places to Roblox
 //! - Upload assets (images, models, audio)
 //! - Manage DataStores
+//! - Publish messages via MessagingService
 
 mod assets;
 mod client;
 mod datastores;
+mod messaging;
 
 // Re-export public API types (may be used by external consumers)
 #[allow(unused_imports)]
@@ -15,3 +17,5 @@ pub use assets::{AssetType, AssetUploadResult};
 pub use client::OpenCloudClient;
 #[allow(unused_imports)]
 pub use datastores::DataStoreEntry;
+#[allow(unused_imports)]
+pub use messaging::MessagePublishResult;
