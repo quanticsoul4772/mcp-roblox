@@ -1,0 +1,57 @@
+[package]
+name = "roblox-studio-mcp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Russ <your.email@example.com>"]
+description = "High-performance Rust MCP server for Roblox Studio with fast-failure error handling"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# MCP
+rmcp = { version = "0.8.0", features = ["server", "transport-io", "macros"] }
+schemars = "0.8"  # Required for MCP tool parameter schemas
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP server (plugin bridge)
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# HTTP client (Open Cloud)
+reqwest = { version = "0.12", features = ["json"] }
+
+# File watching
+notify = "7"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+mockito = "1"
+tempfile = "3"
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
