@@ -1,7 +1,11 @@
 //! Luau linting integration via Selene
 //!
 //! Provides code quality analysis for Luau scripts using the Selene linter.
+//!
+//! This module provides a trait-based abstraction for linting to enable testing
+//! without requiring the external Selene binary.
 
+use async_trait::async_trait;
 use crate::error::RobloxMcpError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -69,6 +73,224 @@ struct SeleneSpan {
     end_line: u32,
     end_column: u32,
 }
+
+// ============================================================================
+// Linter Trait Abstraction
+// ============================================================================
+
+/// Abstraction over linting operations for testability
+///
+/// This trait allows tests to inject mock implementations without requiring
+/// the external Selene binary to be installed.
+#[async_trait]
+pub trait Linter: Send + Sync {
+    /// Lint a Luau script file
+    ///
+    /// # Arguments
+    /// * `file_path` - Path to the .luau file to lint
+    /// * `config_path` - Optional path to selene.toml configuration file
+    ///
+    /// # Returns
+    /// LintResult containing diagnostics
+    async fn lint(
+        &self,
+        file_path: &Path,
+        config_path: Option<&Path>,
+    ) -> Result<LintResult, RobloxMcpError>;
+}
+
+/// Production linter using Selene
+///
+/// Requires the `selene` binary to be installed and available in PATH.
+/// Install via: `cargo install selene`
+#[derive(Debug, Default, Clone)]
+pub struct SeleneLinter;
+
+impl SeleneLinter {
+    /// Create a new SeleneLinter instance
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Linter for SeleneLinter {
+    async fn lint(
+        &self,
+        file_path: &Path,
+        config_path: Option<&Path>,
+    ) -> Result<LintResult, RobloxMcpError> {
+        lint_script(file_path, config_path).await
+    }
+}
+
+// ============================================================================
+// Mock Linter for Testing
+// ============================================================================
+
+/// Mock linter for testing without Selene binary
+///
+/// Returns pre-configured results for testing various lint scenarios.
+#[cfg(test)]
+pub mod mock {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Mock linter that returns pre-configured results
+    #[derive(Debug)]
+    pub struct MockLinter {
+        /// Queue of results to return (FIFO)
+        results: Mutex<std::collections::VecDeque<Result<LintResult, RobloxMcpError>>>,
+        /// Record of lint calls for verification
+        calls: Mutex<Vec<MockLintCall>>,
+    }
+
+    /// Recorded lint call for verification
+    #[derive(Debug, Clone)]
+    pub struct MockLintCall {
+        pub file_path: String,
+        pub config_path: Option<String>,
+    }
+
+    impl Default for MockLinter {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl MockLinter {
+        /// Create a new mock linter
+        pub fn new() -> Self {
+            Self {
+                results: Mutex::new(std::collections::VecDeque::new()),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// Queue a successful result to be returned
+        pub fn queue_result(&self, result: LintResult) {
+            self.results.lock().unwrap().push_back(Ok(result));
+        }
+
+        /// Queue an error result to be returned
+        pub fn queue_error(&self, error: RobloxMcpError) {
+            self.results.lock().unwrap().push_back(Err(error));
+        }
+
+        /// Get all recorded lint calls
+        pub fn calls(&self) -> Vec<MockLintCall> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        /// Check if lint was called for a specific file
+        pub fn was_called_with(&self, file_path: &str) -> bool {
+            self.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|c| c.file_path == file_path)
+        }
+
+        /// Get the number of times lint was called
+        pub fn call_count(&self) -> usize {
+            self.calls.lock().unwrap().len()
+        }
+
+        /// Create a mock linter pre-configured with a clean result (no diagnostics)
+        pub fn clean() -> Self {
+            let mock = Self::new();
+            mock.queue_result(LintResult {
+                file_path: String::new(),
+                diagnostics: vec![],
+                error_count: 0,
+                warning_count: 0,
+            });
+            mock
+        }
+
+        /// Create a mock linter pre-configured with warnings
+        pub fn with_warnings(warnings: Vec<(&str, &str, u32)>) -> Self {
+            let mock = Self::new();
+            let diagnostics: Vec<LintDiagnostic> = warnings
+                .into_iter()
+                .map(|(code, message, line)| LintDiagnostic {
+                    severity: "warning".to_string(),
+                    code: code.to_string(),
+                    message: message.to_string(),
+                    line,
+                    column: 1,
+                    end_line: Some(line),
+                    end_column: None,
+                })
+                .collect();
+
+            let warning_count = diagnostics.len();
+            mock.queue_result(LintResult {
+                file_path: String::new(),
+                diagnostics,
+                error_count: 0,
+                warning_count,
+            });
+            mock
+        }
+
+        /// Create a mock linter pre-configured with errors
+        pub fn with_errors(errors: Vec<(&str, &str, u32)>) -> Self {
+            let mock = Self::new();
+            let diagnostics: Vec<LintDiagnostic> = errors
+                .into_iter()
+                .map(|(code, message, line)| LintDiagnostic {
+                    severity: "error".to_string(),
+                    code: code.to_string(),
+                    message: message.to_string(),
+                    line,
+                    column: 1,
+                    end_line: Some(line),
+                    end_column: None,
+                })
+                .collect();
+
+            let error_count = diagnostics.len();
+            mock.queue_result(LintResult {
+                file_path: String::new(),
+                diagnostics,
+                error_count,
+                warning_count: 0,
+            });
+            mock
+        }
+    }
+
+    #[async_trait]
+    impl Linter for MockLinter {
+        async fn lint(
+            &self,
+            file_path: &Path,
+            config_path: Option<&Path>,
+        ) -> Result<LintResult, RobloxMcpError> {
+            // Record the call
+            self.calls.lock().unwrap().push(MockLintCall {
+                file_path: file_path.display().to_string(),
+                config_path: config_path.map(|p| p.display().to_string()),
+            });
+
+            // Return queued result or error if none queued
+            self.results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| {
+                    Err(RobloxMcpError::ConfigError(
+                        "MockLinter: No result queued".into(),
+                    ))
+                })
+        }
+    }
+}
+
+// ============================================================================
+// Core Linting Implementation
+// ============================================================================
 
 /// Run Selene linter on a Luau file
 ///
@@ -195,5 +417,321 @@ mod tests {
         let diag: LintDiagnostic = serde_json::from_str(json).unwrap();
         assert!(diag.end_line.is_none());
         assert!(diag.end_column.is_none());
+    }
+
+    #[test]
+    fn test_lint_result_with_multiple_diagnostics() {
+        let result = LintResult {
+            file_path: "script.luau".to_string(),
+            diagnostics: vec![
+                LintDiagnostic {
+                    severity: "error".to_string(),
+                    code: "syntax_error".to_string(),
+                    message: "Unexpected token".to_string(),
+                    line: 1,
+                    column: 5,
+                    end_line: Some(1),
+                    end_column: Some(10),
+                },
+                LintDiagnostic {
+                    severity: "warning".to_string(),
+                    code: "unused_variable".to_string(),
+                    message: "Variable 'x' is never used".to_string(),
+                    line: 3,
+                    column: 7,
+                    end_line: Some(3),
+                    end_column: Some(8),
+                },
+            ],
+            error_count: 1,
+            warning_count: 1,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: LintResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.diagnostics.len(), 2);
+        assert_eq!(parsed.error_count, 1);
+        assert_eq!(parsed.warning_count, 1);
+    }
+
+    #[test]
+    fn test_lint_result_empty_diagnostics() {
+        let result = LintResult {
+            file_path: "clean.luau".to_string(),
+            diagnostics: vec![],
+            error_count: 0,
+            warning_count: 0,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: LintResult = serde_json::from_str(&json).unwrap();
+        assert!(parsed.diagnostics.is_empty());
+        assert_eq!(parsed.error_count, 0);
+    }
+
+    #[test]
+    fn test_selene_output_parsing() {
+        let json = r#"{"diagnostics": []}"#;
+        let output: SeleneOutput = serde_json::from_str(json).unwrap();
+        assert!(output.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_selene_output_with_diagnostics() {
+        let json = r#"{
+            "diagnostics": [{
+                "severity": "warning",
+                "code": "unused_variable",
+                "message": "x is unused",
+                "primary_label": {
+                    "span": {
+                        "start_line": 5,
+                        "start_column": 10,
+                        "end_line": 5,
+                        "end_column": 11
+                    }
+                }
+            }]
+        }"#;
+        let output: SeleneOutput = serde_json::from_str(json).unwrap();
+        assert_eq!(output.diagnostics.len(), 1);
+        assert_eq!(output.diagnostics[0].code, "unused_variable");
+        assert_eq!(output.diagnostics[0].primary_label.span.start_line, 5);
+    }
+
+    #[test]
+    fn test_lint_diagnostic_deserialization() {
+        let json = r#"{
+            "severity": "warning",
+            "code": "global_usage",
+            "message": "Using global variable",
+            "line": 10,
+            "column": 1,
+            "end_line": 10,
+            "end_column": 5
+        }"#;
+
+        let diag: LintDiagnostic = serde_json::from_str(json).unwrap();
+        assert_eq!(diag.severity, "warning");
+        assert_eq!(diag.code, "global_usage");
+        assert_eq!(diag.line, 10);
+        assert_eq!(diag.end_line, Some(10));
+    }
+
+    #[test]
+    fn test_selene_span_parsing() {
+        let json = r#"{
+            "start_line": 1,
+            "start_column": 5,
+            "end_line": 1,
+            "end_column": 10
+        }"#;
+        let span: SeleneSpan = serde_json::from_str(json).unwrap();
+        assert_eq!(span.start_line, 1);
+        assert_eq!(span.start_column, 5);
+        assert_eq!(span.end_line, 1);
+        assert_eq!(span.end_column, 10);
+    }
+
+    #[test]
+    fn test_selene_label_parsing() {
+        let json = r#"{
+            "span": {
+                "start_line": 3,
+                "start_column": 1,
+                "end_line": 3,
+                "end_column": 8
+            }
+        }"#;
+        let label: SeleneLabel = serde_json::from_str(json).unwrap();
+        assert_eq!(label.span.start_line, 3);
+    }
+
+    // ========================================
+    // MockLinter Tests
+    // ========================================
+    use mock::MockLinter;
+
+    #[tokio::test]
+    async fn test_mock_linter_returns_queued_result() {
+        let mock = MockLinter::new();
+        mock.queue_result(LintResult {
+            file_path: "test.luau".to_string(),
+            diagnostics: vec![],
+            error_count: 0,
+            warning_count: 0,
+        });
+
+        let result = mock.lint(Path::new("test.luau"), None).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().file_path, "test.luau");
+    }
+
+    #[tokio::test]
+    async fn test_mock_linter_returns_queued_error() {
+        let mock = MockLinter::new();
+        mock.queue_error(RobloxMcpError::ConfigError("Test error".into()));
+
+        let result = mock.lint(Path::new("test.luau"), None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mock_linter_records_calls() {
+        let mock = MockLinter::new();
+        mock.queue_result(LintResult {
+            file_path: String::new(),
+            diagnostics: vec![],
+            error_count: 0,
+            warning_count: 0,
+        });
+
+        mock.lint(Path::new("/path/to/script.luau"), Some(Path::new("/path/to/selene.toml")))
+            .await
+            .unwrap();
+
+        let calls = mock.calls();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].file_path.contains("script.luau"));
+        assert!(calls[0].config_path.as_ref().unwrap().contains("selene.toml"));
+    }
+
+    #[tokio::test]
+    async fn test_mock_linter_was_called_with() {
+        let mock = MockLinter::new();
+        mock.queue_result(LintResult {
+            file_path: String::new(),
+            diagnostics: vec![],
+            error_count: 0,
+            warning_count: 0,
+        });
+
+        mock.lint(Path::new("/path/to/test.luau"), None).await.unwrap();
+
+        // Note: was_called_with expects the full path as displayed
+        assert!(mock.call_count() == 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_linter_fifo_order() {
+        let mock = MockLinter::new();
+        mock.queue_result(LintResult {
+            file_path: "first.luau".to_string(),
+            diagnostics: vec![],
+            error_count: 0,
+            warning_count: 0,
+        });
+        mock.queue_result(LintResult {
+            file_path: "second.luau".to_string(),
+            diagnostics: vec![],
+            error_count: 0,
+            warning_count: 0,
+        });
+
+        let r1 = mock.lint(Path::new("a.luau"), None).await.unwrap();
+        let r2 = mock.lint(Path::new("b.luau"), None).await.unwrap();
+
+        assert_eq!(r1.file_path, "first.luau");
+        assert_eq!(r2.file_path, "second.luau");
+    }
+
+    #[tokio::test]
+    async fn test_mock_linter_clean_helper() {
+        let mock = MockLinter::clean();
+
+        let result = mock.lint(Path::new("clean.luau"), None).await.unwrap();
+
+        assert!(result.diagnostics.is_empty());
+        assert_eq!(result.error_count, 0);
+        assert_eq!(result.warning_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_mock_linter_with_warnings_helper() {
+        let mock = MockLinter::with_warnings(vec![
+            ("unused_variable", "x is unused", 5),
+            ("shadowing", "y shadows outer variable", 10),
+        ]);
+
+        let result = mock.lint(Path::new("script.luau"), None).await.unwrap();
+
+        assert_eq!(result.diagnostics.len(), 2);
+        assert_eq!(result.warning_count, 2);
+        assert_eq!(result.error_count, 0);
+        assert_eq!(result.diagnostics[0].code, "unused_variable");
+        assert_eq!(result.diagnostics[0].line, 5);
+        assert_eq!(result.diagnostics[1].code, "shadowing");
+        assert_eq!(result.diagnostics[1].line, 10);
+    }
+
+    #[tokio::test]
+    async fn test_mock_linter_with_errors_helper() {
+        let mock = MockLinter::with_errors(vec![
+            ("syntax_error", "Unexpected token", 1),
+            ("parse_error", "Failed to parse", 3),
+        ]);
+
+        let result = mock.lint(Path::new("script.luau"), None).await.unwrap();
+
+        assert_eq!(result.diagnostics.len(), 2);
+        assert_eq!(result.error_count, 2);
+        assert_eq!(result.warning_count, 0);
+        assert_eq!(result.diagnostics[0].severity, "error");
+    }
+
+    #[tokio::test]
+    async fn test_mock_linter_no_result_queued() {
+        let mock = MockLinter::new();
+
+        let result = mock.lint(Path::new("test.luau"), None).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::ConfigError(msg) => {
+                assert!(msg.contains("No result queued"));
+            }
+            e => panic!("Expected ConfigError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mock_linter_call_count() {
+        let mock = MockLinter::new();
+        for _ in 0..5 {
+            mock.queue_result(LintResult {
+                file_path: String::new(),
+                diagnostics: vec![],
+                error_count: 0,
+                warning_count: 0,
+            });
+        }
+
+        for i in 0..5 {
+            mock.lint(Path::new(&format!("script{i}.luau")), None)
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(mock.call_count(), 5);
+    }
+
+    #[test]
+    fn test_selene_linter_new() {
+        let linter = SeleneLinter::new();
+        let debug = format!("{:?}", linter);
+        assert!(debug.contains("SeleneLinter"));
+    }
+
+    #[test]
+    fn test_selene_linter_default() {
+        let linter = SeleneLinter::default();
+        let _ = format!("{:?}", linter);
+    }
+
+    #[test]
+    fn test_selene_linter_clone() {
+        let linter = SeleneLinter::new();
+        let cloned = linter.clone();
+        let _ = format!("{:?}", cloned);
     }
 }

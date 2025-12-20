@@ -18,6 +18,7 @@ use walkdir::WalkDir;
 use tracing::warn;
 
 use crate::bridge::http::PluginBridge;
+use crate::bridge::StudioBridge;
 use crate::cloud::AssetType;
 use crate::cloud::OpenCloudClient;
 use crate::mcp::instrumentation::InstrumentedCall;
@@ -37,10 +38,18 @@ use crate::tools::filesystem::{build_tree, read_script, validate_path, write_scr
 use crate::tools::linting::lint_script;
 use crate::watcher::FileWatcher;
 
+/// Roblox MCP Server with injectable dependencies
+///
+/// Generic over:
+/// - `B`: StudioBridge implementation (default: PluginBridge)
+/// - `H`: HttpClient implementation (default: ReqwestHttpClient via OpenCloudClient)
+///
+/// This allows injecting mock implementations for testing while keeping
+/// production code unchanged.
 #[derive(Clone)]
-pub struct RobloxMcpServer {
+pub struct RobloxMcpServer<B: StudioBridge + Clone = PluginBridge> {
     tool_router: ToolRouter<Self>,
-    bridge: Arc<PluginBridge>,
+    bridge: Arc<B>,
     project_root: PathBuf,
     /// Open Cloud client for CI/CD operations (optional - only if API key configured)
     cloud_client: Option<Arc<OpenCloudClient>>,
@@ -50,7 +59,8 @@ pub struct RobloxMcpServer {
     metrics: Arc<ServerMetrics>,
 }
 
-impl RobloxMcpServer {
+/// Production constructor for RobloxMcpServer with PluginBridge
+impl RobloxMcpServer<PluginBridge> {
     pub fn new(bridge: Arc<PluginBridge>, project_root: PathBuf) -> Self {
         // Initialize cloud client with explicit logging on failure
         // Cloud tools will check availability and return clear error to users
@@ -90,6 +100,45 @@ impl RobloxMcpServer {
             metrics,
         }
     }
+}
+
+/// Generic implementation for any StudioBridge
+impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B> {
+    /// Create a test server with a mock bridge
+    ///
+    /// This constructor is used for testing to inject mock dependencies.
+    #[cfg(test)]
+    pub fn with_mock_bridge(bridge: Arc<B>, project_root: PathBuf) -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+            bridge,
+            project_root,
+            cloud_client: None,
+            file_watcher: None,
+            metrics: Arc::new(ServerMetrics::new()),
+        }
+    }
+
+    /// Create a test server with mock bridge and cloud client
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn with_mocks(
+        bridge: Arc<B>,
+        project_root: PathBuf,
+        _cloud_client: Option<Arc<OpenCloudClient>>,
+    ) -> RobloxMcpServer<B> {
+        // Note: We can't store generic cloud client, so for full mock testing
+        // we'd need a separate test-only server struct. For now, we support
+        // mock bridge without cloud client, which covers Studio tool testing.
+        Self {
+            tool_router: Self::tool_router(),
+            bridge,
+            project_root,
+            cloud_client: None, // TODO: would need type erasure for full generic support
+            file_watcher: None,
+            metrics: Arc::new(ServerMetrics::new()),
+        }
+    }
 
     /// Start instrumentation for a tool call
     fn start_instrumentation(&self, tool_name: &str) -> InstrumentedCall {
@@ -98,7 +147,7 @@ impl RobloxMcpServer {
 }
 
 #[tool_router]
-impl RobloxMcpServer {
+impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B> {
     // === FILESYSTEM TOOLS (6) ===
 
     #[tool(description = "List project file structure with depth limits. Returns a tree of files and directories, plus any skipped entries.")]
@@ -1022,7 +1071,7 @@ impl RobloxMcpServer {
 }
 
 #[tool_handler]
-impl ServerHandler for RobloxMcpServer {
+impl<B: StudioBridge + Clone + 'static> ServerHandler for RobloxMcpServer<B> {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
@@ -1459,5 +1508,353 @@ mod tests {
 
         // Just verify it constructs without panic
         let _info = server.get_info();
+    }
+
+    // === MOCK BRIDGE TESTS (Studio tool success paths) ===
+
+    use crate::bridge::mock::MockBridge;
+
+    fn create_mock_server(project_root: PathBuf) -> RobloxMcpServer<MockBridge> {
+        let mock = MockBridge::new();
+        RobloxMcpServer::with_mock_bridge(Arc::new(mock), project_root)
+    }
+
+    fn create_mock_server_with_responses(
+        project_root: PathBuf,
+        responses: impl IntoIterator<Item = (&'static str, serde_json::Value)>,
+    ) -> (RobloxMcpServer<MockBridge>, Arc<MockBridge>) {
+        let mock = Arc::new(MockBridge::new());
+        for (action, response) in responses {
+            mock.set_response(action, response);
+        }
+        let server = RobloxMcpServer::with_mock_bridge(mock.clone(), project_root);
+        (server, mock)
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_selection_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("getSelection", json!({
+                "selected": [
+                    {"Name": "Part1", "ClassName": "Part", "Path": "game.Workspace.Part1"},
+                    {"Name": "Part2", "ClassName": "Part", "Path": "game.Workspace.Part2"}
+                ]
+            }))],
+        );
+
+        let result = server.studio_get_selection().await;
+        assert!(result.is_ok(), "studio_get_selection should succeed");
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            assert!(text_content.text.contains("Part1"));
+            assert!(text_content.text.contains("Part2"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("getSelection"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_datamodel_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("getDataModel", json!({
+                "Name": "DataModel",
+                "ClassName": "DataModel",
+                "Children": [
+                    {"Name": "Workspace", "ClassName": "Workspace", "Children": []}
+                ]
+            }))],
+        );
+
+        let params = StudioGetDataModelParams { max_depth: Some(2) };
+        let result = server.studio_get_datamodel(Parameters(params)).await;
+        assert!(result.is_ok(), "studio_get_datamodel should succeed");
+
+        if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
+            assert!(text_content.text.contains("Workspace"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("getDataModel"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_datamodel_paginated_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("getDataModelPaginated", json!({
+                "instances": [
+                    {"Name": "Part1", "ClassName": "Part", "Path": "game.Workspace.Part1"},
+                    {"Name": "Part2", "ClassName": "Part", "Path": "game.Workspace.Part2"}
+                ],
+                "cursor": "next_page_token",
+                "hasMore": true
+            }))],
+        );
+
+        let params = StudioGetDataModelPaginatedParams {
+            start_path: Some("game.Workspace".to_string()),
+            max_depth: Some(2),
+            limit: Some(100),
+            cursor: None,
+        };
+        let result = server.studio_get_datamodel_paginated(Parameters(params)).await;
+        assert!(result.is_ok(), "studio_get_datamodel_paginated should succeed");
+
+        if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
+            assert!(text_content.text.contains("Part1"));
+            assert!(text_content.text.contains("cursor"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("getDataModelPaginated"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_script_source_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("getScriptSource", json!({
+                "source": "-- Main script\nprint('Hello World')",
+                "path": "game.ServerScriptService.Main"
+            }))],
+        );
+
+        let params = StudioGetScriptSourceParams {
+            path: "game.ServerScriptService.Main".to_string(),
+        };
+        let result = server.studio_get_script_source(Parameters(params)).await;
+        assert!(result.is_ok(), "studio_get_script_source should succeed");
+
+        if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
+            assert!(text_content.text.contains("Hello World"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("getScriptSource"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_modify_script_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("modifyScript", json!({
+                "success": true,
+                "path": "game.ServerScriptService.Main",
+                "undoCreated": true
+            }))],
+        );
+
+        let params = StudioModifyScriptParams {
+            path: "game.ServerScriptService.Main".to_string(),
+            new_source: "-- Updated script\nprint('Updated')".to_string(),
+            record_undo: Some(true),
+        };
+        let result = server.studio_modify_script(Parameters(params)).await;
+        assert!(result.is_ok(), "studio_modify_script should succeed");
+
+        if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
+            assert!(text_content.text.contains("success"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("modifyScript"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_create_instance_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("createInstance", json!({
+                "success": true,
+                "instance": {
+                    "Name": "NewPart",
+                    "ClassName": "Part",
+                    "Path": "game.Workspace.NewPart"
+                }
+            }))],
+        );
+
+        let params = StudioCreateInstanceParams {
+            class_name: "Part".to_string(),
+            parent: "game.Workspace".to_string(),
+            name: "NewPart".to_string(),
+            properties: Some(json!({"Anchored": true})),
+            record_undo: Some(true),
+        };
+        let result = server.studio_create_instance(Parameters(params)).await;
+        assert!(result.is_ok(), "studio_create_instance should succeed");
+
+        if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
+            assert!(text_content.text.contains("NewPart"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("createInstance"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_set_property_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("setProperty", json!({
+                "success": true,
+                "path": "game.Workspace.Part",
+                "property": "Name",
+                "oldValue": "Part",
+                "newValue": "RenamedPart"
+            }))],
+        );
+
+        let params = StudioSetPropertyParams {
+            path: "game.Workspace.Part".to_string(),
+            property: "Name".to_string(),
+            value: json!("RenamedPart"),
+            record_undo: Some(true),
+        };
+        let result = server.studio_set_property(Parameters(params)).await;
+        assert!(result.is_ok(), "studio_set_property should succeed");
+
+        if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
+            assert!(text_content.text.contains("RenamedPart"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("setProperty"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_delete_instance_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("deleteInstance", json!({
+                "success": true,
+                "deletedPath": "game.Workspace.Part",
+                "undoCreated": true
+            }))],
+        );
+
+        let params = StudioDeleteInstanceParams {
+            path: "game.Workspace.Part".to_string(),
+            record_undo: Some(true),
+        };
+        let result = server.studio_delete_instance(Parameters(params)).await;
+        assert!(result.is_ok(), "studio_delete_instance should succeed");
+
+        if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
+            assert!(text_content.text.contains("success"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("deleteInstance"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_find_instances_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("findInstances", json!({
+                "instances": [
+                    {"Name": "Part1", "ClassName": "Part", "Path": "game.Workspace.Part1"},
+                    {"Name": "Part2", "ClassName": "Part", "Path": "game.Workspace.Part2"},
+                    {"Name": "Part3", "ClassName": "Part", "Path": "game.Workspace.Folder.Part3"}
+                ],
+                "count": 3
+            }))],
+        );
+
+        let params = StudioFindInstancesParams {
+            class_name: "Part".to_string(),
+            root: Some("game.Workspace".to_string()),
+        };
+        let result = server.studio_find_instances(Parameters(params)).await;
+        assert!(result.is_ok(), "studio_find_instances should succeed");
+
+        if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
+            assert!(text_content.text.contains("Part1"));
+            assert!(text_content.text.contains("Part2"));
+            assert!(text_content.text.contains("Part3"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("findInstances"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_tool_with_disconnected_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockBridge::new());
+        mock.set_disconnected();
+
+        let server = RobloxMcpServer::with_mock_bridge(mock.clone(), temp_dir.path().to_path_buf());
+
+        let result = server.studio_get_selection().await;
+        assert!(result.is_err(), "Should fail when bridge is disconnected");
+    }
+
+    #[tokio::test]
+    async fn test_studio_tool_verifies_params() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("setProperty", json!({"success": true}))],
+        );
+
+        let params = StudioSetPropertyParams {
+            path: "game.Workspace.SpecificPart".to_string(),
+            property: "Transparency".to_string(),
+            value: json!(0.5),
+            record_undo: Some(false),
+        };
+        server.studio_set_property(Parameters(params)).await.unwrap();
+
+        // Verify the call was recorded with correct params
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.action, "setProperty");
+        assert_eq!(last_call.params["path"], "game.Workspace.SpecificPart");
+        assert_eq!(last_call.params["property"], "Transparency");
+        assert_eq!(last_call.params["value"], 0.5);
+        assert_eq!(last_call.params["recordUndo"], false);
+    }
+
+    #[tokio::test]
+    async fn test_server_metrics_with_mock_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, _mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [
+                ("getSelection", json!({"selected": []})),
+                ("getDataModel", json!({"Children": []})),
+            ],
+        );
+
+        // Make some calls
+        server.studio_get_selection().await.unwrap();
+        server.studio_get_datamodel(Parameters(StudioGetDataModelParams { max_depth: None })).await.unwrap();
+
+        // Verify metrics are tracked
+        let metrics_result = server.server_get_metrics().await;
+        assert!(metrics_result.is_ok());
     }
 }

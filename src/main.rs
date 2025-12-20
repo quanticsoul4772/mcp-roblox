@@ -1,8 +1,7 @@
-mod bridge {
-    pub mod http;
-}
+mod bridge;
 mod cloud;
 mod error;
+mod http;
 mod mcp;
 mod metrics;
 mod tools;

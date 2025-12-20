@@ -254,4 +254,111 @@ mod tests {
         assert!(json.contains("modified"));
         assert!(json.contains("1234567890"));
     }
+
+    #[test]
+    fn test_file_change_clone() {
+        let change = FileChange {
+            path: "test.luau".to_string(),
+            kind: ChangeKind::Created,
+            timestamp: 9999,
+        };
+
+        let cloned = change.clone();
+        assert_eq!(cloned.path, "test.luau");
+        assert_eq!(cloned.timestamp, 9999);
+    }
+
+    #[test]
+    fn test_file_change_debug() {
+        let change = FileChange {
+            path: "script.luau".to_string(),
+            kind: ChangeKind::Deleted,
+            timestamp: 5555,
+        };
+
+        let debug = format!("{:?}", change);
+        assert!(debug.contains("FileChange"));
+        assert!(debug.contains("script.luau"));
+        assert!(debug.contains("Deleted"));
+    }
+
+    #[test]
+    fn test_change_kind_clone() {
+        let kind = ChangeKind::Modified;
+        let cloned = kind.clone();
+        assert!(matches!(cloned, ChangeKind::Modified));
+    }
+
+    #[test]
+    fn test_change_kind_debug() {
+        let kind = ChangeKind::WatcherError;
+        let debug = format!("{:?}", kind);
+        assert!(debug.contains("WatcherError"));
+    }
+
+    #[tokio::test]
+    async fn test_poll_changes_with_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let watcher = FileWatcher::new(temp_dir.path().to_path_buf()).unwrap();
+
+        // Even with empty queue, limit should work
+        let changes = watcher.poll_changes(0).await;
+        assert!(changes.is_empty());
+
+        let changes = watcher.poll_changes(100).await;
+        assert!(changes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_watcher_on_nonexistent_path_fails() {
+        let result = FileWatcher::new(PathBuf::from("/nonexistent/path/that/does/not/exist"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_change_with_empty_path() {
+        let change = FileChange {
+            path: "".to_string(),
+            kind: ChangeKind::Modified,
+            timestamp: 0,
+        };
+
+        let json = serde_json::to_string(&change).unwrap();
+        assert!(json.contains("\"path\":\"\""));
+    }
+
+    #[test]
+    fn test_file_change_with_special_characters() {
+        let change = FileChange {
+            path: "folder/subfolder/my script.luau".to_string(),
+            kind: ChangeKind::Created,
+            timestamp: 1000,
+        };
+
+        let json = serde_json::to_string(&change).unwrap();
+        assert!(json.contains("my script.luau"));
+    }
+
+    #[test]
+    fn test_all_change_kinds_serialization() {
+        // Test each variant serializes correctly to snake_case
+        let kinds = vec![
+            (ChangeKind::Created, "\"created\""),
+            (ChangeKind::Modified, "\"modified\""),
+            (ChangeKind::Deleted, "\"deleted\""),
+            (ChangeKind::WatcherError, "\"watcher_error\""),
+        ];
+
+        for (kind, expected) in kinds {
+            let json = serde_json::to_string(&kind).unwrap();
+            assert_eq!(json, expected);
+        }
+    }
+
+    #[test]
+    fn test_max_queue_size_constant() {
+        // Verify the constant exists and has a reasonable value
+        assert!(MAX_QUEUE_SIZE > 0);
+        assert!(MAX_QUEUE_SIZE <= 10000); // Reasonable upper bound
+    }
 }

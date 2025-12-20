@@ -354,4 +354,87 @@ mod tests {
         // -32002 is custom server unavailable
         assert_eq!(mcp_err.code, ErrorCode(-32002));
     }
+
+    #[test]
+    fn test_plugin_execution_error_maps_to_internal_error() {
+        let err = RobloxMcpError::PluginExecutionError("Script error".to_string());
+        let mcp_err: ErrorData = err.into();
+        // -32603 is Internal Error
+        assert_eq!(mcp_err.code, ErrorCode(-32603));
+    }
+
+    #[test]
+    fn test_open_cloud_4xx_maps_to_invalid_request() {
+        let err = RobloxMcpError::OpenCloudError {
+            status: 401,
+            message: "Unauthorized".to_string(),
+        };
+        let mcp_err: ErrorData = err.into();
+        // 4xx errors map to Invalid Request (-32600)
+        assert_eq!(mcp_err.code, ErrorCode(-32600));
+    }
+
+    #[test]
+    fn test_open_cloud_5xx_maps_to_internal_error() {
+        let err = RobloxMcpError::OpenCloudError {
+            status: 503,
+            message: "Service Unavailable".to_string(),
+        };
+        let mcp_err: ErrorData = err.into();
+        // 5xx errors map to Internal Error (-32603)
+        assert_eq!(mcp_err.code, ErrorCode(-32603));
+    }
+
+    #[test]
+    fn test_config_error_maps_to_invalid_request() {
+        let err = RobloxMcpError::ConfigError("Missing API key".to_string());
+        let mcp_err: ErrorData = err.into();
+        // Config errors map to Invalid Request (-32600)
+        assert_eq!(mcp_err.code, ErrorCode(-32600));
+    }
+
+    #[test]
+    fn test_config_error_display() {
+        let err = RobloxMcpError::ConfigError("ROBLOX_OPEN_CLOUD_API_KEY not set".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("Configuration error"));
+        assert!(msg.contains("ROBLOX_OPEN_CLOUD_API_KEY"));
+    }
+
+    #[test]
+    fn test_open_cloud_error_display() {
+        let err = RobloxMcpError::OpenCloudError {
+            status: 429,
+            message: "Rate limited".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("429"));
+        assert!(msg.contains("Open Cloud"));
+    }
+
+    #[test]
+    fn test_watcher_error_maps_to_internal_error() {
+        // Create a notify error using a path that doesn't exist
+        let notify_err = notify::Error::path_not_found();
+        let err = RobloxMcpError::WatcherError(notify_err);
+        let mcp_err: ErrorData = err.into();
+        // -32603 is Internal Error
+        assert_eq!(mcp_err.code, ErrorCode(-32603));
+    }
+
+    #[test]
+    fn test_rojo_sync_failure_maps_to_server_error() {
+        let err = RobloxMcpError::RojoSyncFailure("Connection refused".to_string());
+        let mcp_err: ErrorData = err.into();
+        // -32002 is custom server unavailable
+        assert_eq!(mcp_err.code, ErrorCode(-32002));
+    }
+
+    #[test]
+    fn test_invalid_studio_data_maps_to_invalid_request() {
+        let err = RobloxMcpError::InvalidStudioData("Malformed response".to_string());
+        let mcp_err: ErrorData = err.into();
+        // -32600 is Invalid Request
+        assert_eq!(mcp_err.code, ErrorCode(-32600));
+    }
 }
