@@ -61,24 +61,29 @@ async fn main() -> Result<()> {
     // Spawn HTTP bridge as background task (for plugin communication)
     // Graceful degradation: if port binding fails, MCP server continues without plugin support
     let http_bridge = bridge.clone();
+
+    // Port is configurable via ROBLOX_MCP_PORT environment variable (default: 8080)
+    let port = std::env::var("ROBLOX_MCP_PORT").unwrap_or_else(|_| "8080".to_string());
+    let bind_addr = format!("127.0.0.1:{}", port);
+
     tokio::spawn(async move {
         let app = create_router((*http_bridge).clone());
 
-        // Try to bind to port 8080, with graceful fallback on failure
-        let listener = match tokio::net::TcpListener::bind("127.0.0.1:8080").await {
+        // Try to bind to configured port, with graceful fallback on failure
+        let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
             Ok(listener) => listener,
             Err(e) => {
                 error!(
-                    "Failed to bind HTTP bridge to 127.0.0.1:8080: {}. \
+                    "Failed to bind HTTP bridge to {}: {}. \
                      Studio plugin communication will be unavailable. \
-                     Ensure port 8080 is not in use by another process.",
-                    e
+                     Ensure the port is not in use, or set ROBLOX_MCP_PORT to a different port.",
+                    bind_addr, e
                 );
                 return; // Exit this task, but don't crash the main server
             }
         };
 
-        info!("HTTP bridge listening on 127.0.0.1:8080");
+        info!("HTTP bridge listening on {}", bind_addr);
 
         // Serve HTTP requests, logging any errors without crashing
         if let Err(e) = axum::serve(listener, app).await {
