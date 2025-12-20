@@ -69,10 +69,10 @@ pub async fn build_tree(path: &Path, current_depth: usize, max_depth: usize) -> 
     let children = if current_depth < max_depth {
         let mut entries = vec![];
         let mut dir = fs::read_dir(path).await?;
-        
+
         while let Some(entry) = dir.next_entry().await? {
             let child_path = entry.path();
-            
+
             // Skip hidden files and node_modules
             if let Some(name) = child_path.file_name() {
                 let name_str = name.to_string_lossy();
@@ -80,12 +80,21 @@ pub async fn build_tree(path: &Path, current_depth: usize, max_depth: usize) -> 
                     continue;
                 }
             }
-            
+
             // Box the recursive call to avoid infinite sized future
             let child_tree = Box::pin(build_tree(&child_path, current_depth + 1, max_depth)).await?;
             entries.push(child_tree);
         }
-        
+
+        // Sort entries: directories first, then files, alphabetically within each group
+        entries.sort_by(|a, b| {
+            match (a.is_file, b.is_file) {
+                (false, true) => std::cmp::Ordering::Less,    // directories before files
+                (true, false) => std::cmp::Ordering::Greater, // files after directories
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()), // alphabetical within group
+            }
+        });
+
         Some(entries)
     } else {
         None
