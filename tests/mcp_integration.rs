@@ -284,10 +284,10 @@ fn test_tools_list_returns_filesystem_tools() {
     let tools = result.get("tools").expect("No tools array in result");
     let tools_array = tools.as_array().expect("tools is not an array");
 
-    // Should have 6 filesystem tools
+    // Should have 14 tools (6 filesystem + 8 studio)
     assert!(
-        tools_array.len() >= 6,
-        "Expected at least 6 tools, got {}",
+        tools_array.len() >= 14,
+        "Expected at least 14 tools, got {}",
         tools_array.len()
     );
 
@@ -297,7 +297,8 @@ fn test_tools_list_returns_filesystem_tools() {
         .filter_map(|t| t.get("name")?.as_str())
         .collect();
 
-    let expected_tools = [
+    // Filesystem tools (6)
+    let expected_fs_tools = [
         "fs_get_tree",
         "fs_read_script",
         "fs_write_script",
@@ -306,10 +307,29 @@ fn test_tools_list_returns_filesystem_tools() {
         "fs_get_changes",
     ];
 
-    for expected in expected_tools {
+    // Studio tools (8)
+    let expected_studio_tools = [
+        "studio_get_selection",
+        "studio_get_datamodel",
+        "studio_get_script_source",
+        "studio_modify_script",
+        "studio_create_instance",
+        "studio_set_property",
+        "studio_delete_instance",
+        "studio_find_instances",
+    ];
+
+    for expected in expected_fs_tools {
         assert!(
             tool_names.contains(&expected),
-            "Missing tool: {expected}. Found: {tool_names:?}"
+            "Missing filesystem tool: {expected}. Found: {tool_names:?}"
+        );
+    }
+
+    for expected in expected_studio_tools {
+        assert!(
+            tool_names.contains(&expected),
+            "Missing studio tool: {expected}. Found: {tool_names:?}"
         );
     }
 
@@ -644,6 +664,54 @@ fn test_non_luau_file_rejection() {
     assert!(
         has_error,
         "Non-.luau files should be rejected. Response: {:?}",
+        response
+    );
+}
+
+#[test]
+#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
+fn test_studio_tool_returns_timeout_when_plugin_not_connected() {
+    let mut client = McpTestClient::spawn().expect("Failed to spawn server");
+
+    // Initialize
+    client.initialize().expect("Initialize failed");
+    client.send_initialized().expect("Initialized notification failed");
+
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Call studio tool without plugin connected - should timeout immediately
+    // because the plugin heartbeat is stale (never updated)
+    let response = client
+        .call_tool("studio_get_selection", json!({}))
+        .expect("Request failed");
+
+    // Should fail with timeout error since plugin is not connected
+    let has_timeout_error = response.error.is_some()
+        || response
+            .result
+            .as_ref()
+            .and_then(|r| r.get("isError"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || response
+            .result
+            .as_ref()
+            .and_then(|r| r.get("content"))
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|t| t.as_str())
+            .map(|s| {
+                s.contains("timeout")
+                    || s.contains("disconnected")
+                    || s.contains("heartbeat")
+                    || s.contains("plugin")
+            })
+            .unwrap_or(false);
+
+    assert!(
+        has_timeout_error,
+        "Studio tool should fail with timeout when plugin not connected. Response: {:?}",
         response
     );
 }
