@@ -5,7 +5,7 @@ use std::sync::Arc;
 use regex::Regex;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, Content, RawContent, ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router, ErrorData, ServerHandler,
 };
 use serde_json::json;
@@ -587,5 +587,432 @@ impl ServerHandler for RobloxMcpServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use tokio::time::Duration;
+
+    fn create_test_server(project_root: PathBuf) -> RobloxMcpServer {
+        let bridge = Arc::new(PluginBridge::new());
+        RobloxMcpServer::new(bridge, project_root)
+    }
+
+    fn create_test_server_with_stale_bridge(project_root: PathBuf) -> RobloxMcpServer {
+        let bridge = Arc::new(PluginBridge::new());
+        // Make heartbeat stale synchronously by blocking
+        let bridge_clone = bridge.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                *bridge_clone.last_heartbeat.write().await =
+                    std::time::Instant::now().checked_sub(Duration::from_secs(15)).unwrap();
+            });
+        })
+        .join()
+        .unwrap();
+        RobloxMcpServer::new(bridge, project_root)
+    }
+
+    // === FILESYSTEM TOOL TESTS ===
+
+    #[tokio::test]
+    async fn test_fs_get_tree_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        // Create test structure
+        std::fs::create_dir(project_root.join("src")).unwrap();
+        std::fs::write(project_root.join("src/main.luau"), "-- main").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsGetTreeParams {
+            path: project_root.display().to_string(),
+            max_depth: Some(2),
+        };
+
+        let result = server.fs_get_tree(Parameters(params)).await;
+        assert!(result.is_ok(), "fs_get_tree should succeed");
+
+        let call_result = result.unwrap();
+        assert!(!call_result.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_fs_get_tree_invalid_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root);
+
+        let params = FsGetTreeParams {
+            path: "/nonexistent/path".to_string(),
+            max_depth: None,
+        };
+
+        let result = server.fs_get_tree(Parameters(params)).await;
+        assert!(result.is_err(), "fs_get_tree should fail for invalid path");
+    }
+
+    #[tokio::test]
+    async fn test_fs_read_script_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("test.luau");
+        std::fs::write(&script_path, "-- test script\nlocal x = 42").unwrap();
+
+        let server = create_test_server(project_root);
+
+        let params = FsReadScriptParams {
+            file_path: script_path.display().to_string(),
+        };
+
+        let result = server.fs_read_script(Parameters(params)).await;
+        assert!(result.is_ok(), "fs_read_script should succeed");
+
+        let call_result = result.unwrap();
+        let content = &call_result.content[0];
+        // Content is Annotated<RawContent>, deref to match on RawContent
+        if let RawContent::Text(text_content) = &**content {
+            assert!(text_content.text.contains("test script"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_read_script_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root.clone());
+
+        let params = FsReadScriptParams {
+            file_path: project_root.join("nonexistent.luau").display().to_string(),
+        };
+
+        let result = server.fs_read_script(Parameters(params)).await;
+        assert!(result.is_err(), "fs_read_script should fail for nonexistent file");
+    }
+
+    #[tokio::test]
+    async fn test_fs_write_script_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root.clone());
+
+        let params = FsWriteScriptParams {
+            file_path: project_root.join("new_script.luau").display().to_string(),
+            content: "-- new script content".to_string(),
+            create_directories: Some(false),
+        };
+
+        let result = server.fs_write_script(Parameters(params)).await;
+        assert!(result.is_ok(), "fs_write_script should succeed");
+
+        // Verify file was created
+        assert!(project_root.join("new_script.luau").exists());
+    }
+
+    #[tokio::test]
+    async fn test_fs_write_script_non_luau_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root.clone());
+
+        let params = FsWriteScriptParams {
+            file_path: project_root.join("script.txt").display().to_string(),
+            content: "not a luau file".to_string(),
+            create_directories: Some(false),
+        };
+
+        let result = server.fs_write_script(Parameters(params)).await;
+        assert!(result.is_err(), "fs_write_script should reject non-.luau files");
+    }
+
+    #[tokio::test]
+    async fn test_fs_write_script_creates_directories() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root.clone());
+
+        let nested_path = project_root.join("deep/nested/dir/script.luau");
+
+        let params = FsWriteScriptParams {
+            file_path: nested_path.display().to_string(),
+            content: "-- nested script".to_string(),
+            create_directories: Some(true),
+        };
+
+        let result = server.fs_write_script(Parameters(params)).await;
+        assert!(result.is_ok(), "fs_write_script should create directories");
+        assert!(nested_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_fs_write_script_fails_without_create_directories() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root.clone());
+
+        let nested_path = project_root.join("missing/parent/script.luau");
+
+        let params = FsWriteScriptParams {
+            file_path: nested_path.display().to_string(),
+            content: "-- should fail".to_string(),
+            create_directories: Some(false),
+        };
+
+        let result = server.fs_write_script(Parameters(params)).await;
+        assert!(result.is_err(), "fs_write_script should fail when parent doesn't exist");
+    }
+
+    #[tokio::test]
+    async fn test_fs_delete_script_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("to_delete.luau");
+        std::fs::write(&script_path, "-- will be deleted").unwrap();
+
+        let server = create_test_server(project_root);
+
+        let params = FsDeleteScriptParams {
+            file_path: script_path.display().to_string(),
+        };
+
+        let result = server.fs_delete_script(Parameters(params)).await;
+        assert!(result.is_ok(), "fs_delete_script should succeed");
+        assert!(!script_path.exists(), "File should be deleted");
+    }
+
+    #[tokio::test]
+    async fn test_fs_delete_script_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root.clone());
+
+        let params = FsDeleteScriptParams {
+            file_path: project_root.join("nonexistent.luau").display().to_string(),
+        };
+
+        let result = server.fs_delete_script(Parameters(params)).await;
+        assert!(result.is_err(), "fs_delete_script should fail for nonexistent file");
+    }
+
+    #[tokio::test]
+    async fn test_fs_delete_script_non_luau_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let txt_file = project_root.join("file.txt");
+        std::fs::write(&txt_file, "not a luau file").unwrap();
+
+        let server = create_test_server(project_root);
+
+        let params = FsDeleteScriptParams {
+            file_path: txt_file.display().to_string(),
+        };
+
+        let result = server.fs_delete_script(Parameters(params)).await;
+        assert!(result.is_err(), "fs_delete_script should reject non-.luau files");
+    }
+
+    #[tokio::test]
+    async fn test_fs_search_content_finds_matches() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        std::fs::write(project_root.join("test.luau"), "function foo()\nend").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsSearchContentParams {
+            path: project_root.display().to_string(),
+            pattern: "function".to_string(),
+            extension: "luau".to_string(),
+        };
+
+        let result = server.fs_search_content(Parameters(params)).await;
+        assert!(result.is_ok(), "fs_search_content should succeed");
+
+        let call_result = result.unwrap();
+        let content = &call_result.content[0];
+        if let RawContent::Text(text_content) = &**content {
+            assert!(text_content.text.contains("matches"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_search_content_invalid_regex() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root.clone());
+
+        let params = FsSearchContentParams {
+            path: project_root.display().to_string(),
+            pattern: "[invalid regex".to_string(), // Missing closing bracket
+            extension: "luau".to_string(),
+        };
+
+        let result = server.fs_search_content(Parameters(params)).await;
+        assert!(result.is_err(), "fs_search_content should fail on invalid regex");
+    }
+
+    #[tokio::test]
+    async fn test_fs_get_changes_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        std::fs::write(project_root.join("script1.luau"), "-- script 1").unwrap();
+        std::fs::write(project_root.join("script2.luau"), "-- script 2").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsGetChangesParams {
+            path: project_root.display().to_string(),
+        };
+
+        let result = server.fs_get_changes(Parameters(params)).await;
+        assert!(result.is_ok(), "fs_get_changes should succeed");
+
+        let call_result = result.unwrap();
+        let content = &call_result.content[0];
+        if let RawContent::Text(text_content) = &**content {
+            assert!(text_content.text.contains("file_count"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    // === STUDIO TOOL TESTS (with stale bridge) ===
+
+    #[tokio::test]
+    async fn test_studio_get_selection_fails_on_stale_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
+
+        let result = server.studio_get_selection().await;
+        assert!(result.is_err(), "studio_get_selection should fail when bridge is stale");
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_datamodel_fails_on_stale_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
+
+        let params = StudioGetDataModelParams { max_depth: Some(3) };
+
+        let result = server.studio_get_datamodel(Parameters(params)).await;
+        assert!(result.is_err(), "studio_get_datamodel should fail when bridge is stale");
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_script_source_fails_on_stale_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
+
+        let params = StudioGetScriptSourceParams {
+            path: "game.ServerScriptService.Main".to_string(),
+        };
+
+        let result = server.studio_get_script_source(Parameters(params)).await;
+        assert!(result.is_err(), "studio_get_script_source should fail when bridge is stale");
+    }
+
+    #[tokio::test]
+    async fn test_studio_modify_script_fails_on_stale_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
+
+        let params = StudioModifyScriptParams {
+            path: "game.ServerScriptService.Main".to_string(),
+            new_source: "-- new source".to_string(),
+            record_undo: Some(true),
+        };
+
+        let result = server.studio_modify_script(Parameters(params)).await;
+        assert!(result.is_err(), "studio_modify_script should fail when bridge is stale");
+    }
+
+    #[tokio::test]
+    async fn test_studio_create_instance_fails_on_stale_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
+
+        let params = StudioCreateInstanceParams {
+            class_name: "Part".to_string(),
+            parent: "game.Workspace".to_string(),
+            name: "TestPart".to_string(),
+            properties: None,
+            record_undo: Some(true),
+        };
+
+        let result = server.studio_create_instance(Parameters(params)).await;
+        assert!(result.is_err(), "studio_create_instance should fail when bridge is stale");
+    }
+
+    #[tokio::test]
+    async fn test_studio_set_property_fails_on_stale_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
+
+        let params = StudioSetPropertyParams {
+            path: "game.Workspace.Part".to_string(),
+            property: "Name".to_string(),
+            value: json!("NewName"),
+            record_undo: Some(true),
+        };
+
+        let result = server.studio_set_property(Parameters(params)).await;
+        assert!(result.is_err(), "studio_set_property should fail when bridge is stale");
+    }
+
+    #[tokio::test]
+    async fn test_studio_delete_instance_fails_on_stale_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
+
+        let params = StudioDeleteInstanceParams {
+            path: "game.Workspace.Part".to_string(),
+            record_undo: Some(true),
+        };
+
+        let result = server.studio_delete_instance(Parameters(params)).await;
+        assert!(result.is_err(), "studio_delete_instance should fail when bridge is stale");
+    }
+
+    #[tokio::test]
+    async fn test_studio_find_instances_fails_on_stale_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
+
+        let params = StudioFindInstancesParams {
+            class_name: "Part".to_string(),
+            root: Some("game.Workspace".to_string()),
+        };
+
+        let result = server.studio_find_instances(Parameters(params)).await;
+        assert!(result.is_err(), "studio_find_instances should fail when bridge is stale");
+    }
+
+    #[test]
+    fn test_server_get_info() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server(temp_dir.path().to_path_buf());
+
+        let info = server.get_info();
+        assert!(info.instructions.is_some());
+        assert!(info.instructions.unwrap().contains("Roblox Studio MCP Server"));
+    }
+
+    #[test]
+    fn test_server_new() {
+        let temp_dir = TempDir::new().unwrap();
+        let bridge = Arc::new(PluginBridge::new());
+        let server = RobloxMcpServer::new(bridge, temp_dir.path().to_path_buf());
+
+        // Just verify it constructs without panic
+        let _info = server.get_info();
     }
 }
