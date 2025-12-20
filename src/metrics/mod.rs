@@ -223,7 +223,7 @@ mod tests {
         tool.record_call(Duration::from_millis(50)).await;
 
         let snapshot = server_metrics.snapshot().await;
-        assert!(snapshot.uptime_secs >= 0);
+        // uptime_secs is u64, just verify snapshot was created successfully
         assert!(snapshot.tools.contains_key("test_tool"));
         assert_eq!(snapshot.tools["test_tool"].calls, 1);
     }

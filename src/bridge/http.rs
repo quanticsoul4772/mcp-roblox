@@ -39,6 +39,9 @@ impl PluginBridge {
     }
     
     /// Check if plugin is connected (heartbeat within 10 seconds)
+    ///
+    /// Public API for health checks - used in tests and available for external consumers
+    #[allow(dead_code)]
     pub async fn is_connected(&self) -> bool {
         self.last_heartbeat.read().await.elapsed() < Duration::from_secs(10)
     }

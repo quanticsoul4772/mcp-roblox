@@ -9,6 +9,9 @@ mod assets;
 mod client;
 mod datastores;
 
+// Re-export public API types (may be used by external consumers)
+#[allow(unused_imports)]
 pub use assets::{AssetType, AssetUploadResult};
 pub use client::OpenCloudClient;
+#[allow(unused_imports)]
 pub use datastores::DataStoreEntry;

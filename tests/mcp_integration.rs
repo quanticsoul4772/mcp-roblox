@@ -34,6 +34,7 @@ impl JsonRpcRequest {
 
 /// JSON-RPC 2.0 Response structure
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]  // Fields required for JSON deserialization but not always accessed
 struct JsonRpcResponse {
     jsonrpc: String,
     id: Option<u64>,
@@ -44,6 +45,7 @@ struct JsonRpcResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]  // Fields required for JSON deserialization but not always accessed
 struct JsonRpcError {
     code: i64,
     message: String,
