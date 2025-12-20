@@ -391,10 +391,16 @@ fn test_fs_get_tree_tool() {
         .as_str()
         .expect("text is not a string");
 
-    // Parse the JSON tree
-    let tree: Value = serde_json::from_str(text_content).expect("Failed to parse tree JSON");
+    // Parse the JSON response - now includes tree + skipped info
+    let response: Value = serde_json::from_str(text_content).expect("Failed to parse tree JSON");
 
-    // Should have children
+    // Response should have tree, skipped, and skipped_count fields
+    assert!(response.get("tree").is_some(), "Response should have tree field");
+    assert!(response.get("skipped").is_some(), "Response should have skipped field");
+    assert!(response.get("skipped_count").is_some(), "Response should have skipped_count field");
+
+    // The tree should have children
+    let tree = response.get("tree").expect("No tree in response");
     assert!(tree.get("children").is_some(), "Tree should have children");
 }
 

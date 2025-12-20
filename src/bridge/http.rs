@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{oneshot, RwLock};
 use tokio::time::{timeout, Duration};
+use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,8 +116,24 @@ async fn result_handler(
     // Find the waiting receiver and send result
     // Extract from write lock before sending to avoid holding lock during send
     let sender = bridge.pending_results.write().await.remove(&response.id);
-    if let Some(tx) = sender {
-        let _ = tx.send(response); // Ignore send errors (caller may have timed out)
+    match sender {
+        Some(tx) => {
+            if tx.send(response.clone()).is_err() {
+                // Caller timed out before we could deliver the result - LOG THIS
+                warn!(
+                    command_id = %response.id,
+                    had_error = response.error.is_some(),
+                    "Plugin result discarded: caller already timed out"
+                );
+            }
+        }
+        None => {
+            // No sender registered - this should not happen, LOG IT
+            warn!(
+                command_id = %response.id,
+                "Plugin result received but no sender registered - command may have been cancelled"
+            );
+        }
     }
     Json(serde_json::json!({ "ok": true }))
 }

@@ -40,8 +40,8 @@ pub struct FsSearchContentParams {
     pub path: String,
     #[schemars(description = "Regex pattern to match")]
     pub pattern: String,
-    #[schemars(description = "File extension filter (e.g., 'luau')")]
-    pub extension: Option<String>,
+    #[schemars(description = "File extension filter (e.g., 'luau') - REQUIRED")]
+    pub extension: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -19,12 +19,34 @@ use crate::mcp::RobloxMcpServer;
 #[tokio::main]
 async fn main() -> Result<()> {
     // CRITICAL: Initialize logging to STDERR (stdout is reserved for MCP JSON-RPC protocol)
+    // NO SILENT FALLBACK: If RUST_LOG is set but invalid, we FAIL instead of hiding the error
+    let env_filter = match std::env::var("RUST_LOG") {
+        Ok(filter_str) => {
+            // RUST_LOG is set - parse it and FAIL if invalid
+            tracing_subscriber::EnvFilter::try_new(&filter_str).map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid RUST_LOG environment variable '{}': {}",
+                    filter_str,
+                    e
+                )
+            })?
+        }
+        Err(std::env::VarError::NotPresent) => {
+            // RUST_LOG not set - use sensible default
+            tracing_subscriber::EnvFilter::new("roblox_studio_mcp=info,tower_http=debug")
+        }
+        Err(std::env::VarError::NotUnicode(os_str)) => {
+            // RUST_LOG is set but not valid unicode - FAIL
+            return Err(anyhow::anyhow!(
+                "RUST_LOG environment variable contains invalid unicode: {:?}",
+                os_str
+            ));
+        }
+    };
+
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "roblox_studio_mcp=info,tower_http=debug".into()),
-        )
+        .with_env_filter(env_filter)
         .init();
 
     info!("Roblox Studio MCP Server starting...");

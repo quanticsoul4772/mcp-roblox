@@ -45,7 +45,7 @@ impl RobloxMcpServer {
 impl RobloxMcpServer {
     // === FILESYSTEM TOOLS (6) ===
 
-    #[tool(description = "List project file structure with depth limits. Returns a tree of files and directories.")]
+    #[tool(description = "List project file structure with depth limits. Returns a tree of files and directories, plus any skipped entries.")]
     async fn fs_get_tree(
         &self,
         Parameters(params): Parameters<FsGetTreeParams>,
@@ -56,14 +56,21 @@ impl RobloxMcpServer {
         let validated_path = validate_path(&path, &self.project_root)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        // max_depth is optional with documented default - this is acceptable
         let max_depth = params.max_depth.unwrap_or(5);
 
-        let tree = build_tree(&validated_path, 0, max_depth)
+        // build_tree now returns TreeBuildResult with both tree and skipped entries
+        let result = build_tree(&validated_path, 0, max_depth)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        let json = serde_json::to_string_pretty(&tree)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        // Return both tree AND skipped entries so caller knows what was excluded
+        let json = serde_json::to_string_pretty(&json!({
+            "tree": result.tree,
+            "skipped": result.skipped,
+            "skipped_count": result.skipped.len()
+        }))
+        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
@@ -209,15 +216,26 @@ impl RobloxMcpServer {
             ErrorData::internal_error(format!("Invalid regex pattern: {e}"), None)
         })?;
 
-        let extension = params.extension.as_deref().unwrap_or("luau");
+        // Extension is REQUIRED (enforced by schema)
+        let extension = params.extension.as_str();
 
         let mut results: Vec<serde_json::Value> = Vec::new();
+        let mut errors: Vec<serde_json::Value> = Vec::new();
 
-        // Walk directory and search files
-        for entry in WalkDir::new(&validated_path)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
+        // Walk directory and search files - REPORT ALL ERRORS
+        for entry in WalkDir::new(&validated_path).into_iter() {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    errors.push(json!({
+                        "type": "enumeration_error",
+                        "path": e.path().map(|p| p.display().to_string()),
+                        "error": e.to_string()
+                    }));
+                    continue;
+                }
+            };
+
             let entry_path = entry.path();
 
             // Skip directories
@@ -230,17 +248,29 @@ impl RobloxMcpServer {
                 continue;
             }
 
-            // Skip hidden files and common ignore patterns
+            // Skip hidden files - but REPORT that we're skipping
             if let Some(name) = entry_path.file_name() {
                 let name_str = name.to_string_lossy();
                 if name_str.starts_with('.') {
+                    errors.push(json!({
+                        "type": "skipped_hidden",
+                        "path": entry_path.display().to_string()
+                    }));
                     continue;
                 }
             }
 
-            // Read and search file
-            let Ok(content) = fs::read_to_string(entry_path).await else {
-                continue; // Skip files we can't read
+            // Read and search file - REPORT READ FAILURES
+            let content = match fs::read_to_string(entry_path).await {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(json!({
+                        "type": "read_error",
+                        "path": entry_path.display().to_string(),
+                        "error": e.to_string()
+                    }));
+                    continue;
+                }
             };
 
             for (line_num, line) in content.lines().enumerate() {
@@ -254,23 +284,16 @@ impl RobloxMcpServer {
             }
         }
 
-        if results.is_empty() {
-            Ok(CallToolResult::success(vec![Content::text(
-                json!({
-                    "matches": 0,
-                    "message": "No matches found"
-                })
-                .to_string(),
-            )]))
-        } else {
-            Ok(CallToolResult::success(vec![Content::text(
-                json!({
-                    "matches": results.len(),
-                    "results": results
-                })
-                .to_string(),
-            )]))
-        }
+        // Always include errors in response so caller knows what was skipped
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "matches": results.len(),
+                "results": results,
+                "errors": errors,
+                "error_count": errors.len()
+            })
+            .to_string(),
+        )]))
     }
 
     #[tool(description = "Get file modification times for change detection. Returns a map of file paths to modification timestamps.")]
@@ -285,12 +308,22 @@ impl RobloxMcpServer {
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         let mut mtimes: HashMap<String, u64> = HashMap::new();
+        let mut errors: Vec<serde_json::Value> = Vec::new();
 
-        // Walk directory and collect mtimes
-        for entry in WalkDir::new(&validated_path)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
+        // Walk directory and collect mtimes - REPORT ALL ERRORS
+        for entry in WalkDir::new(&validated_path).into_iter() {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    errors.push(json!({
+                        "type": "enumeration_error",
+                        "path": e.path().map(|p| p.display().to_string()),
+                        "error": e.to_string()
+                    }));
+                    continue;
+                }
+            };
+
             let entry_path = entry.path();
 
             // Skip directories
@@ -303,28 +336,64 @@ impl RobloxMcpServer {
                 continue;
             }
 
-            // Skip hidden files
+            // Skip hidden files - but REPORT
             if let Some(name) = entry_path.file_name() {
                 let name_str = name.to_string_lossy();
                 if name_str.starts_with('.') {
+                    errors.push(json!({
+                        "type": "skipped_hidden",
+                        "path": entry_path.display().to_string()
+                    }));
                     continue;
                 }
             }
 
-            // Get modification time
-            if let Ok(metadata) = entry_path.metadata() {
-                if let Ok(modified) = metadata.modified() {
-                    if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
-                        mtimes.insert(entry_path.display().to_string(), duration.as_secs());
-                    }
+            // Get modification time - REPORT ALL FAILURES
+            let metadata = match entry_path.metadata() {
+                Ok(m) => m,
+                Err(e) => {
+                    errors.push(json!({
+                        "type": "metadata_error",
+                        "path": entry_path.display().to_string(),
+                        "error": e.to_string()
+                    }));
+                    continue;
                 }
-            }
+            };
+
+            let modified = match metadata.modified() {
+                Ok(m) => m,
+                Err(e) => {
+                    errors.push(json!({
+                        "type": "modified_time_error",
+                        "path": entry_path.display().to_string(),
+                        "error": e.to_string()
+                    }));
+                    continue;
+                }
+            };
+
+            let duration = match modified.duration_since(std::time::UNIX_EPOCH) {
+                Ok(d) => d,
+                Err(e) => {
+                    errors.push(json!({
+                        "type": "timestamp_error",
+                        "path": entry_path.display().to_string(),
+                        "error": e.to_string()
+                    }));
+                    continue;
+                }
+            };
+
+            mtimes.insert(entry_path.display().to_string(), duration.as_secs());
         }
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
                 "file_count": mtimes.len(),
-                "files": mtimes
+                "files": mtimes,
+                "errors": errors,
+                "error_count": errors.len()
             })
             .to_string(),
         )]))
