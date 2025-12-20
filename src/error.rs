@@ -56,6 +56,14 @@ pub enum RobloxMcpError {
 
     #[error("File watcher error: {0}")]
     WatcherError(#[from] notify::Error),
+
+    // === Phase 3: Open Cloud Integration ===
+
+    #[error("Open Cloud API error (HTTP {status}): {message}")]
+    OpenCloudError { status: u16, message: String },
+
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 }
 
 /// Convert our custom errors to MCP protocol errors
@@ -93,6 +101,22 @@ impl From<RobloxMcpError> for ErrorData {
             // Plugin execution errors → Internal Error (-32603)
             RobloxMcpError::PluginExecutionError(_) => {
                 Self::internal_error(err.to_string(), None)
+            }
+
+            // Open Cloud errors - map based on HTTP status
+            RobloxMcpError::OpenCloudError { status, .. } => {
+                if *status >= 400 && *status < 500 {
+                    // Client errors (4xx) → Invalid Request
+                    Self::invalid_request(err.to_string(), None)
+                } else {
+                    // Server errors (5xx) → Internal Error
+                    Self::internal_error(err.to_string(), None)
+                }
+            }
+
+            // Configuration errors → Invalid Request (client should fix config)
+            RobloxMcpError::ConfigError(_) => {
+                Self::invalid_request(err.to_string(), None)
             }
         }
     }

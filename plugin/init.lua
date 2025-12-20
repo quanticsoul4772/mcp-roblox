@@ -1,5 +1,6 @@
 -- Roblox Studio Plugin for MCP Server Communication
 -- Polls the MCP server for commands and executes them
+-- Features automatic reconnection with exponential backoff
 
 local HttpService = game:GetService("HttpService")
 local Selection = game:GetService("Selection")
@@ -8,11 +9,15 @@ local ChangeHistoryService = game:GetService("ChangeHistoryService")
 
 local SERVER_URL = "http://127.0.0.1:8080"
 local POLL_INTERVAL = 0.5
+local MAX_BACKOFF = 30  -- Maximum backoff in seconds
+local INITIAL_BACKOFF = 1  -- Initial backoff in seconds
 
 local toolbar = plugin:CreateToolbar("MCP Server")
 local button = toolbar:CreateButton("Connect", "Connect to MCP Server", "rbxasset://textures/ui/LuaApp/icons/ic-studio-settings.png")
 
 local connected = false
+local currentBackoff = INITIAL_BACKOFF
+local consecutiveFailures = 0
 
 local function executeCommand(action, params)
     if action == "getSelection" then
@@ -26,20 +31,20 @@ local function executeCommand(action, params)
             })
         end
         return { instances = instances }
-        
+
     elseif action == "getScriptSource" then
         local script = game:FindFirstChild(params.path, true)
         if not script or not script:IsA("LuaSourceContainer") then
             error("Script not found: " .. params.path)
         end
         return { source = script.Source }
-        
+
     elseif action == "modifyScript" then
         local script = game:FindFirstChild(params.path, true)
         if not script or not script:IsA("LuaSourceContainer") then
             error("Script not found: " .. params.path)
         end
-        
+
         -- Use ScriptEditorService for undo support
         local document = ScriptEditorService:FindScriptDocument(script)
         if document and params.recordUndo ~= false then
@@ -55,44 +60,44 @@ local function executeCommand(action, params)
             -- recordUndo requested but no document available
             error("Cannot record undo: script document not available for " .. params.path)
         end
-        
+
         return { success = true }
-        
+
     elseif action == "getDataModel" then
         local function serializeInstance(inst, depth, maxDepth)
             if depth >= maxDepth then
                 return nil
             end
-            
+
             local result = {
                 Name = inst.Name,
                 ClassName = inst.ClassName,
                 Path = inst:GetFullName(),
                 Children = {}
             }
-            
+
             for _, child in ipairs(inst:GetChildren()) do
                 local serialized = serializeInstance(child, depth + 1, maxDepth)
                 if serialized then
                     table.insert(result.Children, serialized)
                 end
             end
-            
+
             return result
         end
-        
+
         local maxDepth = params.maxDepth or 3
         return serializeInstance(game, 0, maxDepth)
-        
+
     elseif action == "createInstance" then
         local success, instance = pcall(function()
             return Instance.new(params.className)
         end)
-        
+
         if not success then
             error("Invalid class name: " .. params.className)
         end
-        
+
         if not params.name then
             error("Instance name is required")
         end
@@ -114,11 +119,11 @@ local function executeCommand(action, params)
                 end
             end
         end
-        
+
         if params.recordUndo ~= false then
             ChangeHistoryService:SetWaypoint("MCP Create Instance")
         end
-        
+
         return {
             success = true,
             path = instance:GetFullName()
@@ -191,6 +196,17 @@ local function executeCommand(action, params)
     error("Unknown action: " .. action)
 end
 
+local function checkHealth()
+    local success, response = pcall(function()
+        return HttpService:RequestAsync({
+            Url = SERVER_URL .. "/health",
+            Method = "GET"
+        })
+    end)
+
+    return success and response.StatusCode == 200
+end
+
 local function pollLoop()
     while connected do
         local success, response = pcall(function()
@@ -199,42 +215,64 @@ local function pollLoop()
                 Method = "GET"
             })
         end)
-        
-        if success and response.StatusCode == 200 and response.Body ~= "null" then
-            local command = HttpService:JSONDecode(response.Body)
-            local result, error_msg
-            
-            -- Execute command with error capture
-            local exec_success, exec_result = pcall(function()
-                return executeCommand(command.action, command.params)
-            end)
-            
-            if exec_success then
-                result = exec_result
-            else
-                error_msg = tostring(exec_result)
-                warn("[MCP Plugin] Command failed:", error_msg)
-            end
-            
-            -- Send result back (errors included)
-            pcall(function()
-                HttpService:RequestAsync({
-                    Url = SERVER_URL .. "/result",
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = HttpService:JSONEncode({
-                        id = command.id,
-                        result = result,
-                        error = error_msg
+
+        if success and response.StatusCode == 200 then
+            -- Reset backoff on successful connection
+            consecutiveFailures = 0
+            currentBackoff = INITIAL_BACKOFF
+
+            if response.Body ~= "null" then
+                local command = HttpService:JSONDecode(response.Body)
+                local result, error_msg
+
+                -- Execute command with error capture
+                local exec_success, exec_result = pcall(function()
+                    return executeCommand(command.action, command.params)
+                end)
+
+                if exec_success then
+                    result = exec_result
+                else
+                    error_msg = tostring(exec_result)
+                    warn("[MCP Plugin] Command failed:", error_msg)
+                end
+
+                -- Send result back (errors included)
+                pcall(function()
+                    HttpService:RequestAsync({
+                        Url = SERVER_URL .. "/result",
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = HttpService:JSONEncode({
+                            id = command.id,
+                            result = result,
+                            error = error_msg
+                        })
                     })
-                })
-            end)
-        elseif not success then
-            warn("[MCP Plugin] Poll failed:", response)
-            task.wait(5) -- Back off on errors
+                end)
+            end
+
+            task.wait(POLL_INTERVAL)
+        else
+            -- Connection failed - apply exponential backoff
+            consecutiveFailures = consecutiveFailures + 1
+
+            if consecutiveFailures == 1 then
+                warn("[MCP Plugin] Connection lost. Attempting to reconnect...")
+            end
+
+            -- Wait with exponential backoff
+            task.wait(currentBackoff)
+
+            -- Increase backoff for next failure (capped at MAX_BACKOFF)
+            currentBackoff = math.min(currentBackoff * 2, MAX_BACKOFF)
+
+            -- Periodically log reconnection attempts
+            if consecutiveFailures % 5 == 0 then
+                warn(string.format("[MCP Plugin] Still trying to reconnect... (attempt %d, backoff: %ds)",
+                    consecutiveFailures, currentBackoff))
+            end
         end
-        
-        task.wait(POLL_INTERVAL)
     end
 end
 
@@ -243,17 +281,28 @@ local pollTask = nil
 button.Click:Connect(function()
     connected = not connected
     button:SetActive(connected)
-    
+
     if connected then
+        -- Reset backoff state on manual connect
+        consecutiveFailures = 0
+        currentBackoff = INITIAL_BACKOFF
+
         print("[MCP Plugin] Connecting to MCP server at", SERVER_URL)
         button.Text = "Disconnect"
-        
+
+        -- Check server health first
+        if checkHealth() then
+            print("[MCP Plugin] Server is healthy, starting poll loop")
+        else
+            warn("[MCP Plugin] Server not responding, will retry with backoff")
+        end
+
         -- Start polling loop
         pollTask = task.spawn(pollLoop)
     else
         print("[MCP Plugin] Disconnected from MCP server")
         button.Text = "Connect"
-        
+
         -- Stop polling loop
         if pollTask then
             task.cancel(pollTask)
@@ -263,3 +312,4 @@ button.Click:Connect(function()
 end)
 
 print("[MCP Plugin] Loaded. Click the toolbar button to connect to MCP server.")
+print("[MCP Plugin] Features: Auto-reconnection with exponential backoff (max " .. MAX_BACKOFF .. "s)")

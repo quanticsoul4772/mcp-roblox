@@ -5,38 +5,65 @@ use std::sync::Arc;
 use regex::Regex;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, RawContent, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router, ErrorData, ServerHandler,
 };
+
+#[cfg(test)]
+use rmcp::model::RawContent;
 use serde_json::json;
 use tokio::fs;
 use walkdir::WalkDir;
 
 use crate::bridge::http::PluginBridge;
+use crate::cloud::OpenCloudClient;
 use crate::mcp::params::{
+    // Cloud params
+    CloudPublishPlaceParams,
     // Filesystem params
     FsDeleteScriptParams, FsGetChangesParams, FsGetTreeParams, FsReadScriptParams,
-    FsSearchContentParams, FsWriteScriptParams,
+    FsSearchContentParams, FsWatchChangesParams, FsWriteScriptParams,
     // Studio params
     StudioCreateInstanceParams, StudioDeleteInstanceParams, StudioFindInstancesParams,
     StudioGetDataModelParams, StudioGetScriptSourceParams, StudioModifyScriptParams,
     StudioSetPropertyParams,
 };
+use crate::metrics::ServerMetrics;
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
+use crate::watcher::FileWatcher;
 
 #[derive(Clone)]
 pub struct RobloxMcpServer {
     tool_router: ToolRouter<Self>,
     bridge: Arc<PluginBridge>,
     project_root: PathBuf,
+    /// Open Cloud client for CI/CD operations (optional - only if API key configured)
+    cloud_client: Option<Arc<OpenCloudClient>>,
+    /// File watcher for real-time change detection (optional - may fail on some platforms)
+    file_watcher: Option<Arc<FileWatcher>>,
+    /// Server metrics for monitoring
+    metrics: Arc<ServerMetrics>,
 }
 
 impl RobloxMcpServer {
     pub fn new(bridge: Arc<PluginBridge>, project_root: PathBuf) -> Self {
+        // Try to create cloud client at startup (may fail if no API key)
+        // This is intentional - cloud tools will check availability and return clear error
+        let cloud_client = OpenCloudClient::new().map(Arc::new).ok();
+
+        // Try to create file watcher (may fail on some platforms)
+        let file_watcher = FileWatcher::new(project_root.clone()).map(Arc::new).ok();
+
+        // Always create metrics
+        let metrics = Arc::new(ServerMetrics::new());
+
         Self {
             tool_router: Self::tool_router(),
             bridge,
             project_root,
+            cloud_client,
+            file_watcher,
+            metrics,
         }
     }
 }
@@ -574,6 +601,83 @@ impl RobloxMcpServer {
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
     }
+
+    // === CLOUD TOOLS (1) ===
+    // These tools use the Roblox Open Cloud API for CI/CD automation.
+    // Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable to be set.
+
+    #[tool(description = "Publish a place file (.rbxl) to Roblox via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    async fn cloud_publish_place(
+        &self,
+        Parameters(params): Parameters<CloudPublishPlaceParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Check if cloud client is available
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        let path = PathBuf::from(&params.rbxl_path);
+        let result = client
+            .publish_place(params.universe_id, params.place_id, &path)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "success": true,
+                "version_number": result.version_number,
+                "universe_id": params.universe_id,
+                "place_id": params.place_id
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    // === WATCHER TOOLS (1) ===
+    // These tools provide real-time file change detection.
+
+    #[tool(description = "Poll for recent file changes detected by the file watcher. Returns queued changes (created, modified, deleted .luau files).")]
+    async fn fs_watch_changes(
+        &self,
+        Parameters(params): Parameters<FsWatchChangesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let watcher = self.file_watcher.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "File watcher not available on this platform".to_string(),
+                None,
+            )
+        })?;
+
+        let limit = params.limit.unwrap_or(100);
+        let changes = watcher.poll_changes(limit).await;
+        let pending = watcher.pending_count().await;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "changes": changes,
+                "returned_count": changes.len(),
+                "pending_count": pending
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    // === METRICS TOOLS (1) ===
+    // These tools provide server monitoring and health information.
+
+    #[tool(description = "Get server metrics including tool execution counts, durations, and error rates.")]
+    async fn server_get_metrics(&self) -> Result<CallToolResult, ErrorData> {
+        let snapshot = self.metrics.snapshot().await;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&snapshot)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
 }
 
 #[tool_handler]
@@ -581,7 +685,7 @@ impl ServerHandler for RobloxMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Roblox Studio MCP Server. Provides 6 filesystem tools for .luau script management and 8 Studio bridge tools for live Roblox Studio interaction. Studio tools require the plugin to be connected."
+                "Roblox Studio MCP Server. Provides 6 filesystem tools for .luau script management, 8 Studio bridge tools for live Roblox Studio interaction, 1 Open Cloud tool for CI/CD automation, 1 file watcher tool for change detection, and 1 metrics tool for monitoring. Studio tools require the plugin to be connected. Cloud tools require ROBLOX_OPEN_CLOUD_API_KEY."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
@@ -996,8 +1100,8 @@ mod tests {
         assert!(result.is_err(), "studio_find_instances should fail when bridge is stale");
     }
 
-    #[test]
-    fn test_server_get_info() {
+    #[tokio::test]
+    async fn test_server_get_info() {
         let temp_dir = TempDir::new().unwrap();
         let server = create_test_server(temp_dir.path().to_path_buf());
 
@@ -1006,8 +1110,8 @@ mod tests {
         assert!(info.instructions.unwrap().contains("Roblox Studio MCP Server"));
     }
 
-    #[test]
-    fn test_server_new() {
+    #[tokio::test]
+    async fn test_server_new() {
         let temp_dir = TempDir::new().unwrap();
         let bridge = Arc::new(PluginBridge::new());
         let server = RobloxMcpServer::new(bridge, temp_dir.path().to_path_buf());

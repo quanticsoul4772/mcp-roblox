@@ -138,11 +138,34 @@ async fn result_handler(
     Json(serde_json::json!({ "ok": true }))
 }
 
+/// Health status response for monitoring
+#[derive(Clone, Serialize)]
+pub struct HealthStatus {
+    pub status: &'static str,
+    pub plugin_connected: bool,
+    pub heartbeat_age_secs: f64,
+    pub version: &'static str,
+}
+
+/// HTTP endpoint: Health check for monitoring
+async fn health_handler(State(bridge): State<PluginBridge>) -> Json<HealthStatus> {
+    let heartbeat_age = bridge.last_heartbeat.read().await.elapsed();
+    let connected = heartbeat_age < Duration::from_secs(10);
+
+    Json(HealthStatus {
+        status: if connected { "healthy" } else { "degraded" },
+        plugin_connected: connected,
+        heartbeat_age_secs: heartbeat_age.as_secs_f64(),
+        version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
 /// Create the Axum router for the plugin bridge
 pub fn create_router(bridge: PluginBridge) -> Router {
     Router::new()
         .route("/poll", get(poll_handler))
         .route("/result", post(result_handler))
+        .route("/health", get(health_handler))
         .with_state(bridge)
 }
 

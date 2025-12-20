@@ -117,3 +117,25 @@ pub struct StudioFindInstancesParams {
     #[schemars(description = "Root to search from (default: 'game')")]
     pub root: Option<String>,
 }
+
+// === CLOUD PARAMS ===
+// These parameter structs define the JSON schema for Open Cloud MCP tools
+// All Cloud tools require ROBLOX_OPEN_CLOUD_API_KEY environment variable
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloudPublishPlaceParams {
+    #[schemars(description = "Universe ID from Roblox Creator Dashboard")]
+    pub universe_id: u64,
+    #[schemars(description = "Place ID to publish to")]
+    pub place_id: u64,
+    #[schemars(description = "Path to .rbxl file")]
+    pub rbxl_path: String,
+}
+
+// === WATCHER PARAMS ===
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FsWatchChangesParams {
+    #[schemars(description = "Maximum number of changes to return (default: 100)")]
+    pub limit: Option<usize>,
+}
