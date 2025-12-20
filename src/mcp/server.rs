@@ -20,6 +20,7 @@ use tracing::warn;
 use crate::bridge::http::PluginBridge;
 use crate::cloud::AssetType;
 use crate::cloud::OpenCloudClient;
+use crate::mcp::instrumentation::InstrumentedCall;
 use crate::mcp::params::{
     // Cloud params
     CloudDatastoreGetParams, CloudPublishPlaceParams, CloudUploadAssetParams,
@@ -89,6 +90,11 @@ impl RobloxMcpServer {
             metrics,
         }
     }
+
+    /// Start instrumentation for a tool call
+    fn start_instrumentation(&self, tool_name: &str) -> InstrumentedCall {
+        InstrumentedCall::start(self.metrics.clone(), tool_name)
+    }
 }
 
 #[tool_router]
@@ -100,6 +106,13 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<FsGetTreeParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("fs_get_tree");
+
+        let result = self.fs_get_tree_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn fs_get_tree_impl(&self, params: FsGetTreeParams) -> Result<CallToolResult, ErrorData> {
         let path = PathBuf::from(&params.path);
 
         // Validate path is within project root
@@ -130,6 +143,15 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<FsReadScriptParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("fs_read_script");
+        let result = self.fs_read_script_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn fs_read_script_impl(
+        &self,
+        params: FsReadScriptParams,
+    ) -> Result<CallToolResult, ErrorData> {
         let path = PathBuf::from(&params.file_path);
 
         // Validate path is within project root
@@ -150,6 +172,15 @@ impl RobloxMcpServer {
     async fn fs_write_script(
         &self,
         Parameters(params): Parameters<FsWriteScriptParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("fs_write_script");
+        let result = self.fs_write_script_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn fs_write_script_impl(
+        &self,
+        params: FsWriteScriptParams,
     ) -> Result<CallToolResult, ErrorData> {
         let path = PathBuf::from(&params.file_path);
 
@@ -215,6 +246,15 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<FsDeleteScriptParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("fs_delete_script");
+        let result = self.fs_delete_script_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn fs_delete_script_impl(
+        &self,
+        params: FsDeleteScriptParams,
+    ) -> Result<CallToolResult, ErrorData> {
         let path = PathBuf::from(&params.file_path);
 
         // Validate path is within project root
@@ -254,6 +294,15 @@ impl RobloxMcpServer {
     async fn fs_search_content(
         &self,
         Parameters(params): Parameters<FsSearchContentParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("fs_search_content");
+        let result = self.fs_search_content_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn fs_search_content_impl(
+        &self,
+        params: FsSearchContentParams,
     ) -> Result<CallToolResult, ErrorData> {
         let path = PathBuf::from(&params.path);
 
@@ -350,6 +399,15 @@ impl RobloxMcpServer {
     async fn fs_get_changes(
         &self,
         Parameters(params): Parameters<FsGetChangesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("fs_get_changes");
+        let result = self.fs_get_changes_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn fs_get_changes_impl(
+        &self,
+        params: FsGetChangesParams,
     ) -> Result<CallToolResult, ErrorData> {
         let path = PathBuf::from(&params.path);
 
@@ -454,6 +512,15 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<FsLintScriptParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("fs_lint_script");
+        let result = self.fs_lint_script_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn fs_lint_script_impl(
+        &self,
+        params: FsLintScriptParams,
+    ) -> Result<CallToolResult, ErrorData> {
         let path = PathBuf::from(&params.file_path);
 
         // Validate path is within project root
@@ -486,6 +553,12 @@ impl RobloxMcpServer {
 
     #[tool(description = "Get currently selected instances in Roblox Studio. Returns array of selected instances with Name, ClassName, and Path.")]
     async fn studio_get_selection(&self) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_get_selection");
+        let result = self.studio_get_selection_impl().await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_get_selection_impl(&self) -> Result<CallToolResult, ErrorData> {
         let result = self
             .bridge
             .execute_command("getSelection", json!({}))
@@ -502,6 +575,15 @@ impl RobloxMcpServer {
     async fn studio_get_datamodel(
         &self,
         Parameters(params): Parameters<StudioGetDataModelParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_get_datamodel");
+        let result = self.studio_get_datamodel_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_get_datamodel_impl(
+        &self,
+        params: StudioGetDataModelParams,
     ) -> Result<CallToolResult, ErrorData> {
         let result = self
             .bridge
@@ -522,6 +604,15 @@ impl RobloxMcpServer {
     async fn studio_get_datamodel_paginated(
         &self,
         Parameters(params): Parameters<StudioGetDataModelPaginatedParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_get_datamodel_paginated");
+        let result = self.studio_get_datamodel_paginated_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_get_datamodel_paginated_impl(
+        &self,
+        params: StudioGetDataModelPaginatedParams,
     ) -> Result<CallToolResult, ErrorData> {
         let max_depth = params.max_depth.unwrap_or(3);
         let limit = params.limit.unwrap_or(500).min(1000);
@@ -552,6 +643,15 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<StudioGetScriptSourceParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_get_script_source");
+        let result = self.studio_get_script_source_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_get_script_source_impl(
+        &self,
+        params: StudioGetScriptSourceParams,
+    ) -> Result<CallToolResult, ErrorData> {
         let result = self
             .bridge
             .execute_command("getScriptSource", json!({ "path": params.path }))
@@ -568,6 +668,15 @@ impl RobloxMcpServer {
     async fn studio_modify_script(
         &self,
         Parameters(params): Parameters<StudioModifyScriptParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_modify_script");
+        let result = self.studio_modify_script_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_modify_script_impl(
+        &self,
+        params: StudioModifyScriptParams,
     ) -> Result<CallToolResult, ErrorData> {
         let result = self
             .bridge
@@ -592,6 +701,15 @@ impl RobloxMcpServer {
     async fn studio_create_instance(
         &self,
         Parameters(params): Parameters<StudioCreateInstanceParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_create_instance");
+        let result = self.studio_create_instance_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_create_instance_impl(
+        &self,
+        params: StudioCreateInstanceParams,
     ) -> Result<CallToolResult, ErrorData> {
         let result = self
             .bridge
@@ -619,6 +737,15 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<StudioSetPropertyParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_set_property");
+        let result = self.studio_set_property_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_set_property_impl(
+        &self,
+        params: StudioSetPropertyParams,
+    ) -> Result<CallToolResult, ErrorData> {
         let result = self
             .bridge
             .execute_command(
@@ -644,6 +771,15 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<StudioDeleteInstanceParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_delete_instance");
+        let result = self.studio_delete_instance_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_delete_instance_impl(
+        &self,
+        params: StudioDeleteInstanceParams,
+    ) -> Result<CallToolResult, ErrorData> {
         let result = self
             .bridge
             .execute_command(
@@ -667,6 +803,15 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<StudioFindInstancesParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_find_instances");
+        let result = self.studio_find_instances_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_find_instances_impl(
+        &self,
+        params: StudioFindInstancesParams,
+    ) -> Result<CallToolResult, ErrorData> {
         let result = self
             .bridge
             .execute_command(
@@ -685,7 +830,7 @@ impl RobloxMcpServer {
         )]))
     }
 
-    // === CLOUD TOOLS (1) ===
+    // === CLOUD TOOLS (3) ===
     // These tools use the Roblox Open Cloud API for CI/CD automation.
     // Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable to be set.
 
@@ -693,6 +838,15 @@ impl RobloxMcpServer {
     async fn cloud_publish_place(
         &self,
         Parameters(params): Parameters<CloudPublishPlaceParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_publish_place");
+        let result = self.cloud_publish_place_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_publish_place_impl(
+        &self,
+        params: CloudPublishPlaceParams,
     ) -> Result<CallToolResult, ErrorData> {
         // Check if cloud client is available
         let client = self.cloud_client.as_ref().ok_or_else(|| {
@@ -724,6 +878,15 @@ impl RobloxMcpServer {
     async fn cloud_upload_asset(
         &self,
         Parameters(params): Parameters<CloudUploadAssetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_upload_asset");
+        let result = self.cloud_upload_asset_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_upload_asset_impl(
+        &self,
+        params: CloudUploadAssetParams,
     ) -> Result<CallToolResult, ErrorData> {
         // Check if cloud client is available
         let client = self.cloud_client.as_ref().ok_or_else(|| {
@@ -765,6 +928,15 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<CloudDatastoreGetParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_datastore_get");
+        let result = self.cloud_datastore_get_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_datastore_get_impl(
+        &self,
+        params: CloudDatastoreGetParams,
+    ) -> Result<CallToolResult, ErrorData> {
         // Check if cloud client is available
         let client = self.cloud_client.as_ref().ok_or_else(|| {
             ErrorData::internal_error(
@@ -803,6 +975,15 @@ impl RobloxMcpServer {
         &self,
         Parameters(params): Parameters<FsWatchChangesParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("fs_watch_changes");
+        let result = self.fs_watch_changes_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn fs_watch_changes_impl(
+        &self,
+        params: FsWatchChangesParams,
+    ) -> Result<CallToolResult, ErrorData> {
         let watcher = self.file_watcher.as_ref().ok_or_else(|| {
             ErrorData::internal_error(
                 "File watcher not available on this platform".to_string(),
@@ -829,6 +1010,8 @@ impl RobloxMcpServer {
 
     #[tool(description = "Get server metrics including tool execution counts, durations, and error rates.")]
     async fn server_get_metrics(&self) -> Result<CallToolResult, ErrorData> {
+        // Note: We don't instrument server_get_metrics itself to avoid recursion
+        // and because it's a meta-tool for observing metrics, not a primary tool
         let snapshot = self.metrics.snapshot().await;
 
         Ok(CallToolResult::success(vec![Content::text(

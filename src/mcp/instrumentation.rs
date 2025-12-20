@@ -3,6 +3,7 @@
 //! Provides a wrapper to automatically record tool execution metrics.
 
 use crate::metrics::ServerMetrics;
+use rmcp::ErrorData;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -41,6 +42,14 @@ impl InstrumentedCall {
         if !success {
             tool_metrics.record_error();
         }
+    }
+
+    /// Finish and return the result, recording success/failure based on Result type
+    ///
+    /// This is a convenience method for the common pattern of instrumenting tool calls.
+    pub async fn finish_with<T>(self, result: Result<T, ErrorData>) -> Result<T, ErrorData> {
+        self.finish(result.is_ok()).await;
+        result
     }
 }
 
