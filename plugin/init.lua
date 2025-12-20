@@ -89,6 +89,102 @@ local function executeCommand(action, params)
         local maxDepth = params.maxDepth or 3
         return serializeInstance(game, 0, maxDepth)
 
+    elseif action == "getDataModelPaginated" then
+        -- Paginated DataModel traversal to avoid context overflow
+        -- Uses breadth-first traversal with cursor-based pagination
+        local startPath = params.startPath or "game"
+        local maxDepth = params.maxDepth or 3
+        local limit = params.limit or 500
+        local cursor = params.cursor  -- Format: "path:childIndex" or nil for start
+
+        -- Find the starting instance
+        local startInstance
+        if startPath == "game" then
+            startInstance = game
+        else
+            startInstance = game:FindFirstChild(startPath, true)
+            if not startInstance then
+                error("Start path not found: " .. startPath)
+            end
+        end
+
+        -- Parse cursor if provided (format: "fullPath:childIndex")
+        local cursorPath, cursorIndex
+        if cursor then
+            local colonPos = cursor:find(":[^:]*$")  -- Find last colon
+            if colonPos then
+                cursorPath = cursor:sub(1, colonPos - 1)
+                cursorIndex = tonumber(cursor:sub(colonPos + 1))
+            end
+        end
+
+        local instances = {}
+        local count = 0
+        local nextCursor = nil
+        local reachedCursor = (cursor == nil)  -- If no cursor, start immediately
+
+        -- Breadth-first traversal with depth tracking
+        local queue = {{instance = startInstance, depth = 0}}
+
+        while #queue > 0 and count < limit do
+            local current = table.remove(queue, 1)
+            local inst = current.instance
+            local depth = current.depth
+
+            -- Check if we've reached the cursor position
+            if not reachedCursor then
+                if inst:GetFullName() == cursorPath then
+                    reachedCursor = true
+                    -- Skip to the child index specified in cursor
+                    local children = inst:GetChildren()
+                    for i = (cursorIndex or 1), #children do
+                        if depth + 1 < maxDepth then
+                            table.insert(queue, {instance = children[i], depth = depth + 1})
+                        end
+                    end
+                    goto continue
+                end
+            end
+
+            if reachedCursor then
+                -- Add this instance to results
+                table.insert(instances, {
+                    Name = inst.Name,
+                    ClassName = inst.ClassName,
+                    Path = inst:GetFullName(),
+                    Depth = depth
+                })
+                count = count + 1
+
+                -- Check if we've hit the limit
+                if count >= limit then
+                    -- Find next item for cursor
+                    if #queue > 0 then
+                        local nextInst = queue[1].instance
+                        nextCursor = nextInst:GetFullName() .. ":1"
+                    end
+                    break
+                end
+
+                -- Add children to queue (breadth-first)
+                if depth + 1 < maxDepth then
+                    local children = inst:GetChildren()
+                    for i, child in ipairs(children) do
+                        table.insert(queue, {instance = child, depth = depth + 1})
+                    end
+                end
+            end
+
+            ::continue::
+        end
+
+        return {
+            instances = instances,
+            count = count,
+            hasMore = (nextCursor ~= nil),
+            nextCursor = nextCursor
+        }
+
     elseif action == "createInstance" then
         local success, instance = pcall(function()
             return Instance.new(params.className)
