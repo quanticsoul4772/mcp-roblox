@@ -58,16 +58,19 @@ impl PluginBridge {
         // Create command with UUID
         let id = Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
-        
-        // Register result receiver BEFORE sending command
-        self.pending_results.write().await.insert(id.clone(), tx);
-        
-        // Queue command
-        self.pending_commands.write().await.push(Command {
+
+        // Build command first (takes ownership of id), then clone id for the results map
+        let command = Command {
             id: id.clone(),
             action: action.to_string(),
             params,
-        });
+        };
+
+        // Register result receiver BEFORE sending command
+        self.pending_results.write().await.insert(id, tx);
+
+        // Queue command
+        self.pending_commands.write().await.push(command);
         
         // Wait for response with HARD TIMEOUT - no fallback
         let response = match timeout(Duration::from_secs(30), rx).await {
@@ -118,11 +121,15 @@ async fn result_handler(
     let sender = bridge.pending_results.write().await.remove(&response.id);
     match sender {
         Some(tx) => {
-            if tx.send(response.clone()).is_err() {
+            // Extract data for potential logging before moving response
+            let response_id = response.id.clone();
+            let had_error = response.error.is_some();
+
+            if tx.send(response).is_err() {
                 // Caller timed out before we could deliver the result - LOG THIS
                 warn!(
-                    command_id = %response.id,
-                    had_error = response.error.is_some(),
+                    command_id = %response_id,
+                    had_error = had_error,
                     "Plugin result discarded: caller already timed out"
                 );
             }

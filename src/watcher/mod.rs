@@ -55,21 +55,26 @@ impl FileWatcher {
     pub fn new(project_root: PathBuf) -> Result<Self, RobloxMcpError> {
         let change_queue = Arc::new(RwLock::new(VecDeque::new()));
 
-        let queue_clone = change_queue.clone();
-        let root_clone = project_root.clone();
+        // Use Arc for project_root since it's read-only and shared across many spawned tasks
+        // This makes cloning per-event O(1) pointer increment instead of O(n) path copy
+        let root_arc = Arc::new(project_root.clone());
+
+        // Clone Arc handles for the closure (cheap pointer clones)
+        let queue_for_events = change_queue.clone();
+        let queue_for_errors = change_queue.clone();
 
         // CRITICAL FIX: Capture runtime handle BEFORE creating watcher
         // notify callbacks run on a background thread (not tokio runtime),
         // so tokio::spawn() would panic without explicit handle
         let runtime_handle = Handle::current();
 
-        let error_queue = change_queue.clone();
         let mut watcher =
             notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
                 match res {
                     Ok(event) => {
-                        let queue = queue_clone.clone();
-                        let root = root_clone.clone();
+                        // Arc::clone is O(1) - just atomic increment
+                        let queue = queue_for_events.clone();
+                        let root = root_arc.clone();
 
                         // Use captured handle to spawn on tokio runtime
                         runtime_handle.spawn(async move {
@@ -81,7 +86,7 @@ impl FileWatcher {
                         // This ensures users are notified if file watching stops working
                         error!("File watcher error: {}. File watching may be degraded.", e);
 
-                        let queue = error_queue.clone();
+                        let queue = queue_for_errors.clone();
                         let error_msg = e.to_string();
 
                         runtime_handle.spawn(async move {
@@ -147,7 +152,7 @@ impl FileWatcher {
     async fn handle_event(
         event: Event,
         queue: Arc<RwLock<VecDeque<FileChange>>>,
-        project_root: PathBuf,
+        project_root: Arc<PathBuf>,
     ) {
         for path in event.paths {
             // Only track .luau files
@@ -156,7 +161,7 @@ impl FileWatcher {
             }
 
             let relative_path = path
-                .strip_prefix(&project_root)
+                .strip_prefix(project_root.as_ref())
                 .unwrap_or(&path)
                 .display()
                 .to_string();

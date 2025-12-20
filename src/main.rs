@@ -60,14 +60,16 @@ async fn main() -> Result<()> {
 
     // Spawn HTTP bridge as background task (for plugin communication)
     // Graceful degradation: if port binding fails, MCP server continues without plugin support
-    let http_bridge = bridge.clone();
+    // Note: We clone PluginBridge here (not Arc) because create_router takes PluginBridge by value.
+    // PluginBridge is cheap to clone (just Arc pointers internally).
+    let http_bridge = (*bridge).clone();
 
     // Port is configurable via ROBLOX_MCP_PORT environment variable (default: 8080)
     let port = std::env::var("ROBLOX_MCP_PORT").unwrap_or_else(|_| "8080".to_string());
     let bind_addr = format!("127.0.0.1:{}", port);
 
     tokio::spawn(async move {
-        let app = create_router((*http_bridge).clone());
+        let app = create_router(http_bridge);
 
         // Try to bind to configured port, with graceful fallback on failure
         let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
