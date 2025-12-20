@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, error, warn};
 
 /// Maximum changes to queue before dropping old ones
 const MAX_QUEUE_SIZE: usize = 1000;
@@ -40,6 +40,8 @@ pub enum ChangeKind {
     Created,
     Modified,
     Deleted,
+    /// Watcher error - filesystem watching may have stopped working
+    WatcherError,
 }
 
 /// File watcher that tracks changes to .luau files
@@ -72,15 +74,29 @@ impl FileWatcher {
 
         let mut watcher =
             notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-                if let Ok(event) = res {
-                    let index = index_clone.clone();
-                    let queue = queue_clone.clone();
-                    let root = root_clone.clone();
+                match res {
+                    Ok(event) => {
+                        let index = index_clone.clone();
+                        let queue = queue_clone.clone();
+                        let root = root_clone.clone();
 
-                    // Use captured handle to spawn on tokio runtime
-                    runtime_handle.spawn(async move {
-                        Self::handle_event(event, index, queue, root).await;
-                    });
+                        // Use captured handle to spawn on tokio runtime
+                        runtime_handle.spawn(async move {
+                            Self::handle_event(event, index, queue, root).await;
+                        });
+                    }
+                    Err(e) => {
+                        // NO SILENT FAILURE: Log and queue watcher errors
+                        // This ensures users are notified if file watching stops working
+                        error!("File watcher error: {}. File watching may be degraded.", e);
+
+                        let queue = queue_clone.clone();
+                        let error_msg = e.to_string();
+
+                        runtime_handle.spawn(async move {
+                            Self::queue_error(queue, error_msg).await;
+                        });
+                    }
                 }
             })
             .map_err(|e| RobloxMcpError::WatcherError(e.into()))?;
@@ -117,6 +133,27 @@ impl FileWatcher {
         self.change_queue.read().await.len()
     }
 
+    /// Queue an error event so users are notified of watcher failures
+    async fn queue_error(queue: Arc<RwLock<VecDeque<FileChange>>>, error_msg: String) {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let mut queue = queue.write().await;
+
+        // Enforce queue size limit
+        if queue.len() >= MAX_QUEUE_SIZE {
+            queue.pop_front();
+        }
+
+        queue.push_back(FileChange {
+            path: format!("[WATCHER_ERROR] {}", error_msg),
+            kind: ChangeKind::WatcherError,
+            timestamp,
+        });
+    }
+
     async fn handle_event(
         event: Event,
         index: Arc<RwLock<HashMap<PathBuf, FileMetadata>>>,
@@ -147,18 +184,32 @@ impl FileWatcher {
             // Update index
             match &kind {
                 ChangeKind::Created | ChangeKind::Modified => {
-                    if let Ok(metadata) = tokio::fs::metadata(&path).await {
-                        index.write().await.insert(
-                            path.clone(),
-                            FileMetadata {
-                                mtime: Instant::now(),
-                                size_bytes: metadata.len(),
-                            },
-                        );
+                    match tokio::fs::metadata(&path).await {
+                        Ok(metadata) => {
+                            index.write().await.insert(
+                                path.clone(),
+                                FileMetadata {
+                                    mtime: Instant::now(),
+                                    size_bytes: metadata.len(),
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            // NO SILENT FAILURE: Log metadata errors
+                            // File index may become stale but change is still queued
+                            warn!(
+                                path = %relative_path,
+                                error = %e,
+                                "Failed to read file metadata, index may be stale"
+                            );
+                        }
                     }
                 }
                 ChangeKind::Deleted => {
                     index.write().await.remove(&path);
+                }
+                ChangeKind::WatcherError => {
+                    // WatcherError events don't update the file index
                 }
             }
 
@@ -223,6 +274,9 @@ mod tests {
 
         let deleted = serde_json::to_string(&ChangeKind::Deleted).unwrap();
         assert_eq!(deleted, "\"deleted\"");
+
+        let watcher_error = serde_json::to_string(&ChangeKind::WatcherError).unwrap();
+        assert_eq!(watcher_error, "\"watcher_error\"");
     }
 
     #[test]
