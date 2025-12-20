@@ -5,6 +5,10 @@
 //! - Upload assets (images, models, audio)
 //! - Manage DataStores
 
+mod assets;
 mod client;
+mod datastores;
 
+pub use assets::{AssetType, AssetUploadResult};
 pub use client::OpenCloudClient;
+pub use datastores::DataStoreEntry;

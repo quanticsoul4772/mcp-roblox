@@ -5,9 +5,7 @@ mod cloud;
 mod error;
 mod mcp;
 mod metrics;
-mod tools {
-    pub mod filesystem;
-}
+mod tools;
 mod watcher;
 
 use std::sync::Arc;

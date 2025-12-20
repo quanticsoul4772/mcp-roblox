@@ -21,7 +21,10 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 
 # HTTP client (Open Cloud)
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+
+# URL encoding for DataStore keys
+urlencoding = "2"
 
 # File watching
 notify = "7"

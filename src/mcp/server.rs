@@ -17,19 +17,21 @@ use walkdir::WalkDir;
 
 use crate::bridge::http::PluginBridge;
 use crate::cloud::OpenCloudClient;
+use crate::cloud::AssetType;
 use crate::mcp::params::{
     // Cloud params
-    CloudPublishPlaceParams,
+    CloudDatastoreGetParams, CloudPublishPlaceParams, CloudUploadAssetParams,
     // Filesystem params
-    FsDeleteScriptParams, FsGetChangesParams, FsGetTreeParams, FsReadScriptParams,
-    FsSearchContentParams, FsWatchChangesParams, FsWriteScriptParams,
+    FsDeleteScriptParams, FsGetChangesParams, FsGetTreeParams, FsLintScriptParams,
+    FsReadScriptParams, FsSearchContentParams, FsWatchChangesParams, FsWriteScriptParams,
     // Studio params
     StudioCreateInstanceParams, StudioDeleteInstanceParams, StudioFindInstancesParams,
-    StudioGetDataModelParams, StudioGetScriptSourceParams, StudioModifyScriptParams,
-    StudioSetPropertyParams,
+    StudioGetDataModelPaginatedParams, StudioGetDataModelParams, StudioGetScriptSourceParams,
+    StudioModifyScriptParams, StudioSetPropertyParams,
 };
 use crate::metrics::ServerMetrics;
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
+use crate::tools::linting::lint_script;
 use crate::watcher::FileWatcher;
 
 #[derive(Clone)]
@@ -426,6 +428,37 @@ impl RobloxMcpServer {
         )]))
     }
 
+    #[tool(description = "Run Selene linter on a Luau script file. Returns diagnostics with errors and warnings. Requires 'selene' to be installed (cargo install selene).")]
+    async fn fs_lint_script(
+        &self,
+        Parameters(params): Parameters<FsLintScriptParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let path = PathBuf::from(&params.file_path);
+
+        // Validate path is within project root
+        let validated_path = validate_path(&path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Validate .luau extension
+        if validated_path.extension() != Some(std::ffi::OsStr::new("luau")) {
+            return Err(ErrorData::internal_error(
+                "Only .luau files can be linted".to_string(),
+                None,
+            ));
+        }
+
+        let config_path = params.config_path.map(PathBuf::from);
+
+        let result = lint_script(&validated_path, config_path.as_deref())
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
     // === STUDIO TOOLS (8) ===
     // These tools communicate with Roblox Studio via the HTTP plugin bridge.
     // The plugin must be connected for these tools to work.
@@ -454,6 +487,35 @@ impl RobloxMcpServer {
             .execute_command(
                 "getDataModel",
                 json!({ "maxDepth": params.max_depth.unwrap_or(3) }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Get DataModel with pagination to avoid context overflow for large hierarchies. Returns instances with a cursor for continuation.")]
+    async fn studio_get_datamodel_paginated(
+        &self,
+        Parameters(params): Parameters<StudioGetDataModelPaginatedParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let max_depth = params.max_depth.unwrap_or(3);
+        let limit = params.limit.unwrap_or(500).min(1000);
+        let start_path = params.start_path.unwrap_or_else(|| "game".to_string());
+
+        let result = self
+            .bridge
+            .execute_command(
+                "getDataModelPaginated",
+                json!({
+                    "startPath": start_path,
+                    "maxDepth": max_depth,
+                    "limit": limit,
+                    "cursor": params.cursor,
+                }),
             )
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
@@ -637,6 +699,81 @@ impl RobloxMcpServer {
         )]))
     }
 
+    #[tool(description = "Upload an asset (image, model, or audio) to Roblox via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    async fn cloud_upload_asset(
+        &self,
+        Parameters(params): Parameters<CloudUploadAssetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Check if cloud client is available
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        // Parse asset type
+        let asset_type = AssetType::from_str(&params.asset_type)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        let path = PathBuf::from(&params.file_path);
+        let result = client
+            .upload_asset(
+                asset_type,
+                &path,
+                &params.name,
+                &params.description,
+                params.creator_id,
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "success": true,
+                "operation_path": result.path,
+                "done": result.done
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Get a value from a Roblox DataStore via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    async fn cloud_datastore_get(
+        &self,
+        Parameters(params): Parameters<CloudDatastoreGetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Check if cloud client is available
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        let result = client
+            .datastore_get(
+                params.universe_id,
+                &params.datastore_name,
+                &params.key,
+                params.scope.as_deref(),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "value": result.value,
+                "version": result.version,
+                "created_time": result.created_time,
+                "updated_time": result.updated_time
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
     // === WATCHER TOOLS (1) ===
     // These tools provide real-time file change detection.
 
@@ -685,7 +822,7 @@ impl ServerHandler for RobloxMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Roblox Studio MCP Server. Provides 6 filesystem tools for .luau script management, 8 Studio bridge tools for live Roblox Studio interaction, 1 Open Cloud tool for CI/CD automation, 1 file watcher tool for change detection, and 1 metrics tool for monitoring. Studio tools require the plugin to be connected. Cloud tools require ROBLOX_OPEN_CLOUD_API_KEY."
+                "Roblox Studio MCP Server. Provides 7 filesystem tools for .luau script management (including Selene linting), 9 Studio bridge tools for live Roblox Studio interaction (including paginated DataModel), 3 Open Cloud tools (publish, asset upload, datastore) for CI/CD automation, 1 file watcher tool for change detection, and 1 metrics tool for monitoring. Studio tools require the plugin to be connected. Cloud tools require ROBLOX_OPEN_CLOUD_API_KEY."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

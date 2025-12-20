@@ -27,6 +27,21 @@ pub struct OpenCloudClient {
 }
 
 impl OpenCloudClient {
+    /// Get the HTTP client (for use by extension modules)
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Get the API key (for use by extension modules)
+    pub(crate) fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
+    /// Get the base URL (for use by extension modules)
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     /// Create a new Open Cloud client with connection pooling
     ///
     /// # Errors
