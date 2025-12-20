@@ -6,24 +6,17 @@
 use crate::error::RobloxMcpError;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 /// Maximum changes to queue before dropping old ones
 const MAX_QUEUE_SIZE: usize = 1000;
-
-/// Metadata for tracked files
-#[derive(Debug, Clone)]
-pub struct FileMetadata {
-    pub mtime: Instant,
-    pub size_bytes: u64,
-}
 
 /// A recorded file change event
 #[derive(Debug, Clone, Serialize)]
@@ -46,10 +39,10 @@ pub enum ChangeKind {
 
 /// File watcher that tracks changes to .luau files
 pub struct FileWatcher {
-    #[allow(dead_code)] // Watcher must be kept alive
-    watcher: RecommendedWatcher,
+    /// The underlying filesystem watcher - must be kept alive for watching to continue
     #[allow(dead_code)]
-    file_index: Arc<RwLock<HashMap<PathBuf, FileMetadata>>>,
+    watcher: RecommendedWatcher,
+    /// Queue of file change events waiting to be polled
     change_queue: Arc<RwLock<VecDeque<FileChange>>>,
 }
 
@@ -60,10 +53,8 @@ impl FileWatcher {
     /// The notify callback runs on a background thread, so we capture
     /// the runtime Handle to spawn async tasks correctly.
     pub fn new(project_root: PathBuf) -> Result<Self, RobloxMcpError> {
-        let file_index = Arc::new(RwLock::new(HashMap::new()));
         let change_queue = Arc::new(RwLock::new(VecDeque::new()));
 
-        let index_clone = file_index.clone();
         let queue_clone = change_queue.clone();
         let root_clone = project_root.clone();
 
@@ -72,17 +63,17 @@ impl FileWatcher {
         // so tokio::spawn() would panic without explicit handle
         let runtime_handle = Handle::current();
 
+        let error_queue = change_queue.clone();
         let mut watcher =
             notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
                 match res {
                     Ok(event) => {
-                        let index = index_clone.clone();
                         let queue = queue_clone.clone();
                         let root = root_clone.clone();
 
                         // Use captured handle to spawn on tokio runtime
                         runtime_handle.spawn(async move {
-                            Self::handle_event(event, index, queue, root).await;
+                            Self::handle_event(event, queue, root).await;
                         });
                     }
                     Err(e) => {
@@ -90,7 +81,7 @@ impl FileWatcher {
                         // This ensures users are notified if file watching stops working
                         error!("File watcher error: {}. File watching may be degraded.", e);
 
-                        let queue = queue_clone.clone();
+                        let queue = error_queue.clone();
                         let error_msg = e.to_string();
 
                         runtime_handle.spawn(async move {
@@ -108,7 +99,6 @@ impl FileWatcher {
 
         Ok(Self {
             watcher,
-            file_index,
             change_queue,
         })
     }
@@ -156,7 +146,6 @@ impl FileWatcher {
 
     async fn handle_event(
         event: Event,
-        index: Arc<RwLock<HashMap<PathBuf, FileMetadata>>>,
         queue: Arc<RwLock<VecDeque<FileChange>>>,
         project_root: PathBuf,
     ) {
@@ -180,38 +169,6 @@ impl FileWatcher {
             };
 
             debug!(?kind, path = %relative_path, "File change detected");
-
-            // Update index
-            match &kind {
-                ChangeKind::Created | ChangeKind::Modified => {
-                    match tokio::fs::metadata(&path).await {
-                        Ok(metadata) => {
-                            index.write().await.insert(
-                                path.clone(),
-                                FileMetadata {
-                                    mtime: Instant::now(),
-                                    size_bytes: metadata.len(),
-                                },
-                            );
-                        }
-                        Err(e) => {
-                            // NO SILENT FAILURE: Log metadata errors
-                            // File index may become stale but change is still queued
-                            warn!(
-                                path = %relative_path,
-                                error = %e,
-                                "Failed to read file metadata, index may be stale"
-                            );
-                        }
-                    }
-                }
-                ChangeKind::Deleted => {
-                    index.write().await.remove(&path);
-                }
-                ChangeKind::WatcherError => {
-                    // WatcherError events don't update the file index
-                }
-            }
 
             // Queue change notification
             let timestamp = SystemTime::now()

@@ -15,9 +15,11 @@ use serde_json::json;
 use tokio::fs;
 use walkdir::WalkDir;
 
+use tracing::warn;
+
 use crate::bridge::http::PluginBridge;
-use crate::cloud::OpenCloudClient;
 use crate::cloud::AssetType;
+use crate::cloud::OpenCloudClient;
 use crate::mcp::params::{
     // Cloud params
     CloudDatastoreGetParams, CloudPublishPlaceParams, CloudUploadAssetParams,
@@ -49,12 +51,31 @@ pub struct RobloxMcpServer {
 
 impl RobloxMcpServer {
     pub fn new(bridge: Arc<PluginBridge>, project_root: PathBuf) -> Self {
-        // Try to create cloud client at startup (may fail if no API key)
-        // This is intentional - cloud tools will check availability and return clear error
-        let cloud_client = OpenCloudClient::new().map(Arc::new).ok();
+        // Initialize cloud client with explicit logging on failure
+        // Cloud tools will check availability and return clear error to users
+        let cloud_client = match OpenCloudClient::new() {
+            Ok(client) => Some(Arc::new(client)),
+            Err(e) => {
+                warn!(
+                    "Open Cloud client unavailable: {}. Cloud tools (publish, assets, datastores) will be disabled.",
+                    e
+                );
+                None
+            }
+        };
 
-        // Try to create file watcher (may fail on some platforms)
-        let file_watcher = FileWatcher::new(project_root.clone()).map(Arc::new).ok();
+        // Initialize file watcher with explicit logging on failure
+        // May fail on some platforms or if directory is inaccessible
+        let file_watcher = match FileWatcher::new(project_root.clone()) {
+            Ok(watcher) => Some(Arc::new(watcher)),
+            Err(e) => {
+                warn!(
+                    "File watcher unavailable: {}. Real-time change detection will be disabled.",
+                    e
+                );
+                None
+            }
+        };
 
         // Always create metrics
         let metrics = Arc::new(ServerMetrics::new());

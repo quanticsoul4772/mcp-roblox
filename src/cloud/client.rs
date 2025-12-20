@@ -18,12 +18,21 @@ pub struct PublishResult {
 }
 
 /// Open Cloud API client with connection pooling
-#[derive(Debug)]
 pub struct OpenCloudClient {
     client: Client,
-    #[allow(dead_code)] // API key is used in publish_place, but not in Debug output
     api_key: String,
     base_url: String,
+}
+
+// Manual Debug implementation to avoid exposing API key in logs
+impl std::fmt::Debug for OpenCloudClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenCloudClient")
+            .field("client", &self.client)
+            .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
+            .finish()
+    }
 }
 
 impl OpenCloudClient {

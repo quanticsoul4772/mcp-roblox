@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use rmcp::{transport::stdio, ServiceExt};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::bridge::http::{create_router, PluginBridge};
 use crate::mcp::RobloxMcpServer;
@@ -59,16 +59,34 @@ async fn main() -> Result<()> {
     info!("Project root: {}", project_root.display());
 
     // Spawn HTTP bridge as background task (for plugin communication)
+    // Graceful degradation: if port binding fails, MCP server continues without plugin support
     let http_bridge = bridge.clone();
     tokio::spawn(async move {
         let app = create_router((*http_bridge).clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
-            .await
-            .expect("Failed to bind HTTP bridge to 127.0.0.1:8080");
+
+        // Try to bind to port 8080, with graceful fallback on failure
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:8080").await {
+            Ok(listener) => listener,
+            Err(e) => {
+                error!(
+                    "Failed to bind HTTP bridge to 127.0.0.1:8080: {}. \
+                     Studio plugin communication will be unavailable. \
+                     Ensure port 8080 is not in use by another process.",
+                    e
+                );
+                return; // Exit this task, but don't crash the main server
+            }
+        };
+
         info!("HTTP bridge listening on 127.0.0.1:8080");
-        axum::serve(listener, app)
-            .await
-            .expect("HTTP server error");
+
+        // Serve HTTP requests, logging any errors without crashing
+        if let Err(e) = axum::serve(listener, app).await {
+            error!(
+                "HTTP bridge server error: {}. Plugin communication has stopped.",
+                e
+            );
+        }
     });
 
     // Create MCP server with filesystem tools
