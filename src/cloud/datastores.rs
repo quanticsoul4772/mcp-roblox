@@ -65,7 +65,10 @@ impl super::OpenCloudClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = match response.text().await {
+                Ok(text) => text,
+                Err(e) => format!("[failed to read error response body: {}]", e),
+            };
             return Err(RobloxMcpError::OpenCloudError {
                 status: status.as_u16(),
                 message: body,
