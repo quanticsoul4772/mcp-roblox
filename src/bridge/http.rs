@@ -1,5 +1,4 @@
 use crate::error::RobloxMcpError;
-use rmcp::ErrorData;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -114,7 +113,9 @@ async fn result_handler(
     Json(response): Json<PluginResponse>,
 ) -> Json<serde_json::Value> {
     // Find the waiting receiver and send result
-    if let Some(tx) = bridge.pending_results.write().await.remove(&response.id) {
+    // Extract from write lock before sending to avoid holding lock during send
+    let sender = bridge.pending_results.write().await.remove(&response.id);
+    if let Some(tx) = sender {
         let _ = tx.send(response); // Ignore send errors (caller may have timed out)
     }
     Json(serde_json::json!({ "ok": true }))
@@ -158,7 +159,7 @@ mod tests {
 
         // Manually set last_heartbeat to 15 seconds ago
         *bridge.last_heartbeat.write().await =
-            Instant::now() - Duration::from_secs(15);
+            Instant::now().checked_sub(Duration::from_secs(15)).unwrap();
 
         assert!(!bridge.is_connected().await);
     }
@@ -169,7 +170,7 @@ mod tests {
 
         // Set heartbeat to be stale
         *bridge.last_heartbeat.write().await =
-            Instant::now() - Duration::from_secs(15);
+            Instant::now().checked_sub(Duration::from_secs(15)).unwrap();
 
         let result = bridge
             .execute_command("getSelection", serde_json::json!({}))
@@ -178,7 +179,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             RobloxMcpError::PluginTimeout(_) => (),
-            e => panic!("Expected PluginTimeout, got {:?}", e),
+            e => panic!("Expected PluginTimeout, got {e:?}"),
         }
     }
 
@@ -197,10 +198,12 @@ mod tests {
         // Give time for command to be queued
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // Check command was queued
-        let commands = bridge.pending_commands.read().await;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].action, "testAction");
+        // Check command was queued - drop lock before aborting handle
+        {
+            let commands = bridge.pending_commands.read().await;
+            assert_eq!(commands.len(), 1);
+            assert_eq!(commands[0].action, "testAction");
+        }
 
         // Cancel the waiting handle
         handle.abort();
@@ -212,7 +215,7 @@ mod tests {
 
         // Set old heartbeat
         *bridge.last_heartbeat.write().await =
-            Instant::now() - Duration::from_secs(5);
+            Instant::now().checked_sub(Duration::from_secs(5)).unwrap();
 
         let router = create_router(bridge.clone());
 

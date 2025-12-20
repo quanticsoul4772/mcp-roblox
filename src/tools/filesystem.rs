@@ -9,7 +9,7 @@ pub struct FileTree {
     pub path: String,
     pub name: String,
     pub is_file: bool,
-    pub children: Option<Vec<FileTree>>,
+    pub children: Option<Vec<Self>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -27,16 +27,22 @@ pub struct WriteResult {
 
 /// Validate that a path is within the project root
 pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, RobloxMcpError> {
+    // Canonicalize both paths to ensure consistent comparison
+    // This handles Windows \\?\ prefix and other platform differences
+    let canonical_root = project_root
+        .canonicalize()
+        .map_err(|e| RobloxMcpError::InvalidPath(format!("Cannot canonicalize project root: {e}")))?;
+
     let canonical = requested
         .canonicalize()
         .map_err(|e| RobloxMcpError::InvalidPath(e.to_string()))?;
-    
-    if !canonical.starts_with(project_root) {
+
+    if !canonical.starts_with(&canonical_root) {
         return Err(RobloxMcpError::PathTraversal(
             canonical.display().to_string()
         ));
     }
-    
+
     Ok(canonical)
 }
 
@@ -63,10 +69,10 @@ pub async fn build_tree(path: &Path, current_depth: usize, max_depth: usize) -> 
     let children = if current_depth < max_depth {
         let mut entries = vec![];
         let mut dir = fs::read_dir(path).await?;
-        
+
         while let Some(entry) = dir.next_entry().await? {
             let child_path = entry.path();
-            
+
             // Skip hidden files and node_modules
             if let Some(name) = child_path.file_name() {
                 let name_str = name.to_string_lossy();
@@ -74,12 +80,21 @@ pub async fn build_tree(path: &Path, current_depth: usize, max_depth: usize) -> 
                     continue;
                 }
             }
-            
+
             // Box the recursive call to avoid infinite sized future
             let child_tree = Box::pin(build_tree(&child_path, current_depth + 1, max_depth)).await?;
             entries.push(child_tree);
         }
-        
+
+        // Sort entries: directories first, then files, alphabetically within each group
+        entries.sort_by(|a, b| {
+            match (a.is_file, b.is_file) {
+                (false, true) => std::cmp::Ordering::Less,    // directories before files
+                (true, false) => std::cmp::Ordering::Greater, // files after directories
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()), // alphabetical within group
+            }
+        });
+
         Some(entries)
     } else {
         None
@@ -195,7 +210,7 @@ mod tests {
         if let Err(e) = result {
             match e {
                 RobloxMcpError::InvalidPath(_) => (),
-                _ => panic!("Expected InvalidPath error, got {:?}", e),
+                _ => panic!("Expected InvalidPath error, got {e:?}"),
             }
         }
     }
@@ -214,7 +229,7 @@ mod tests {
                 RobloxMcpError::InvalidPath(msg) => {
                     assert!(msg.contains(".luau"));
                 }
-                _ => panic!("Expected InvalidPath error, got {:?}", e),
+                _ => panic!("Expected InvalidPath error, got {e:?}"),
             }
         }
     }
@@ -247,7 +262,7 @@ mod tests {
                 RobloxMcpError::FileSystemError { path, .. } => {
                     assert!(path.contains("nonexistent.luau"));
                 }
-                _ => panic!("Expected FileSystemError, got {:?}", e),
+                _ => panic!("Expected FileSystemError, got {e:?}"),
             }
         }
     }
