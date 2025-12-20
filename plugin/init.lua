@@ -123,8 +123,71 @@ local function executeCommand(action, params)
             success = true,
             path = instance:GetFullName()
         }
+
+    elseif action == "setProperty" then
+        local instance = game:FindFirstChild(params.path, true)
+        if not instance then
+            error("Instance not found: " .. params.path)
+        end
+
+        if not params.property then
+            error("Property name is required")
+        end
+
+        local success, err = pcall(function()
+            instance[params.property] = params.value
+        end)
+
+        if not success then
+            error("Failed to set property '" .. params.property .. "': " .. tostring(err))
+        end
+
+        if params.recordUndo ~= false then
+            ChangeHistoryService:SetWaypoint("MCP Set Property")
+        end
+
+        return { success = true }
+
+    elseif action == "deleteInstance" then
+        local instance = game:FindFirstChild(params.path, true)
+        if not instance then
+            error("Instance not found: " .. params.path)
+        end
+
+        if params.recordUndo ~= false then
+            ChangeHistoryService:SetWaypoint("MCP Delete Instance")
+        end
+
+        instance:Destroy()
+        return { success = true }
+
+    elseif action == "findInstances" then
+        if not params.className then
+            error("Class name is required")
+        end
+
+        local root = game
+        if params.root then
+            root = game:FindFirstChild(params.root, true)
+            if not root then
+                error("Root not found: " .. params.root)
+            end
+        end
+
+        local results = {}
+        for _, desc in ipairs(root:GetDescendants()) do
+            if desc.ClassName == params.className then
+                table.insert(results, {
+                    Name = desc.Name,
+                    ClassName = desc.ClassName,
+                    Path = desc:GetFullName()
+                })
+            end
+        end
+
+        return { instances = results }
     end
-    
+
     error("Unknown action: " .. action)
 end
 

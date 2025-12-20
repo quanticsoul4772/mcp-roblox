@@ -13,13 +13,20 @@ use tokio::fs;
 use walkdir::WalkDir;
 
 use crate::bridge::http::PluginBridge;
-use crate::mcp::params::{FsGetTreeParams, FsReadScriptParams, FsWriteScriptParams, FsDeleteScriptParams, FsSearchContentParams, FsGetChangesParams};
+use crate::mcp::params::{
+    // Filesystem params
+    FsDeleteScriptParams, FsGetChangesParams, FsGetTreeParams, FsReadScriptParams,
+    FsSearchContentParams, FsWriteScriptParams,
+    // Studio params
+    StudioCreateInstanceParams, StudioDeleteInstanceParams, StudioFindInstancesParams,
+    StudioGetDataModelParams, StudioGetScriptSourceParams, StudioModifyScriptParams,
+    StudioSetPropertyParams,
+};
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
 
 #[derive(Clone)]
 pub struct RobloxMcpServer {
     tool_router: ToolRouter<Self>,
-    #[allow(dead_code)]
     bridge: Arc<PluginBridge>,
     project_root: PathBuf,
 }
@@ -322,6 +329,182 @@ impl RobloxMcpServer {
             .to_string(),
         )]))
     }
+
+    // === STUDIO TOOLS (8) ===
+    // These tools communicate with Roblox Studio via the HTTP plugin bridge.
+    // The plugin must be connected for these tools to work.
+
+    #[tool(description = "Get currently selected instances in Roblox Studio. Returns array of selected instances with Name, ClassName, and Path.")]
+    async fn studio_get_selection(&self) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command("getSelection", json!({}))
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Explore the live Studio DataModel hierarchy. Returns nested structure of instances with Name, ClassName, Path, and Children.")]
+    async fn studio_get_datamodel(
+        &self,
+        Parameters(params): Parameters<StudioGetDataModelParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command(
+                "getDataModel",
+                json!({ "maxDepth": params.max_depth.unwrap_or(3) }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Read script source from a script instance in Studio. Works with Script, LocalScript, and ModuleScript.")]
+    async fn studio_get_script_source(
+        &self,
+        Parameters(params): Parameters<StudioGetScriptSourceParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command("getScriptSource", json!({ "path": params.path }))
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Modify script source in Studio with undo support. Creates a waypoint for undo/redo functionality.")]
+    async fn studio_modify_script(
+        &self,
+        Parameters(params): Parameters<StudioModifyScriptParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command(
+                "modifyScript",
+                json!({
+                    "path": params.path,
+                    "newSource": params.new_source,
+                    "recordUndo": params.record_undo.unwrap_or(true)
+                }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Create a new instance in Studio. Supports setting initial properties and creates an undo waypoint.")]
+    async fn studio_create_instance(
+        &self,
+        Parameters(params): Parameters<StudioCreateInstanceParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command(
+                "createInstance",
+                json!({
+                    "className": params.class_name,
+                    "parent": params.parent,
+                    "name": params.name,
+                    "properties": params.properties,
+                    "recordUndo": params.record_undo.unwrap_or(true)
+                }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Set a property on an instance in Studio. Supports common property types and creates an undo waypoint.")]
+    async fn studio_set_property(
+        &self,
+        Parameters(params): Parameters<StudioSetPropertyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command(
+                "setProperty",
+                json!({
+                    "path": params.path,
+                    "property": params.property,
+                    "value": params.value,
+                    "recordUndo": params.record_undo.unwrap_or(true)
+                }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Delete an instance from Studio. Creates an undo waypoint for recovery.")]
+    async fn studio_delete_instance(
+        &self,
+        Parameters(params): Parameters<StudioDeleteInstanceParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command(
+                "deleteInstance",
+                json!({
+                    "path": params.path,
+                    "recordUndo": params.record_undo.unwrap_or(true)
+                }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(description = "Find all instances of a specific class in Studio. Searches descendants from the specified root.")]
+    async fn studio_find_instances(
+        &self,
+        Parameters(params): Parameters<StudioFindInstancesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command(
+                "findInstances",
+                json!({
+                    "className": params.class_name,
+                    "root": params.root
+                }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
 }
 
 #[tool_handler]
@@ -329,7 +512,7 @@ impl ServerHandler for RobloxMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Roblox Studio MCP Server. Provides filesystem tools for .luau script management."
+                "Roblox Studio MCP Server. Provides 6 filesystem tools for .luau script management and 8 Studio bridge tools for live Roblox Studio interaction. Studio tools require the plugin to be connected."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
