@@ -13,9 +13,10 @@ A Rust MCP (Model Context Protocol) server for Roblox Studio integration. Provid
 - `fs_get_changes` - Get file modification times for change detection
 - `fs_lint_script` - Run Selene linter on Luau scripts (requires Selene installed)
 
-### Studio Tools (8 tools)
+### Studio Tools (10 tools)
 Requires the companion Roblox Studio plugin to be running.
 
+- `studio_health_check` - Check plugin connection status
 - `studio_get_selection` - Get currently selected instances in Studio
 - `studio_get_datamodel` - Explore the live DataModel hierarchy
 - `studio_get_datamodel_paginated` - Paginated DataModel traversal for large hierarchies
@@ -26,12 +27,14 @@ Requires the companion Roblox Studio plugin to be running.
 - `studio_delete_instance` - Delete instances with undo support
 - `studio_find_instances` - Find all instances of a specific class
 
-### Open Cloud Tools (3 tools)
+### Open Cloud Tools (5 tools)
 Requires `ROBLOX_OPEN_CLOUD_API_KEY` environment variable.
 
 - `cloud_publish_place` - Publish .rbxl files to Roblox
 - `cloud_upload_asset` - Upload images, models, or audio
 - `cloud_datastore_get` - Read from DataStores
+- `cloud_datastore_set` - Write to DataStores
+- `cloud_messaging_publish` - Publish messages to MessagingService topics
 
 ### Monitoring Tools (2 tools)
 - `fs_watch_changes` - Poll for real-time file changes
@@ -106,7 +109,8 @@ mcp-roblox/
 │   ├── cloud/
 │   │   ├── client.rs     # Open Cloud API client
 │   │   ├── assets.rs     # Asset upload
-│   │   └── datastores.rs # DataStore operations
+│   │   ├── datastores.rs # DataStore operations
+│   │   └── messaging.rs  # MessagingService operations
 │   ├── tools/
 │   │   ├── filesystem.rs # File operations
 │   │   └── linting.rs    # Selene integration
@@ -135,21 +139,24 @@ cargo build --release
 
 ## Testing
 
-The project includes 98 unit tests covering:
+The project includes 302 unit tests covering:
 - Filesystem operations and path validation
 - HTTP bridge command handling
+- Open Cloud API operations (DataStores, Messaging, Assets)
+- Mock infrastructure for dependency injection
 - Error type conversions
 - Tool parameter serialization
 - Metrics collection
+- File watcher change detection
 
 ```bash
 cargo test
 ```
 
-Integration tests require the compiled binary:
+Integration tests require the compiled binary (they spawn the actual server process):
 
 ```bash
-cargo test --test mcp_integration -- --ignored
+cargo build && cargo test --test mcp_integration -- --ignored
 ```
 
 ## License
