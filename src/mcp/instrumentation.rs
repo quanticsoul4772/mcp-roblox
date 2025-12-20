@@ -6,6 +6,8 @@ use crate::metrics::ServerMetrics;
 use rmcp::ErrorData;
 use std::sync::Arc;
 use std::time::Instant;
+
+#[cfg(debug_assertions)]
 use tracing::warn;
 
 /// RAII guard for instrumenting tool calls

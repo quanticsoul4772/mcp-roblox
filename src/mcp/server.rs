@@ -35,19 +35,20 @@ use crate::mcp::params::{
 };
 use crate::metrics::ServerMetrics;
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
-use crate::tools::linting::lint_script;
+use crate::tools::linting::{Linter, SeleneLinter};
 use crate::watcher::FileWatcher;
 
 /// Roblox MCP Server with injectable dependencies
 ///
 /// Generic over:
 /// - `B`: StudioBridge implementation (default: PluginBridge)
-/// - `H`: HttpClient implementation (default: ReqwestHttpClient via OpenCloudClient)
+/// - `L`: Linter implementation (default: SeleneLinter)
 ///
 /// This allows injecting mock implementations for testing while keeping
 /// production code unchanged.
 #[derive(Clone)]
-pub struct RobloxMcpServer<B: StudioBridge + Clone = PluginBridge> {
+pub struct RobloxMcpServer<B: StudioBridge + Clone = PluginBridge, L: Linter + Clone = SeleneLinter>
+{
     tool_router: ToolRouter<Self>,
     bridge: Arc<B>,
     project_root: PathBuf,
@@ -57,10 +58,12 @@ pub struct RobloxMcpServer<B: StudioBridge + Clone = PluginBridge> {
     file_watcher: Option<Arc<FileWatcher>>,
     /// Server metrics for monitoring
     metrics: Arc<ServerMetrics>,
+    /// Linter for Luau script analysis
+    linter: L,
 }
 
-/// Production constructor for RobloxMcpServer with PluginBridge
-impl RobloxMcpServer<PluginBridge> {
+/// Production constructor for RobloxMcpServer with PluginBridge and SeleneLinter
+impl RobloxMcpServer<PluginBridge, SeleneLinter> {
     pub fn new(bridge: Arc<PluginBridge>, project_root: PathBuf) -> Self {
         // Initialize cloud client with explicit logging on failure
         // Cloud tools will check availability and return clear error to users
@@ -91,6 +94,9 @@ impl RobloxMcpServer<PluginBridge> {
         // Always create metrics
         let metrics = Arc::new(ServerMetrics::new());
 
+        // Initialize Selene linter
+        let linter = SeleneLinter::new();
+
         Self {
             tool_router: Self::tool_router(),
             bridge,
@@ -98,15 +104,17 @@ impl RobloxMcpServer<PluginBridge> {
             cloud_client,
             file_watcher,
             metrics,
+            linter,
         }
     }
 }
 
-/// Generic implementation for any StudioBridge
-impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B> {
-    /// Create a test server with a mock bridge
+/// Generic implementation for any StudioBridge with SeleneLinter default
+impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B, SeleneLinter> {
+    /// Create a test server with a mock bridge (uses SeleneLinter by default)
     ///
-    /// This constructor is used for testing to inject mock dependencies.
+    /// This constructor is used for testing to inject mock bridge dependencies
+    /// while using the production SeleneLinter.
     #[cfg(test)]
     pub fn with_mock_bridge(bridge: Arc<B>, project_root: PathBuf) -> Self {
         Self {
@@ -116,17 +124,42 @@ impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B> {
             cloud_client: None,
             file_watcher: None,
             metrics: Arc::new(ServerMetrics::new()),
+            linter: SeleneLinter::new(),
+        }
+    }
+}
+
+/// Generic implementation for any StudioBridge and Linter
+impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpServer<B, L> {
+    /// Create a test server with a mock bridge and custom linter
+    ///
+    /// This constructor is used for testing to inject both bridge and linter dependencies.
+    #[cfg(test)]
+    pub fn with_mock_bridge_and_linter(
+        bridge: Arc<B>,
+        project_root: PathBuf,
+        linter: L,
+    ) -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+            bridge,
+            project_root,
+            cloud_client: None,
+            file_watcher: None,
+            metrics: Arc::new(ServerMetrics::new()),
+            linter,
         }
     }
 
-    /// Create a test server with mock bridge and cloud client
+    /// Create a test server with mock bridge, cloud client, and linter
     #[cfg(test)]
     #[allow(dead_code)]
     pub fn with_mocks(
         bridge: Arc<B>,
         project_root: PathBuf,
         _cloud_client: Option<Arc<OpenCloudClient>>,
-    ) -> RobloxMcpServer<B> {
+        linter: L,
+    ) -> RobloxMcpServer<B, L> {
         // Note: We can't store generic cloud client, so for full mock testing
         // we'd need a separate test-only server struct. For now, we support
         // mock bridge without cloud client, which covers Studio tool testing.
@@ -137,6 +170,7 @@ impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B> {
             cloud_client: None, // TODO: would need type erasure for full generic support
             file_watcher: None,
             metrics: Arc::new(ServerMetrics::new()),
+            linter,
         }
     }
 
@@ -147,8 +181,8 @@ impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B> {
 }
 
 #[tool_router]
-impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B> {
-    // === FILESYSTEM TOOLS (6) ===
+impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpServer<B, L> {
+    // === FILESYSTEM TOOLS (7) ===
 
     #[tool(description = "List project file structure with depth limits. Returns a tree of files and directories, plus any skipped entries.")]
     async fn fs_get_tree(
@@ -586,7 +620,10 @@ impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B> {
 
         let config_path = params.config_path.map(PathBuf::from);
 
-        let result = lint_script(&validated_path, config_path.as_deref())
+        // Use injected linter for testability
+        let result = self
+            .linter
+            .lint(&validated_path, config_path.as_deref())
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
@@ -1071,7 +1108,9 @@ impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B> {
 }
 
 #[tool_handler]
-impl<B: StudioBridge + Clone + 'static> ServerHandler for RobloxMcpServer<B> {
+impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> ServerHandler
+    for RobloxMcpServer<B, L>
+{
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
@@ -1514,7 +1553,7 @@ mod tests {
 
     use crate::bridge::mock::MockBridge;
 
-    fn create_mock_server(project_root: PathBuf) -> RobloxMcpServer<MockBridge> {
+    fn create_mock_server(project_root: PathBuf) -> RobloxMcpServer<MockBridge, SeleneLinter> {
         let mock = MockBridge::new();
         RobloxMcpServer::with_mock_bridge(Arc::new(mock), project_root)
     }
@@ -1522,7 +1561,7 @@ mod tests {
     fn create_mock_server_with_responses(
         project_root: PathBuf,
         responses: impl IntoIterator<Item = (&'static str, serde_json::Value)>,
-    ) -> (RobloxMcpServer<MockBridge>, Arc<MockBridge>) {
+    ) -> (RobloxMcpServer<MockBridge, SeleneLinter>, Arc<MockBridge>) {
         let mock = Arc::new(MockBridge::new());
         for (action, response) in responses {
             mock.set_response(action, response);
