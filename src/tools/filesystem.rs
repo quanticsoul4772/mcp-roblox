@@ -27,16 +27,22 @@ pub struct WriteResult {
 
 /// Validate that a path is within the project root
 pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, RobloxMcpError> {
+    // Canonicalize both paths to ensure consistent comparison
+    // This handles Windows \\?\ prefix and other platform differences
+    let canonical_root = project_root
+        .canonicalize()
+        .map_err(|e| RobloxMcpError::InvalidPath(format!("Cannot canonicalize project root: {e}")))?;
+
     let canonical = requested
         .canonicalize()
         .map_err(|e| RobloxMcpError::InvalidPath(e.to_string()))?;
-    
-    if !canonical.starts_with(project_root) {
+
+    if !canonical.starts_with(&canonical_root) {
         return Err(RobloxMcpError::PathTraversal(
             canonical.display().to_string()
         ));
     }
-    
+
     Ok(canonical)
 }
 

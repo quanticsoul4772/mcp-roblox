@@ -6,7 +6,7 @@ use regex::Regex;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
-    tool, tool_router, ErrorData, ServerHandler,
+    tool, tool_handler, tool_router, ErrorData, ServerHandler,
 };
 use serde_json::json;
 use tokio::fs;
@@ -324,6 +324,7 @@ impl RobloxMcpServer {
     }
 }
 
+#[tool_handler]
 impl ServerHandler for RobloxMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
