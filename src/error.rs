@@ -28,16 +28,10 @@ pub enum RobloxMcpError {
 
     // HTTP errors differentiated by category for proper MCP error code mapping
     #[error("Plugin request failed (client error {status}): {message}")]
-    HttpClientError {
-        status: u16,
-        message: String,
-    },
+    HttpClientError { status: u16, message: String },
 
     #[error("Plugin request failed (server error {status}): {message}")]
-    HttpServerError {
-        status: u16,
-        message: String,
-    },
+    HttpServerError { status: u16, message: String },
 
     #[error("Plugin connection failed: {0}")]
     HttpConnectionError(String),
@@ -58,7 +52,6 @@ pub enum RobloxMcpError {
     WatcherError(#[from] notify::Error),
 
     // === Phase 3: Open Cloud Integration ===
-
     #[error("Open Cloud API error (HTTP {status}): {message}")]
     OpenCloudError { status: u16, message: String },
 
@@ -78,17 +71,13 @@ impl From<RobloxMcpError> for ErrorData {
             RobloxMcpError::HttpClientError { .. }
             | RobloxMcpError::InvalidPath(_)
             | RobloxMcpError::PathTraversal(_)
-            | RobloxMcpError::InvalidStudioData(_) => {
-                Self::invalid_request(err.to_string(), None)
-            }
+            | RobloxMcpError::InvalidStudioData(_) => Self::invalid_request(err.to_string(), None),
 
             // Server/infrastructure errors (5xx) → Internal Error (-32603)
             RobloxMcpError::HttpServerError { .. }
             | RobloxMcpError::FileSystemError { .. }
             | RobloxMcpError::SerializationError(_)
-            | RobloxMcpError::WatcherError(_) => {
-                Self::internal_error(err.to_string(), None)
-            }
+            | RobloxMcpError::WatcherError(_) => Self::internal_error(err.to_string(), None),
 
             // Connection/availability errors → Custom server error (-32002)
             RobloxMcpError::PluginTimeout(_)
@@ -99,9 +88,7 @@ impl From<RobloxMcpError> for ErrorData {
             }
 
             // Plugin execution errors → Internal Error (-32603)
-            RobloxMcpError::PluginExecutionError(_) => {
-                Self::internal_error(err.to_string(), None)
-            }
+            RobloxMcpError::PluginExecutionError(_) => Self::internal_error(err.to_string(), None),
 
             // Open Cloud errors - map based on HTTP status
             RobloxMcpError::OpenCloudError { status, .. } => {
@@ -115,9 +102,7 @@ impl From<RobloxMcpError> for ErrorData {
             }
 
             // Configuration errors → Invalid Request (client should fix config)
-            RobloxMcpError::ConfigError(_) => {
-                Self::invalid_request(err.to_string(), None)
-            }
+            RobloxMcpError::ConfigError(_) => Self::invalid_request(err.to_string(), None),
         }
     }
 }

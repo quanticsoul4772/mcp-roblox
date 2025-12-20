@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::error::RobloxMcpError;
 use super::StudioBridge;
+use crate::error::RobloxMcpError;
 
 /// Internal shared state for MockBridge
 struct MockState {
@@ -62,7 +62,10 @@ impl MockBridge {
     }
 
     /// Set multiple responses at once
-    pub fn set_responses<'a>(&self, responses: impl IntoIterator<Item = (&'a str, serde_json::Value)>) {
+    pub fn set_responses<'a>(
+        &self,
+        responses: impl IntoIterator<Item = (&'a str, serde_json::Value)>,
+    ) {
         let mut state = self.state.lock().unwrap();
         for (action, response) in responses {
             state.responses.insert(action.to_string(), response);

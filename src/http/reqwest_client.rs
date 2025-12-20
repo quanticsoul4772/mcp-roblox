@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::error::RobloxMcpError;
 use super::{FormContent, HttpClient, HttpResponse, MultipartForm};
+use crate::error::RobloxMcpError;
 
 /// Production HTTP client using reqwest with connection pooling
 pub struct ReqwestHttpClient {
@@ -36,7 +36,10 @@ impl ReqwestHttpClient {
             }
         }
 
-        let body = response.bytes().await.map_err(RobloxMcpError::from_reqwest)?;
+        let body = response
+            .bytes()
+            .await
+            .map_err(RobloxMcpError::from_reqwest)?;
 
         Ok(HttpResponse {
             status,
@@ -131,7 +134,11 @@ impl HttpClient for ReqwestHttpClient {
                 FormContent::Text(text) => {
                     req_form = req_form.text(part.name, text);
                 }
-                FormContent::File { filename, content_type, data } => {
+                FormContent::File {
+                    filename,
+                    content_type,
+                    data,
+                } => {
                     let file_part = reqwest::multipart::Part::bytes(data)
                         .file_name(filename)
                         .mime_str(&content_type)

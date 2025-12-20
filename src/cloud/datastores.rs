@@ -58,14 +58,13 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
 
         let response = self
             .http()
-            .get(
-                &url,
-                &[("x-api-key", self.api_key())],
-            )
+            .get(&url, &[("x-api-key", self.api_key())])
             .await?;
 
         if !response.is_success() {
-            let body = response.text().unwrap_or_else(|_| "[failed to read body]".into());
+            let body = response
+                .text()
+                .unwrap_or_else(|_| "[failed to read body]".into());
             return Err(RobloxMcpError::OpenCloudError {
                 status: response.status,
                 message: body,
@@ -148,7 +147,9 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
             .await?;
 
         if !response.is_success() {
-            let body = response.text().unwrap_or_else(|_| "[failed to read body]".into());
+            let body = response
+                .text()
+                .unwrap_or_else(|_| "[failed to read body]".into());
             return Err(RobloxMcpError::OpenCloudError {
                 status: response.status,
                 message: body,
@@ -342,18 +343,17 @@ mod tests {
     async fn test_datastore_get_success() {
         let mock = MockHttpClient::new();
         mock.queue_response(
-            MockResponse::json(200, serde_json::json!({"coins": 500, "level": 10}))
-                .with_headers([
-                    ("roblox-entry-version".to_string(), "v1234".to_string()),
-                    (
-                        "roblox-entry-created-time".to_string(),
-                        "2024-01-01T00:00:00Z".to_string(),
-                    ),
-                    (
-                        "roblox-entry-version-created-time".to_string(),
-                        "2024-01-02T00:00:00Z".to_string(),
-                    ),
-                ]),
+            MockResponse::json(200, serde_json::json!({"coins": 500, "level": 10})).with_headers([
+                ("roblox-entry-version".to_string(), "v1234".to_string()),
+                (
+                    "roblox-entry-created-time".to_string(),
+                    "2024-01-01T00:00:00Z".to_string(),
+                ),
+                (
+                    "roblox-entry-version-created-time".to_string(),
+                    "2024-01-02T00:00:00Z".to_string(),
+                ),
+            ]),
         );
 
         let client = OpenCloudClient::with_http(mock, "test-api-key");
@@ -395,7 +395,10 @@ mod tests {
 
         let client = OpenCloudClient::with_http(mock.clone(), "test-key");
 
-        client.datastore_get(111, "MyStore", "key", None).await.unwrap();
+        client
+            .datastore_get(111, "MyStore", "key", None)
+            .await
+            .unwrap();
 
         let requests = mock.requests();
         assert_eq!(requests.len(), 1);
@@ -484,7 +487,10 @@ mod tests {
 
         let client = OpenCloudClient::with_http(mock.clone(), "secret-api-key-12345");
 
-        client.datastore_get(999, "TestStore", "testKey", None).await.unwrap();
+        client
+            .datastore_get(999, "TestStore", "testKey", None)
+            .await
+            .unwrap();
 
         let requests = mock.requests();
         assert!(requests[0]
@@ -497,7 +503,10 @@ mod tests {
     async fn test_datastore_get_missing_headers() {
         // Test that missing metadata headers result in empty strings (not errors)
         let mock = MockHttpClient::new();
-        mock.queue_response(MockResponse::json(200, serde_json::json!({"simple": "value"})));
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({"simple": "value"}),
+        ));
 
         let client = OpenCloudClient::with_http(mock, "test-key");
 
@@ -518,18 +527,17 @@ mod tests {
     async fn test_datastore_set_success() {
         let mock = MockHttpClient::new();
         mock.queue_response(
-            MockResponse::json(200, serde_json::json!({}))
-                .with_headers([
-                    ("roblox-entry-version".to_string(), "v5678".to_string()),
-                    (
-                        "roblox-entry-created-time".to_string(),
-                        "2024-01-01T00:00:00Z".to_string(),
-                    ),
-                    (
-                        "roblox-entry-version-created-time".to_string(),
-                        "2024-06-15T12:00:00Z".to_string(),
-                    ),
-                ]),
+            MockResponse::json(200, serde_json::json!({})).with_headers([
+                ("roblox-entry-version".to_string(), "v5678".to_string()),
+                (
+                    "roblox-entry-created-time".to_string(),
+                    "2024-01-01T00:00:00Z".to_string(),
+                ),
+                (
+                    "roblox-entry-version-created-time".to_string(),
+                    "2024-06-15T12:00:00Z".to_string(),
+                ),
+            ]),
         );
 
         let client = OpenCloudClient::with_http(mock, "test-api-key");
@@ -555,7 +563,13 @@ mod tests {
         let client = OpenCloudClient::with_http(mock.clone(), "test-key");
 
         client
-            .datastore_set(111, "MyStore", "key123", serde_json::json!("test"), Some("custom_scope"))
+            .datastore_set(
+                111,
+                "MyStore",
+                "key123",
+                serde_json::json!("test"),
+                Some("custom_scope"),
+            )
             .await
             .unwrap();
 
@@ -628,7 +642,13 @@ mod tests {
 
         // Key with special characters that need URL encoding
         client
-            .datastore_set(123, "My Store", "key/with/slashes", serde_json::json!("test"), None)
+            .datastore_set(
+                123,
+                "My Store",
+                "key/with/slashes",
+                serde_json::json!("test"),
+                None,
+            )
             .await
             .unwrap();
 
@@ -647,7 +667,13 @@ mod tests {
         let client = OpenCloudClient::with_http(mock.clone(), "secret-api-key-12345");
 
         client
-            .datastore_set(999, "TestStore", "testKey", serde_json::json!({"data": true}), None)
+            .datastore_set(
+                999,
+                "TestStore",
+                "testKey",
+                serde_json::json!({"data": true}),
+                None,
+            )
             .await
             .unwrap();
 

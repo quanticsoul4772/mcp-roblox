@@ -37,7 +37,7 @@ impl PluginBridge {
             last_heartbeat: Arc::new(RwLock::new(Instant::now())),
         }
     }
-    
+
     /// Check if plugin is connected (heartbeat within 10 seconds)
     ///
     /// Public API for health checks - used in tests and available for external consumers
@@ -45,7 +45,7 @@ impl PluginBridge {
     pub async fn is_connected(&self) -> bool {
         self.last_heartbeat.read().await.elapsed() < Duration::from_secs(10)
     }
-    
+
     /// Execute a command via the plugin bridge with fast-failure timeout
     pub async fn execute_command(
         &self,
@@ -57,7 +57,7 @@ impl PluginBridge {
         if elapsed > Duration::from_secs(10) {
             return Err(RobloxMcpError::PluginTimeout(elapsed));
         }
-        
+
         // Create command with UUID
         let id = Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
@@ -74,26 +74,26 @@ impl PluginBridge {
 
         // Queue command
         self.pending_commands.write().await.push(command);
-        
+
         // Wait for response with HARD TIMEOUT - no fallback
         let response = match timeout(Duration::from_secs(30), rx).await {
             Ok(Ok(resp)) => resp,
-            Ok(Err(_)) => return Err(RobloxMcpError::PluginExecutionError(
-                "Result channel closed unexpectedly".to_string()
-            )),
+            Ok(Err(_)) => {
+                return Err(RobloxMcpError::PluginExecutionError(
+                    "Result channel closed unexpectedly".to_string(),
+                ))
+            }
             Err(_) => return Err(RobloxMcpError::PluginTimeout(Duration::from_secs(30))),
         };
-        
+
         // Check for plugin-side errors - PROPAGATE IMMEDIATELY
         if let Some(error) = response.error {
             return Err(RobloxMcpError::PluginExecutionError(error));
         }
-        
+
         // Return result or fail if missing
         response.result.ok_or_else(|| {
-            RobloxMcpError::InvalidStudioData(
-                "Plugin returned success but no result".to_string()
-            )
+            RobloxMcpError::InvalidStudioData("Plugin returned success but no result".to_string())
         })
     }
 }
@@ -108,7 +108,7 @@ use axum::{
 async fn poll_handler(State(bridge): State<PluginBridge>) -> Json<Option<Command>> {
     // Update heartbeat
     *bridge.last_heartbeat.write().await = Instant::now();
-    
+
     // Return next pending command if available
     let command = bridge.pending_commands.write().await.pop();
     Json(command)
@@ -467,9 +467,6 @@ mod tests {
         let deserialized: PluginResponse = serde_json::from_str(&json).unwrap();
 
         assert!(deserialized.result.is_none());
-        assert_eq!(
-            deserialized.error.unwrap(),
-            "Script not found"
-        );
+        assert_eq!(deserialized.error.unwrap(), "Script not found");
     }
 }

@@ -5,8 +5,8 @@
 //! This module provides a trait-based abstraction for linting to enable testing
 //! without requiring the external Selene binary.
 
-use async_trait::async_trait;
 use crate::error::RobloxMcpError;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Stdio;
@@ -595,14 +595,21 @@ mod tests {
             warning_count: 0,
         });
 
-        mock.lint(Path::new("/path/to/script.luau"), Some(Path::new("/path/to/selene.toml")))
-            .await
-            .unwrap();
+        mock.lint(
+            Path::new("/path/to/script.luau"),
+            Some(Path::new("/path/to/selene.toml")),
+        )
+        .await
+        .unwrap();
 
         let calls = mock.calls();
         assert_eq!(calls.len(), 1);
         assert!(calls[0].file_path.contains("script.luau"));
-        assert!(calls[0].config_path.as_ref().unwrap().contains("selene.toml"));
+        assert!(calls[0]
+            .config_path
+            .as_ref()
+            .unwrap()
+            .contains("selene.toml"));
     }
 
     #[tokio::test]

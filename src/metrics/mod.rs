@@ -65,8 +65,14 @@ impl ToolMetrics {
             let p95_idx = (sorted.len() as f64 * 0.95) as usize;
             let p99_idx = (sorted.len() as f64 * 0.99) as usize;
 
-            let p95 = sorted.get(p95_idx.min(sorted.len() - 1)).copied().unwrap_or(0);
-            let p99 = sorted.get(p99_idx.min(sorted.len() - 1)).copied().unwrap_or(0);
+            let p95 = sorted
+                .get(p95_idx.min(sorted.len() - 1))
+                .copied()
+                .unwrap_or(0);
+            let p99 = sorted
+                .get(p99_idx.min(sorted.len() - 1))
+                .copied()
+                .unwrap_or(0);
 
             (avg, p95, p99)
         };
@@ -128,8 +134,7 @@ impl ConnectionMetrics {
         } else {
             self.disconnected_checks.fetch_add(1, Ordering::Relaxed);
         }
-        self.last_connected
-            .store(connected, Ordering::Relaxed);
+        self.last_connected.store(connected, Ordering::Relaxed);
     }
 
     /// Get connection metrics snapshot

@@ -80,12 +80,13 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
         creator_id: u64,
     ) -> Result<AssetUploadResult, RobloxMcpError> {
         // Read asset file
-        let content = tokio::fs::read(file_path)
-            .await
-            .map_err(|e| RobloxMcpError::FileSystemError {
-                path: file_path.display().to_string(),
-                source: e,
-            })?;
+        let content =
+            tokio::fs::read(file_path)
+                .await
+                .map_err(|e| RobloxMcpError::FileSystemError {
+                    path: file_path.display().to_string(),
+                    source: e,
+                })?;
 
         let file_name = file_path
             .file_name()
@@ -119,15 +120,13 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
 
         let response = self
             .http()
-            .post_multipart(
-                &url,
-                &[("x-api-key", self.api_key())],
-                form,
-            )
+            .post_multipart(&url, &[("x-api-key", self.api_key())], form)
             .await?;
 
         if !response.is_success() {
-            let body = response.text().unwrap_or_else(|_| "[failed to read body]".into());
+            let body = response
+                .text()
+                .unwrap_or_else(|_| "[failed to read body]".into());
             return Err(RobloxMcpError::OpenCloudError {
                 status: response.status,
                 message: body,
@@ -339,7 +338,10 @@ mod tests {
     #[tokio::test]
     async fn test_upload_asset_api_error() {
         let mock = MockHttpClient::new();
-        mock.queue_response(MockResponse::success(403, b"Forbidden: Insufficient permissions"));
+        mock.queue_response(MockResponse::success(
+            403,
+            b"Forbidden: Insufficient permissions",
+        ));
 
         let client = OpenCloudClient::with_http(mock, "bad-key");
 

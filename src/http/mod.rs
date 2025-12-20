@@ -7,8 +7,8 @@ mod reqwest_client;
 
 pub use reqwest_client::ReqwestHttpClient;
 
-use async_trait::async_trait;
 use crate::error::RobloxMcpError;
+use async_trait::async_trait;
 use std::collections::HashMap;
 
 /// HTTP response abstraction
@@ -150,11 +150,36 @@ mod tests {
 
     #[test]
     fn test_http_response_is_success() {
-        assert!(HttpResponse { status: 200, headers: Default::default(), body: vec![] }.is_success());
-        assert!(HttpResponse { status: 201, headers: Default::default(), body: vec![] }.is_success());
-        assert!(HttpResponse { status: 299, headers: Default::default(), body: vec![] }.is_success());
-        assert!(!HttpResponse { status: 400, headers: Default::default(), body: vec![] }.is_success());
-        assert!(!HttpResponse { status: 500, headers: Default::default(), body: vec![] }.is_success());
+        assert!(HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: vec![]
+        }
+        .is_success());
+        assert!(HttpResponse {
+            status: 201,
+            headers: Default::default(),
+            body: vec![]
+        }
+        .is_success());
+        assert!(HttpResponse {
+            status: 299,
+            headers: Default::default(),
+            body: vec![]
+        }
+        .is_success());
+        assert!(!HttpResponse {
+            status: 400,
+            headers: Default::default(),
+            body: vec![]
+        }
+        .is_success());
+        assert!(!HttpResponse {
+            status: 500,
+            headers: Default::default(),
+            body: vec![]
+        }
+        .is_success());
     }
 
     #[test]
@@ -180,12 +205,17 @@ mod tests {
 
     #[test]
     fn test_multipart_form_builder() {
-        let form = MultipartForm::new()
-            .text("field1", "value1")
-            .file("file1", "test.txt", "text/plain", b"content".to_vec());
+        let form = MultipartForm::new().text("field1", "value1").file(
+            "file1",
+            "test.txt",
+            "text/plain",
+            b"content".to_vec(),
+        );
 
         assert_eq!(form.parts.len(), 2);
         assert!(matches!(&form.parts[0].content, FormContent::Text(s) if s == "value1"));
-        assert!(matches!(&form.parts[1].content, FormContent::File { filename, .. } if filename == "test.txt"));
+        assert!(
+            matches!(&form.parts[1].content, FormContent::File { filename, .. } if filename == "test.txt")
+        );
     }
 }

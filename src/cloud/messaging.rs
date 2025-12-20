@@ -63,7 +63,9 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
             .await?;
 
         if !response.is_success() {
-            let body = response.text().unwrap_or_else(|_| "[failed to read body]".into());
+            let body = response
+                .text()
+                .unwrap_or_else(|_| "[failed to read body]".into());
             return Err(RobloxMcpError::OpenCloudError {
                 status: response.status,
                 message: body,

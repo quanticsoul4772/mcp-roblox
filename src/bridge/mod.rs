@@ -8,8 +8,8 @@ pub mod http;
 #[cfg(test)]
 pub mod mock;
 
-use async_trait::async_trait;
 use crate::error::RobloxMcpError;
+use async_trait::async_trait;
 
 /// Abstraction over Studio plugin communication for testability
 ///
@@ -66,7 +66,9 @@ mod tests {
         let mock = MockBridge::new();
         mock.set_response("getSelection", serde_json::json!({"selected": ["Part1"]}));
 
-        let result = mock.execute_command("getSelection", serde_json::json!({})).await;
+        let result = mock
+            .execute_command("getSelection", serde_json::json!({}))
+            .await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap()["selected"][0], "Part1");
@@ -84,7 +86,9 @@ mod tests {
     async fn test_studio_bridge_mock_no_response() {
         let mock = MockBridge::new();
 
-        let result = mock.execute_command("unknownAction", serde_json::json!({})).await;
+        let result = mock
+            .execute_command("unknownAction", serde_json::json!({}))
+            .await;
 
         assert!(result.is_err());
     }

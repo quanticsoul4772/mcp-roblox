@@ -303,7 +303,8 @@ mod tests {
 
     #[test]
     fn test_studio_get_datamodel_paginated_params_full() {
-        let json = r#"{"max_depth": 3, "start_path": "game.Workspace", "limit": 500, "cursor": "abc123"}"#;
+        let json =
+            r#"{"max_depth": 3, "start_path": "game.Workspace", "limit": 500, "cursor": "abc123"}"#;
         let params: StudioGetDataModelPaginatedParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.max_depth, Some(3));
         assert_eq!(params.start_path, Some("game.Workspace".to_string()));
@@ -330,7 +331,8 @@ mod tests {
 
     #[test]
     fn test_studio_modify_script_params_full() {
-        let json = r#"{"path": "game.Scripts.Test", "new_source": "print('hi')", "record_undo": false}"#;
+        let json =
+            r#"{"path": "game.Scripts.Test", "new_source": "print('hi')", "record_undo": false}"#;
         let params: StudioModifyScriptParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.path, "game.Scripts.Test");
         assert_eq!(params.new_source, "print('hi')");
@@ -380,7 +382,8 @@ mod tests {
 
     #[test]
     fn test_studio_set_property_params_with_complex_value() {
-        let json = r#"{"path": "game.Workspace.Part", "property": "Position", "value": [0, 10, 0]}"#;
+        let json =
+            r#"{"path": "game.Workspace.Part", "property": "Position", "value": [0, 10, 0]}"#;
         let params: StudioSetPropertyParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.path, "game.Workspace.Part");
         assert_eq!(params.property, "Position");

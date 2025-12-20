@@ -102,12 +102,13 @@ impl<H: HttpClient> OpenCloudClient<H> {
         rbxl_path: &Path,
     ) -> Result<PublishResult, RobloxMcpError> {
         // Read .rbxl file
-        let content = tokio::fs::read(rbxl_path)
-            .await
-            .map_err(|e| RobloxMcpError::FileSystemError {
-                path: rbxl_path.display().to_string(),
-                source: e,
-            })?;
+        let content =
+            tokio::fs::read(rbxl_path)
+                .await
+                .map_err(|e| RobloxMcpError::FileSystemError {
+                    path: rbxl_path.display().to_string(),
+                    source: e,
+                })?;
 
         // POST to Open Cloud
         let url = format!(
@@ -129,7 +130,9 @@ impl<H: HttpClient> OpenCloudClient<H> {
             .await?;
 
         if !response.is_success() {
-            let body = response.text().unwrap_or_else(|_| "[failed to read body]".into());
+            let body = response
+                .text()
+                .unwrap_or_else(|_| "[failed to read body]".into());
             return Err(RobloxMcpError::OpenCloudError {
                 status: response.status,
                 message: body,
@@ -170,7 +173,9 @@ mod tests {
 
     #[test]
     fn test_publish_result_serialize() {
-        let result = PublishResult { version_number: 123 };
+        let result = PublishResult {
+            version_number: 123,
+        };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("versionNumber"));
         assert!(json.contains("123"));
@@ -193,7 +198,9 @@ mod tests {
 
     #[test]
     fn test_publish_result_roundtrip() {
-        let original = PublishResult { version_number: 777 };
+        let original = PublishResult {
+            version_number: 777,
+        };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: PublishResult = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.version_number, original.version_number);
@@ -227,7 +234,10 @@ mod tests {
     #[tokio::test]
     async fn test_publish_place_success() {
         let mock = MockHttpClient::new();
-        mock.queue_response(MockResponse::json(200, serde_json::json!({"versionNumber": 42})));
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({"versionNumber": 42}),
+        ));
 
         let client = OpenCloudClient::with_http(mock, "test-api-key");
 
@@ -275,13 +285,19 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RobloxMcpError::FileSystemError { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            RobloxMcpError::FileSystemError { .. }
+        ));
     }
 
     #[tokio::test]
     async fn test_publish_place_sends_correct_headers() {
         let mock = MockHttpClient::new();
-        mock.queue_response(MockResponse::json(200, serde_json::json!({"versionNumber": 1})));
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({"versionNumber": 1}),
+        ));
 
         let client = OpenCloudClient::with_http(mock.clone(), "my-api-key");
 
@@ -293,9 +309,17 @@ mod tests {
 
         let requests = mock.requests();
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].url.contains("/universes/v1/111/places/222/versions"));
-        assert!(requests[0].headers.iter().any(|(k, v)| k == "x-api-key" && v == "my-api-key"));
-        assert!(requests[0].headers.iter().any(|(k, v)| k == "Content-Type" && v == "application/octet-stream"));
+        assert!(requests[0]
+            .url
+            .contains("/universes/v1/111/places/222/versions"));
+        assert!(requests[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "x-api-key" && v == "my-api-key"));
+        assert!(requests[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Content-Type" && v == "application/octet-stream"));
     }
 
     #[tokio::test]
@@ -312,6 +336,9 @@ mod tests {
         let result = client.publish_place(123, 456, &file_path).await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RobloxMcpError::HttpConnectionError(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            RobloxMcpError::HttpConnectionError(_)
+        ));
     }
 }

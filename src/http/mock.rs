@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use crate::error::RobloxMcpError;
 use super::{HttpClient, HttpResponse, MultipartForm};
+use crate::error::RobloxMcpError;
 
 /// Internal shared state for MockHttpClient
 struct MockState {
@@ -139,11 +139,20 @@ impl MockHttpClient {
     }
 
     /// Record a request
-    fn record_request(&self, method: &str, url: &str, headers: &[(&str, &str)], body: Option<Vec<u8>>) {
+    fn record_request(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: Option<Vec<u8>>,
+    ) {
         self.state.lock().unwrap().requests.push(MockRequest {
             method: method.to_string(),
             url: url.to_string(),
-            headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            headers: headers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             body,
         });
     }
@@ -182,7 +191,12 @@ impl HttpClient for MockHttpClient {
         headers: &[(&str, &str)],
         body: serde_json::Value,
     ) -> Result<HttpResponse, RobloxMcpError> {
-        self.record_request("POST", url, headers, Some(serde_json::to_vec(&body).unwrap()));
+        self.record_request(
+            "POST",
+            url,
+            headers,
+            Some(serde_json::to_vec(&body).unwrap()),
+        );
         self.next_response()
     }
 
@@ -249,13 +263,18 @@ mod tests {
         let mock = MockHttpClient::new();
         mock.queue_response(MockResponse::success(200, b"ok"));
 
-        mock.get("http://test.com/api", &[("Authorization", "Bearer token")]).await.unwrap();
+        mock.get("http://test.com/api", &[("Authorization", "Bearer token")])
+            .await
+            .unwrap();
 
         let requests = mock.requests();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].method, "GET");
         assert_eq!(requests[0].url, "http://test.com/api");
-        assert!(requests[0].headers.iter().any(|(k, v)| k == "Authorization" && v == "Bearer token"));
+        assert!(requests[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Authorization" && v == "Bearer token"));
     }
 
     #[tokio::test]
@@ -287,7 +306,10 @@ mod tests {
         let response = MockResponse::success(200, b"body")
             .with_headers([("Content-Type".to_string(), "application/json".to_string())]);
 
-        assert_eq!(response.response.headers.get("Content-Type"), Some(&"application/json".to_string()));
+        assert_eq!(
+            response.response.headers.get("Content-Type"),
+            Some(&"application/json".to_string())
+        );
     }
 
     #[tokio::test]

@@ -43,9 +43,9 @@ pub struct WriteResult {
 pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, RobloxMcpError> {
     // Canonicalize both paths to ensure consistent comparison
     // This handles Windows \\?\ prefix and other platform differences
-    let canonical_root = project_root
-        .canonicalize()
-        .map_err(|e| RobloxMcpError::InvalidPath(format!("Cannot canonicalize project root: {e}")))?;
+    let canonical_root = project_root.canonicalize().map_err(|e| {
+        RobloxMcpError::InvalidPath(format!("Cannot canonicalize project root: {e}"))
+    })?;
 
     let canonical = requested
         .canonicalize()
@@ -53,7 +53,7 @@ pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, R
 
     if !canonical.starts_with(&canonical_root) {
         return Err(RobloxMcpError::PathTraversal(
-            canonical.display().to_string()
+            canonical.display().to_string(),
         ));
     }
 
@@ -62,7 +62,11 @@ pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, R
 
 /// Build a file tree recursively (boxed for async recursion)
 /// Returns both the tree and a list of all skipped entries with reasons
-pub async fn build_tree(path: &Path, current_depth: usize, max_depth: usize) -> Result<TreeBuildResult> {
+pub async fn build_tree(
+    path: &Path,
+    current_depth: usize,
+    max_depth: usize,
+) -> Result<TreeBuildResult> {
     let name = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("Path has no file name: {}", path.display()))?
@@ -120,7 +124,8 @@ pub async fn build_tree(path: &Path, current_depth: usize, max_depth: usize) -> 
             }
 
             // Box the recursive call to avoid infinite sized future
-            let child_result = Box::pin(build_tree(&child_path, current_depth + 1, max_depth)).await?;
+            let child_result =
+                Box::pin(build_tree(&child_path, current_depth + 1, max_depth)).await?;
             entries.push(child_result.tree);
             // Collect skipped entries from children
             all_skipped.extend(child_result.skipped);
@@ -129,7 +134,7 @@ pub async fn build_tree(path: &Path, current_depth: usize, max_depth: usize) -> 
         // Sort entries: directories first, then files, alphabetically within each group
         entries.sort_by(|a, b| {
             match (a.is_file, b.is_file) {
-                (false, true) => std::cmp::Ordering::Less,    // directories before files
+                (false, true) => std::cmp::Ordering::Less, // directories before files
                 (true, false) => std::cmp::Ordering::Greater, // files after directories
                 _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()), // alphabetical within group
             }
@@ -156,17 +161,18 @@ pub async fn read_script(file_path: &Path) -> Result<ScriptContent, RobloxMcpErr
     // Validate .luau extension
     if file_path.extension() != Some(std::ffi::OsStr::new("luau")) {
         return Err(RobloxMcpError::InvalidPath(
-            "Only .luau files supported".to_string()
+            "Only .luau files supported".to_string(),
         ));
     }
-    
-    let content = fs::read_to_string(file_path).await.map_err(|e| {
-        RobloxMcpError::FileSystemError {
-            path: file_path.display().to_string(),
-            source: e,
-        }
-    })?;
-    
+
+    let content =
+        fs::read_to_string(file_path)
+            .await
+            .map_err(|e| RobloxMcpError::FileSystemError {
+                path: file_path.display().to_string(),
+                source: e,
+            })?;
+
     Ok(ScriptContent {
         path: file_path.display().to_string(),
         content: content.clone(),
@@ -183,22 +189,22 @@ pub async fn write_script(
     // Create parent directories if requested
     if create_directories {
         if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                RobloxMcpError::FileSystemError {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| RobloxMcpError::FileSystemError {
                     path: parent.display().to_string(),
                     source: e,
-                }
-            })?;
+                })?;
         }
     }
-    
-    fs::write(file_path, content).await.map_err(|e| {
-        RobloxMcpError::FileSystemError {
+
+    fs::write(file_path, content)
+        .await
+        .map_err(|e| RobloxMcpError::FileSystemError {
             path: file_path.display().to_string(),
             source: e,
-        }
-    })?;
-    
+        })?;
+
     Ok(WriteResult {
         path: file_path.display().to_string(),
         bytes_written: content.len(),
@@ -330,7 +336,11 @@ mod tests {
     #[tokio::test]
     async fn test_write_script_creates_directories() {
         let temp_dir = TempDir::new().unwrap();
-        let nested_file = temp_dir.path().join("deep").join("nested").join("script.luau");
+        let nested_file = temp_dir
+            .path()
+            .join("deep")
+            .join("nested")
+            .join("script.luau");
         let content = "-- nested script";
 
         let result = write_script(&nested_file, content, true).await;
@@ -343,7 +353,11 @@ mod tests {
     #[tokio::test]
     async fn test_write_script_fails_without_create_dirs() {
         let temp_dir = TempDir::new().unwrap();
-        let nested_file = temp_dir.path().join("missing").join("parent").join("script.luau");
+        let nested_file = temp_dir
+            .path()
+            .join("missing")
+            .join("parent")
+            .join("script.luau");
         let content = "-- should fail";
 
         let result = write_script(&nested_file, content, false).await;
@@ -416,10 +430,16 @@ mod tests {
         assert_eq!(children[0].name, "visible.luau");
 
         // MUST report the skipped hidden directory
-        assert!(!result.skipped.is_empty(), "Hidden directory should be reported as skipped");
+        assert!(
+            !result.skipped.is_empty(),
+            "Hidden directory should be reported as skipped"
+        );
         let skipped_hidden = result.skipped.iter().find(|s| s.path.contains(".hidden"));
         assert!(skipped_hidden.is_some(), "Should report .hidden as skipped");
-        assert!(skipped_hidden.unwrap().reason.contains("hidden"), "Should explain why it was skipped");
+        assert!(
+            skipped_hidden.unwrap().reason.contains("hidden"),
+            "Should explain why it was skipped"
+        );
     }
 
     #[tokio::test]
@@ -439,10 +459,22 @@ mod tests {
         assert_eq!(children[0].name, "src.luau");
 
         // MUST report the skipped node_modules directory
-        assert!(!result.skipped.is_empty(), "node_modules should be reported as skipped");
-        let skipped_nm = result.skipped.iter().find(|s| s.path.contains("node_modules"));
-        assert!(skipped_nm.is_some(), "Should report node_modules as skipped");
-        assert!(skipped_nm.unwrap().reason.contains("node_modules"), "Should explain why it was skipped");
+        assert!(
+            !result.skipped.is_empty(),
+            "node_modules should be reported as skipped"
+        );
+        let skipped_nm = result
+            .skipped
+            .iter()
+            .find(|s| s.path.contains("node_modules"));
+        assert!(
+            skipped_nm.is_some(),
+            "Should report node_modules as skipped"
+        );
+        assert!(
+            skipped_nm.unwrap().reason.contains("node_modules"),
+            "Should explain why it was skipped"
+        );
     }
 
     #[test]
@@ -451,14 +483,12 @@ mod tests {
             path: "/project/src".to_string(),
             name: "src".to_string(),
             is_file: false,
-            children: Some(vec![
-                FileTree {
-                    path: "/project/src/main.luau".to_string(),
-                    name: "main.luau".to_string(),
-                    is_file: true,
-                    children: None,
-                }
-            ]),
+            children: Some(vec![FileTree {
+                path: "/project/src/main.luau".to_string(),
+                name: "main.luau".to_string(),
+                is_file: true,
+                children: None,
+            }]),
         };
 
         let json = serde_json::to_string(&tree).unwrap();

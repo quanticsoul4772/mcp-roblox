@@ -68,39 +68,38 @@ impl FileWatcher {
         // so tokio::spawn() would panic without explicit handle
         let runtime_handle = Handle::current();
 
-        let mut watcher =
-            notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-                match res {
-                    Ok(event) => {
-                        // Arc::clone is O(1) - just atomic increment
-                        let queue = queue_for_events.clone();
-                        let root = root_arc.clone();
+        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            match res {
+                Ok(event) => {
+                    // Arc::clone is O(1) - just atomic increment
+                    let queue = queue_for_events.clone();
+                    let root = root_arc.clone();
 
-                        // Use captured handle to spawn on tokio runtime
-                        runtime_handle.spawn(async move {
-                            Self::handle_event(event, queue, root).await;
-                        });
-                    }
-                    Err(e) => {
-                        // NO SILENT FAILURE: Log and queue watcher errors
-                        // This ensures users are notified if file watching stops working
-                        error!("File watcher error: {}. File watching may be degraded.", e);
-
-                        let queue = queue_for_errors.clone();
-                        let error_msg = e.to_string();
-
-                        runtime_handle.spawn(async move {
-                            Self::queue_error(queue, error_msg).await;
-                        });
-                    }
+                    // Use captured handle to spawn on tokio runtime
+                    runtime_handle.spawn(async move {
+                        Self::handle_event(event, queue, root).await;
+                    });
                 }
-            })
-            .map_err(|e| RobloxMcpError::WatcherError(e.into()))?;
+                Err(e) => {
+                    // NO SILENT FAILURE: Log and queue watcher errors
+                    // This ensures users are notified if file watching stops working
+                    error!("File watcher error: {}. File watching may be degraded.", e);
+
+                    let queue = queue_for_errors.clone();
+                    let error_msg = e.to_string();
+
+                    runtime_handle.spawn(async move {
+                        Self::queue_error(queue, error_msg).await;
+                    });
+                }
+            }
+        })
+        .map_err(RobloxMcpError::WatcherError)?;
 
         // Start watching the project root
         watcher
             .watch(&project_root, RecursiveMode::Recursive)
-            .map_err(|e| RobloxMcpError::WatcherError(e.into()))?;
+            .map_err(RobloxMcpError::WatcherError)?;
 
         Ok(Self {
             watcher,

@@ -34,7 +34,7 @@ impl JsonRpcRequest {
 
 /// JSON-RPC 2.0 Response structure
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]  // Fields required for JSON deserialization but not always accessed
+#[allow(dead_code)] // Fields required for JSON deserialization but not always accessed
 struct JsonRpcResponse {
     jsonrpc: String,
     id: Option<u64>,
@@ -45,7 +45,7 @@ struct JsonRpcResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]  // Fields required for JSON deserialization but not always accessed
+#[allow(dead_code)] // Fields required for JSON deserialization but not always accessed
 struct JsonRpcError {
     code: i64,
     message: String,
@@ -242,7 +242,11 @@ fn test_mcp_initialize_handshake() {
     let response = client.initialize().expect("Initialize request failed");
 
     // Verify response structure
-    assert!(response.error.is_none(), "Initialize returned error: {:?}", response.error);
+    assert!(
+        response.error.is_none(),
+        "Initialize returned error: {:?}",
+        response.error
+    );
     assert!(response.result.is_some(), "Initialize returned no result");
 
     let result = response.result.unwrap();
@@ -272,7 +276,9 @@ fn test_tools_list_returns_filesystem_tools() {
 
     // Initialize first
     client.initialize().expect("Initialize failed");
-    client.send_initialized().expect("Initialized notification failed");
+    client
+        .send_initialized()
+        .expect("Initialized notification failed");
 
     // Small delay to ensure server is ready
     std::thread::sleep(Duration::from_millis(100));
@@ -280,7 +286,11 @@ fn test_tools_list_returns_filesystem_tools() {
     // List tools
     let response = client.list_tools().expect("tools/list failed");
 
-    assert!(response.error.is_none(), "tools/list returned error: {:?}", response.error);
+    assert!(
+        response.error.is_none(),
+        "tools/list returned error: {:?}",
+        response.error
+    );
 
     let result = response.result.expect("No result from tools/list");
     let tools = result.get("tools").expect("No tools array in result");
@@ -338,8 +348,14 @@ fn test_tools_list_returns_filesystem_tools() {
     // Verify tools have required fields
     for tool in tools_array {
         assert!(tool.get("name").is_some(), "Tool missing name");
-        assert!(tool.get("description").is_some(), "Tool missing description");
-        assert!(tool.get("inputSchema").is_some(), "Tool missing inputSchema");
+        assert!(
+            tool.get("description").is_some(),
+            "Tool missing description"
+        );
+        assert!(
+            tool.get("inputSchema").is_some(),
+            "Tool missing inputSchema"
+        );
     }
 }
 
@@ -350,7 +366,9 @@ fn test_fs_get_tree_tool() {
 
     // Initialize
     client.initialize().expect("Initialize failed");
-    client.send_initialized().expect("Initialized notification failed");
+    client
+        .send_initialized()
+        .expect("Initialized notification failed");
 
     // Create some test files
     client
@@ -397,9 +415,18 @@ fn test_fs_get_tree_tool() {
     let response: Value = serde_json::from_str(text_content).expect("Failed to parse tree JSON");
 
     // Response should have tree, skipped, and skipped_count fields
-    assert!(response.get("tree").is_some(), "Response should have tree field");
-    assert!(response.get("skipped").is_some(), "Response should have skipped field");
-    assert!(response.get("skipped_count").is_some(), "Response should have skipped_count field");
+    assert!(
+        response.get("tree").is_some(),
+        "Response should have tree field"
+    );
+    assert!(
+        response.get("skipped").is_some(),
+        "Response should have skipped field"
+    );
+    assert!(
+        response.get("skipped_count").is_some(),
+        "Response should have skipped_count field"
+    );
 
     // The tree should have children
     let tree = response.get("tree").expect("No tree in response");
@@ -413,7 +440,9 @@ fn test_fs_read_script_tool() {
 
     // Initialize
     client.initialize().expect("Initialize failed");
-    client.send_initialized().expect("Initialized notification failed");
+    client
+        .send_initialized()
+        .expect("Initialized notification failed");
 
     // Create a test file - returns relative path
     let test_content = "-- Test Luau Script\nlocal x = 42\nprint(x)";
@@ -463,7 +492,9 @@ fn test_fs_write_script_tool() {
 
     // Initialize
     client.initialize().expect("Initialize failed");
-    client.send_initialized().expect("Initialized notification failed");
+    client
+        .send_initialized()
+        .expect("Initialized notification failed");
 
     std::thread::sleep(Duration::from_millis(100));
 
@@ -503,14 +534,22 @@ fn test_fs_search_content_tool() {
 
     // Initialize
     client.initialize().expect("Initialize failed");
-    client.send_initialized().expect("Initialized notification failed");
+    client
+        .send_initialized()
+        .expect("Initialized notification failed");
 
     // Create test files with searchable content
     client
-        .create_test_file("scripts/player.luau", "-- Player module\nlocal Player = {}\nfunction Player:new() end")
+        .create_test_file(
+            "scripts/player.luau",
+            "-- Player module\nlocal Player = {}\nfunction Player:new() end",
+        )
         .expect("Failed to create test file");
     client
-        .create_test_file("scripts/enemy.luau", "-- Enemy module\nlocal Enemy = {}\nfunction Enemy:spawn() end")
+        .create_test_file(
+            "scripts/enemy.luau",
+            "-- Enemy module\nlocal Enemy = {}\nfunction Enemy:spawn() end",
+        )
         .expect("Failed to create test file");
 
     std::thread::sleep(Duration::from_millis(100));
@@ -551,7 +590,9 @@ fn test_fs_delete_script_tool() {
 
     // Initialize
     client.initialize().expect("Initialize failed");
-    client.send_initialized().expect("Initialized notification failed");
+    client
+        .send_initialized()
+        .expect("Initialized notification failed");
 
     // Create a file to delete - returns relative path
     let relative_path = client
@@ -590,7 +631,9 @@ fn test_path_traversal_protection() {
 
     // Initialize
     client.initialize().expect("Initialize failed");
-    client.send_initialized().expect("Initialized notification failed");
+    client
+        .send_initialized()
+        .expect("Initialized notification failed");
 
     std::thread::sleep(Duration::from_millis(100));
 
@@ -638,7 +681,9 @@ fn test_non_luau_file_rejection() {
 
     // Initialize
     client.initialize().expect("Initialize failed");
-    client.send_initialized().expect("Initialized notification failed");
+    client
+        .send_initialized()
+        .expect("Initialized notification failed");
 
     // Create a non-.luau file in the server's working directory
     let txt_path = client.working_dir().join("test.txt");
@@ -683,7 +728,9 @@ fn test_studio_tool_returns_timeout_when_plugin_not_connected() {
 
     // Initialize
     client.initialize().expect("Initialize failed");
-    client.send_initialized().expect("Initialized notification failed");
+    client
+        .send_initialized()
+        .expect("Initialized notification failed");
 
     std::thread::sleep(Duration::from_millis(100));
 

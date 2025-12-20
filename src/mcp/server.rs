@@ -24,15 +24,29 @@ use crate::cloud::OpenCloudClient;
 use crate::mcp::instrumentation::InstrumentedCall;
 use crate::mcp::params::{
     // Cloud params
-    CloudDatastoreGetParams, CloudDatastoreSetParams, CloudMessagingPublishParams,
-    CloudPublishPlaceParams, CloudUploadAssetParams,
+    CloudDatastoreGetParams,
+    CloudDatastoreSetParams,
+    CloudMessagingPublishParams,
+    CloudPublishPlaceParams,
+    CloudUploadAssetParams,
     // Filesystem params
-    FsDeleteScriptParams, FsGetChangesParams, FsGetTreeParams, FsLintScriptParams,
-    FsReadScriptParams, FsSearchContentParams, FsWatchChangesParams, FsWriteScriptParams,
+    FsDeleteScriptParams,
+    FsGetChangesParams,
+    FsGetTreeParams,
+    FsLintScriptParams,
+    FsReadScriptParams,
+    FsSearchContentParams,
+    FsWatchChangesParams,
+    FsWriteScriptParams,
     // Studio params
-    StudioCreateInstanceParams, StudioDeleteInstanceParams, StudioFindInstancesParams,
-    StudioGetDataModelPaginatedParams, StudioGetDataModelParams, StudioGetScriptSourceParams,
-    StudioModifyScriptParams, StudioSetPropertyParams,
+    StudioCreateInstanceParams,
+    StudioDeleteInstanceParams,
+    StudioFindInstancesParams,
+    StudioGetDataModelPaginatedParams,
+    StudioGetDataModelParams,
+    StudioGetScriptSourceParams,
+    StudioModifyScriptParams,
+    StudioSetPropertyParams,
 };
 use crate::metrics::ServerMetrics;
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
@@ -136,11 +150,7 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
     ///
     /// This constructor is used for testing to inject both bridge and linter dependencies.
     #[cfg(test)]
-    pub fn with_mock_bridge_and_linter(
-        bridge: Arc<B>,
-        project_root: PathBuf,
-        linter: L,
-    ) -> Self {
+    pub fn with_mock_bridge_and_linter(bridge: Arc<B>, project_root: PathBuf, linter: L) -> Self {
         Self {
             tool_router: Self::tool_router(),
             bridge,
@@ -185,7 +195,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
 impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpServer<B, L> {
     // === FILESYSTEM TOOLS (7) ===
 
-    #[tool(description = "List project file structure with depth limits. Returns a tree of files and directories, plus any skipped entries.")]
+    #[tool(
+        description = "List project file structure with depth limits. Returns a tree of files and directories, plus any skipped entries."
+    )]
     async fn fs_get_tree(
         &self,
         Parameters(params): Parameters<FsGetTreeParams>,
@@ -252,7 +264,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Write or create a Luau script file. Optionally create parent directories.")]
+    #[tool(
+        description = "Write or create a Luau script file. Optionally create parent directories."
+    )]
     async fn fs_write_script(
         &self,
         Parameters(params): Parameters<FsWriteScriptParams>,
@@ -361,9 +375,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
             ));
         }
 
-        fs::remove_file(&validated_path).await.map_err(|e| {
-            ErrorData::internal_error(format!("Failed to delete file: {e}"), None)
-        })?;
+        fs::remove_file(&validated_path)
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("Failed to delete file: {e}"), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
@@ -374,7 +388,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Search for patterns in script files using regex. Returns matching lines with context.")]
+    #[tool(
+        description = "Search for patterns in script files using regex. Returns matching lines with context."
+    )]
     async fn fs_search_content(
         &self,
         Parameters(params): Parameters<FsSearchContentParams>,
@@ -395,9 +411,8 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         // Compile regex pattern
-        let regex = Regex::new(&params.pattern).map_err(|e| {
-            ErrorData::internal_error(format!("Invalid regex pattern: {e}"), None)
-        })?;
+        let regex = Regex::new(&params.pattern)
+            .map_err(|e| ErrorData::internal_error(format!("Invalid regex pattern: {e}"), None))?;
 
         // Extension is REQUIRED (enforced by schema)
         let extension = params.extension.as_str();
@@ -479,7 +494,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Get file modification times for change detection. Returns a map of file paths to modification timestamps.")]
+    #[tool(
+        description = "Get file modification times for change detection. Returns a map of file paths to modification timestamps."
+    )]
     async fn fs_get_changes(
         &self,
         Parameters(params): Parameters<FsGetChangesParams>,
@@ -591,7 +608,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Run Selene linter on a Luau script file. Returns diagnostics with errors and warnings. Requires 'selene' to be installed (cargo install selene).")]
+    #[tool(
+        description = "Run Selene linter on a Luau script file. Returns diagnostics with errors and warnings. Requires 'selene' to be installed (cargo install selene)."
+    )]
     async fn fs_lint_script(
         &self,
         Parameters(params): Parameters<FsLintScriptParams>,
@@ -638,7 +657,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
     // These tools communicate with Roblox Studio via the HTTP plugin bridge.
     // The plugin must be connected for these tools to work.
 
-    #[tool(description = "Check if Roblox Studio plugin is connected and responsive. Use this before batch operations to avoid timeout errors.")]
+    #[tool(
+        description = "Check if Roblox Studio plugin is connected and responsive. Use this before batch operations to avoid timeout errors."
+    )]
     async fn studio_health_check(&self) -> Result<CallToolResult, ErrorData> {
         let call = self.start_instrumentation("studio_health_check");
         let result = self.studio_health_check_impl().await;
@@ -676,7 +697,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         })
     }
 
-    #[tool(description = "Get currently selected instances in Roblox Studio. Returns array of selected instances with Name, ClassName, and Path.")]
+    #[tool(
+        description = "Get currently selected instances in Roblox Studio. Returns array of selected instances with Name, ClassName, and Path."
+    )]
     async fn studio_get_selection(&self) -> Result<CallToolResult, ErrorData> {
         let call = self.start_instrumentation("studio_get_selection");
         let result = self.studio_get_selection_impl().await;
@@ -696,7 +719,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Explore the live Studio DataModel hierarchy. Returns nested structure of instances with Name, ClassName, Path, and Children.")]
+    #[tool(
+        description = "Explore the live Studio DataModel hierarchy. Returns nested structure of instances with Name, ClassName, Path, and Children."
+    )]
     async fn studio_get_datamodel(
         &self,
         Parameters(params): Parameters<StudioGetDataModelParams>,
@@ -725,7 +750,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Get DataModel with pagination to avoid context overflow for large hierarchies. Returns instances with a cursor for continuation.")]
+    #[tool(
+        description = "Get DataModel with pagination to avoid context overflow for large hierarchies. Returns instances with a cursor for continuation."
+    )]
     async fn studio_get_datamodel_paginated(
         &self,
         Parameters(params): Parameters<StudioGetDataModelPaginatedParams>,
@@ -763,7 +790,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Read script source from a script instance in Studio. Works with Script, LocalScript, and ModuleScript.")]
+    #[tool(
+        description = "Read script source from a script instance in Studio. Works with Script, LocalScript, and ModuleScript."
+    )]
     async fn studio_get_script_source(
         &self,
         Parameters(params): Parameters<StudioGetScriptSourceParams>,
@@ -789,7 +818,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Modify script source in Studio with undo support. Creates a waypoint for undo/redo functionality.")]
+    #[tool(
+        description = "Modify script source in Studio with undo support. Creates a waypoint for undo/redo functionality."
+    )]
     async fn studio_modify_script(
         &self,
         Parameters(params): Parameters<StudioModifyScriptParams>,
@@ -822,7 +853,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Create a new instance in Studio. Supports setting initial properties and creates an undo waypoint.")]
+    #[tool(
+        description = "Create a new instance in Studio. Supports setting initial properties and creates an undo waypoint."
+    )]
     async fn studio_create_instance(
         &self,
         Parameters(params): Parameters<StudioCreateInstanceParams>,
@@ -857,7 +890,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Set a property on an instance in Studio. Supports common property types and creates an undo waypoint.")]
+    #[tool(
+        description = "Set a property on an instance in Studio. Supports common property types and creates an undo waypoint."
+    )]
     async fn studio_set_property(
         &self,
         Parameters(params): Parameters<StudioSetPropertyParams>,
@@ -923,7 +958,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Find all instances of a specific class in Studio. Searches descendants from the specified root.")]
+    #[tool(
+        description = "Find all instances of a specific class in Studio. Searches descendants from the specified root."
+    )]
     async fn studio_find_instances(
         &self,
         Parameters(params): Parameters<StudioFindInstancesParams>,
@@ -959,7 +996,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
     // These tools use the Roblox Open Cloud API for CI/CD automation.
     // Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable to be set.
 
-    #[tool(description = "Publish a place file (.rbxl) to Roblox via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    #[tool(
+        description = "Publish a place file (.rbxl) to Roblox via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
     async fn cloud_publish_place(
         &self,
         Parameters(params): Parameters<CloudPublishPlaceParams>,
@@ -999,7 +1038,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Upload an asset (image, model, or audio) to Roblox via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    #[tool(
+        description = "Upload an asset (image, model, or audio) to Roblox via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
     async fn cloud_upload_asset(
         &self,
         Parameters(params): Parameters<CloudUploadAssetParams>,
@@ -1048,7 +1089,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Get a value from a Roblox DataStore via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    #[tool(
+        description = "Get a value from a Roblox DataStore via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
     async fn cloud_datastore_get(
         &self,
         Parameters(params): Parameters<CloudDatastoreGetParams>,
@@ -1092,7 +1135,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Set a value in a Roblox DataStore via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    #[tool(
+        description = "Set a value in a Roblox DataStore via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
     async fn cloud_datastore_set(
         &self,
         Parameters(params): Parameters<CloudDatastoreSetParams>,
@@ -1138,7 +1183,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
-    #[tool(description = "Publish a message to a Roblox MessagingService topic via Open Cloud API. Messages are delivered to all servers subscribed to the topic. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable.")]
+    #[tool(
+        description = "Publish a message to a Roblox MessagingService topic via Open Cloud API. Messages are delivered to all servers subscribed to the topic. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
     async fn cloud_messaging_publish(
         &self,
         Parameters(params): Parameters<CloudMessagingPublishParams>,
@@ -1184,7 +1231,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
     // === WATCHER TOOLS (1) ===
     // These tools provide real-time file change detection.
 
-    #[tool(description = "Poll for recent file changes detected by the file watcher. Returns queued changes (created, modified, deleted .luau files).")]
+    #[tool(
+        description = "Poll for recent file changes detected by the file watcher. Returns queued changes (created, modified, deleted .luau files)."
+    )]
     async fn fs_watch_changes(
         &self,
         Parameters(params): Parameters<FsWatchChangesParams>,
@@ -1222,7 +1271,9 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
     // === METRICS TOOLS (1) ===
     // These tools provide server monitoring and health information.
 
-    #[tool(description = "Get server metrics including tool execution counts, durations, and error rates.")]
+    #[tool(
+        description = "Get server metrics including tool execution counts, durations, and error rates."
+    )]
     async fn server_get_metrics(&self) -> Result<CallToolResult, ErrorData> {
         // Note: We don't instrument server_get_metrics itself to avoid recursion
         // and because it's a meta-tool for observing metrics, not a primary tool
@@ -1269,8 +1320,9 @@ mod tests {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                *bridge_clone.last_heartbeat.write().await =
-                    std::time::Instant::now().checked_sub(Duration::from_secs(15)).unwrap();
+                *bridge_clone.last_heartbeat.write().await = std::time::Instant::now()
+                    .checked_sub(Duration::from_secs(15))
+                    .unwrap();
             });
         })
         .join()
@@ -1355,7 +1407,10 @@ mod tests {
         };
 
         let result = server.fs_read_script(Parameters(params)).await;
-        assert!(result.is_err(), "fs_read_script should fail for nonexistent file");
+        assert!(
+            result.is_err(),
+            "fs_read_script should fail for nonexistent file"
+        );
     }
 
     #[tokio::test]
@@ -1390,7 +1445,10 @@ mod tests {
         };
 
         let result = server.fs_write_script(Parameters(params)).await;
-        assert!(result.is_err(), "fs_write_script should reject non-.luau files");
+        assert!(
+            result.is_err(),
+            "fs_write_script should reject non-.luau files"
+        );
     }
 
     #[tokio::test]
@@ -1427,7 +1485,10 @@ mod tests {
         };
 
         let result = server.fs_write_script(Parameters(params)).await;
-        assert!(result.is_err(), "fs_write_script should fail when parent doesn't exist");
+        assert!(
+            result.is_err(),
+            "fs_write_script should fail when parent doesn't exist"
+        );
     }
 
     #[tokio::test]
@@ -1459,7 +1520,10 @@ mod tests {
         };
 
         let result = server.fs_delete_script(Parameters(params)).await;
-        assert!(result.is_err(), "fs_delete_script should fail for nonexistent file");
+        assert!(
+            result.is_err(),
+            "fs_delete_script should fail for nonexistent file"
+        );
     }
 
     #[tokio::test]
@@ -1476,7 +1540,10 @@ mod tests {
         };
 
         let result = server.fs_delete_script(Parameters(params)).await;
-        assert!(result.is_err(), "fs_delete_script should reject non-.luau files");
+        assert!(
+            result.is_err(),
+            "fs_delete_script should reject non-.luau files"
+        );
     }
 
     #[tokio::test]
@@ -1518,7 +1585,10 @@ mod tests {
         };
 
         let result = server.fs_search_content(Parameters(params)).await;
-        assert!(result.is_err(), "fs_search_content should fail on invalid regex");
+        assert!(
+            result.is_err(),
+            "fs_search_content should fail on invalid regex"
+        );
     }
 
     #[tokio::test]
@@ -1554,7 +1624,10 @@ mod tests {
         let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
 
         let result = server.studio_get_selection().await;
-        assert!(result.is_err(), "studio_get_selection should fail when bridge is stale");
+        assert!(
+            result.is_err(),
+            "studio_get_selection should fail when bridge is stale"
+        );
     }
 
     #[tokio::test]
@@ -1565,7 +1638,10 @@ mod tests {
         let params = StudioGetDataModelParams { max_depth: Some(3) };
 
         let result = server.studio_get_datamodel(Parameters(params)).await;
-        assert!(result.is_err(), "studio_get_datamodel should fail when bridge is stale");
+        assert!(
+            result.is_err(),
+            "studio_get_datamodel should fail when bridge is stale"
+        );
     }
 
     #[tokio::test]
@@ -1578,7 +1654,10 @@ mod tests {
         };
 
         let result = server.studio_get_script_source(Parameters(params)).await;
-        assert!(result.is_err(), "studio_get_script_source should fail when bridge is stale");
+        assert!(
+            result.is_err(),
+            "studio_get_script_source should fail when bridge is stale"
+        );
     }
 
     #[tokio::test]
@@ -1593,7 +1672,10 @@ mod tests {
         };
 
         let result = server.studio_modify_script(Parameters(params)).await;
-        assert!(result.is_err(), "studio_modify_script should fail when bridge is stale");
+        assert!(
+            result.is_err(),
+            "studio_modify_script should fail when bridge is stale"
+        );
     }
 
     #[tokio::test]
@@ -1610,7 +1692,10 @@ mod tests {
         };
 
         let result = server.studio_create_instance(Parameters(params)).await;
-        assert!(result.is_err(), "studio_create_instance should fail when bridge is stale");
+        assert!(
+            result.is_err(),
+            "studio_create_instance should fail when bridge is stale"
+        );
     }
 
     #[tokio::test]
@@ -1626,7 +1711,10 @@ mod tests {
         };
 
         let result = server.studio_set_property(Parameters(params)).await;
-        assert!(result.is_err(), "studio_set_property should fail when bridge is stale");
+        assert!(
+            result.is_err(),
+            "studio_set_property should fail when bridge is stale"
+        );
     }
 
     #[tokio::test]
@@ -1640,7 +1728,10 @@ mod tests {
         };
 
         let result = server.studio_delete_instance(Parameters(params)).await;
-        assert!(result.is_err(), "studio_delete_instance should fail when bridge is stale");
+        assert!(
+            result.is_err(),
+            "studio_delete_instance should fail when bridge is stale"
+        );
     }
 
     #[tokio::test]
@@ -1654,7 +1745,10 @@ mod tests {
         };
 
         let result = server.studio_find_instances(Parameters(params)).await;
-        assert!(result.is_err(), "studio_find_instances should fail when bridge is stale");
+        assert!(
+            result.is_err(),
+            "studio_find_instances should fail when bridge is stale"
+        );
     }
 
     #[tokio::test]
@@ -1664,7 +1758,10 @@ mod tests {
 
         let info = server.get_info();
         assert!(info.instructions.is_some());
-        assert!(info.instructions.unwrap().contains("Roblox Studio MCP Server"));
+        assert!(info
+            .instructions
+            .unwrap()
+            .contains("Roblox Studio MCP Server"));
     }
 
     #[tokio::test]
@@ -1703,12 +1800,15 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [("getSelection", json!({
-                "selected": [
-                    {"Name": "Part1", "ClassName": "Part", "Path": "game.Workspace.Part1"},
-                    {"Name": "Part2", "ClassName": "Part", "Path": "game.Workspace.Part2"}
-                ]
-            }))],
+            [(
+                "getSelection",
+                json!({
+                    "selected": [
+                        {"Name": "Part1", "ClassName": "Part", "Path": "game.Workspace.Part1"},
+                        {"Name": "Part2", "ClassName": "Part", "Path": "game.Workspace.Part2"}
+                    ]
+                }),
+            )],
         );
 
         let result = server.studio_get_selection().await;
@@ -1730,13 +1830,16 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [("getDataModel", json!({
-                "Name": "DataModel",
-                "ClassName": "DataModel",
-                "Children": [
-                    {"Name": "Workspace", "ClassName": "Workspace", "Children": []}
-                ]
-            }))],
+            [(
+                "getDataModel",
+                json!({
+                    "Name": "DataModel",
+                    "ClassName": "DataModel",
+                    "Children": [
+                        {"Name": "Workspace", "ClassName": "Workspace", "Children": []}
+                    ]
+                }),
+            )],
         );
 
         let params = StudioGetDataModelParams { max_depth: Some(2) };
@@ -1757,14 +1860,17 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [("getDataModelPaginated", json!({
-                "instances": [
-                    {"Name": "Part1", "ClassName": "Part", "Path": "game.Workspace.Part1"},
-                    {"Name": "Part2", "ClassName": "Part", "Path": "game.Workspace.Part2"}
-                ],
-                "cursor": "next_page_token",
-                "hasMore": true
-            }))],
+            [(
+                "getDataModelPaginated",
+                json!({
+                    "instances": [
+                        {"Name": "Part1", "ClassName": "Part", "Path": "game.Workspace.Part1"},
+                        {"Name": "Part2", "ClassName": "Part", "Path": "game.Workspace.Part2"}
+                    ],
+                    "cursor": "next_page_token",
+                    "hasMore": true
+                }),
+            )],
         );
 
         let params = StudioGetDataModelPaginatedParams {
@@ -1773,8 +1879,13 @@ mod tests {
             limit: Some(100),
             cursor: None,
         };
-        let result = server.studio_get_datamodel_paginated(Parameters(params)).await;
-        assert!(result.is_ok(), "studio_get_datamodel_paginated should succeed");
+        let result = server
+            .studio_get_datamodel_paginated(Parameters(params))
+            .await;
+        assert!(
+            result.is_ok(),
+            "studio_get_datamodel_paginated should succeed"
+        );
 
         if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
             assert!(text_content.text.contains("Part1"));
@@ -1791,10 +1902,13 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [("getScriptSource", json!({
-                "source": "-- Main script\nprint('Hello World')",
-                "path": "game.ServerScriptService.Main"
-            }))],
+            [(
+                "getScriptSource",
+                json!({
+                    "source": "-- Main script\nprint('Hello World')",
+                    "path": "game.ServerScriptService.Main"
+                }),
+            )],
         );
 
         let params = StudioGetScriptSourceParams {
@@ -1817,11 +1931,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [("modifyScript", json!({
-                "success": true,
-                "path": "game.ServerScriptService.Main",
-                "undoCreated": true
-            }))],
+            [(
+                "modifyScript",
+                json!({
+                    "success": true,
+                    "path": "game.ServerScriptService.Main",
+                    "undoCreated": true
+                }),
+            )],
         );
 
         let params = StudioModifyScriptParams {
@@ -1846,14 +1963,17 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [("createInstance", json!({
-                "success": true,
-                "instance": {
-                    "Name": "NewPart",
-                    "ClassName": "Part",
-                    "Path": "game.Workspace.NewPart"
-                }
-            }))],
+            [(
+                "createInstance",
+                json!({
+                    "success": true,
+                    "instance": {
+                        "Name": "NewPart",
+                        "ClassName": "Part",
+                        "Path": "game.Workspace.NewPart"
+                    }
+                }),
+            )],
         );
 
         let params = StudioCreateInstanceParams {
@@ -1880,13 +2000,16 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [("setProperty", json!({
-                "success": true,
-                "path": "game.Workspace.Part",
-                "property": "Name",
-                "oldValue": "Part",
-                "newValue": "RenamedPart"
-            }))],
+            [(
+                "setProperty",
+                json!({
+                    "success": true,
+                    "path": "game.Workspace.Part",
+                    "property": "Name",
+                    "oldValue": "Part",
+                    "newValue": "RenamedPart"
+                }),
+            )],
         );
 
         let params = StudioSetPropertyParams {
@@ -1912,11 +2035,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [("deleteInstance", json!({
-                "success": true,
-                "deletedPath": "game.Workspace.Part",
-                "undoCreated": true
-            }))],
+            [(
+                "deleteInstance",
+                json!({
+                    "success": true,
+                    "deletedPath": "game.Workspace.Part",
+                    "undoCreated": true
+                }),
+            )],
         );
 
         let params = StudioDeleteInstanceParams {
@@ -1940,14 +2066,17 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [("findInstances", json!({
-                "instances": [
-                    {"Name": "Part1", "ClassName": "Part", "Path": "game.Workspace.Part1"},
-                    {"Name": "Part2", "ClassName": "Part", "Path": "game.Workspace.Part2"},
-                    {"Name": "Part3", "ClassName": "Part", "Path": "game.Workspace.Folder.Part3"}
-                ],
-                "count": 3
-            }))],
+            [(
+                "findInstances",
+                json!({
+                    "instances": [
+                        {"Name": "Part1", "ClassName": "Part", "Path": "game.Workspace.Part1"},
+                        {"Name": "Part2", "ClassName": "Part", "Path": "game.Workspace.Part2"},
+                        {"Name": "Part3", "ClassName": "Part", "Path": "game.Workspace.Folder.Part3"}
+                    ],
+                    "count": 3
+                }),
+            )],
         );
 
         let params = StudioFindInstancesParams {
@@ -1994,7 +2123,10 @@ mod tests {
             value: json!(0.5),
             record_undo: Some(false),
         };
-        server.studio_set_property(Parameters(params)).await.unwrap();
+        server
+            .studio_set_property(Parameters(params))
+            .await
+            .unwrap();
 
         // Verify the call was recorded with correct params
         let last_call = mock.last_call().unwrap();
@@ -2018,7 +2150,10 @@ mod tests {
 
         // Make some calls
         server.studio_get_selection().await.unwrap();
-        server.studio_get_datamodel(Parameters(StudioGetDataModelParams { max_depth: None })).await.unwrap();
+        server
+            .studio_get_datamodel(Parameters(StudioGetDataModelParams { max_depth: None }))
+            .await
+            .unwrap();
 
         // Verify metrics are tracked
         let metrics_result = server.server_get_metrics().await;
@@ -2059,7 +2194,10 @@ mod tests {
         let server = RobloxMcpServer::with_mock_bridge(mock, temp_dir.path().to_path_buf());
 
         let result = server.studio_health_check().await;
-        assert!(result.is_ok(), "studio_health_check should succeed even when disconnected");
+        assert!(
+            result.is_ok(),
+            "studio_health_check should succeed even when disconnected"
+        );
 
         let call_result = result.unwrap();
         // is_error should be Some(true) when disconnected
@@ -2113,7 +2251,11 @@ mod tests {
         // Verify server is functional
         let info = server.get_info();
         assert!(info.instructions.is_some());
-        assert!(info.instructions.as_ref().unwrap().contains("Roblox Studio MCP Server"));
+        assert!(info
+            .instructions
+            .as_ref()
+            .unwrap()
+            .contains("Roblox Studio MCP Server"));
     }
 
     #[tokio::test]
@@ -2128,7 +2270,8 @@ mod tests {
         std::fs::write(&script_path, "local x = 1").unwrap();
 
         let mock_bridge = Arc::new(MockBridge::new());
-        let mock_linter = MockLinter::with_warnings(vec![("unused_variable", "x is never used", 1)]);
+        let mock_linter =
+            MockLinter::with_warnings(vec![("unused_variable", "x is never used", 1)]);
 
         let server = RobloxMcpServer::with_mock_bridge_and_linter(
             mock_bridge.clone(),
@@ -2146,7 +2289,11 @@ mod tests {
             config_path: None,
         };
         let result = server.fs_lint_script_impl(params).await;
-        assert!(result.is_ok(), "fs_lint_script_impl failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "fs_lint_script_impl failed: {:?}",
+            result.err()
+        );
 
         // Verify custom linter was used (it should have recorded the call)
         assert!(mock_linter.call_count() > 0);
