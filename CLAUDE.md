@@ -1,98 +1,71 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
-## Project Status
+## Project Overview
 
-**SKELETON ONLY - NOT FUNCTIONAL.** This is a Rust MCP server project for Roblox Studio integration. Currently only has HTTP bridge skeleton - no MCP tools are implemented yet.
+Rust MCP server for Roblox Studio integration. Provides 18 MCP tools for filesystem operations, live Studio manipulation, and Open Cloud API access.
 
-## Build & Run Commands
+## Build and Test Commands
 
-```powershell
-# Build the project
-cargo build
-
-# Run the server (starts HTTP bridge on 127.0.0.1:8080)
-cargo run
-
-# Check for errors without building
-cargo check
-
-# Run tests (none exist yet)
-cargo test
-
-# Build optimized release binary
-cargo build --release
+```bash
+cargo build          # Build debug binary
+cargo build --release # Build optimized release binary
+cargo test           # Run 98 unit tests
+cargo check          # Check for errors without building
+cargo run            # Run the server
 ```
 
-Binary output: `target\debug\roblox-studio-mcp.exe` (or `target\release\` for release builds)
+Binary output: `target/debug/roblox-studio-mcp` or `target/release/roblox-studio-mcp`
 
 ## Architecture
 
-### Two-Part System
-1. **Rust MCP Server** (`src/`) - Runs locally, will expose MCP tools to AI assistants
-2. **Roblox Studio Plugin** (`plugin/init.lua`) - Runs inside Studio, executes commands via HTTP polling
+Two-part system:
+1. Rust MCP Server (src/) - Exposes MCP tools via STDIO transport
+2. Roblox Studio Plugin (plugin/init.lua) - Executes commands in Studio via HTTP polling
 
-### Communication Flow
+Communication flow:
 ```
-AI Assistant <--MCP--> Rust Server <--HTTP--> Studio Plugin <--API--> Roblox Studio
-                         (8080)       poll/result
+MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Studio
 ```
 
-### Key Components
+## Key Source Files
 
-**`src/main.rs`** - Entry point. Initializes logging with tracing and starts Axum HTTP server on localhost:8080.
+- `src/main.rs` - Entry point, STDIO transport, HTTP bridge spawning
+- `src/mcp/server.rs` - All 18 MCP tool implementations
+- `src/mcp/params.rs` - Tool parameter structs with JSON Schema
+- `src/bridge/http.rs` - Plugin HTTP communication (poll/result endpoints)
+- `src/cloud/` - Open Cloud API client for publishing and assets
+- `src/tools/filesystem.rs` - File operations with path validation
+- `src/watcher/mod.rs` - File change detection
+- `src/metrics/mod.rs` - Tool execution metrics
+- `plugin/init.lua` - Roblox Studio plugin
 
-**`src/bridge/http.rs`** - Plugin communication bridge:
-- `PluginBridge` struct manages command queue and result handling
-- `/poll` endpoint - Plugin polls for pending commands
-- `/result` endpoint - Plugin returns command execution results
-- Uses oneshot channels for request-response correlation with 30s hard timeout
+## Tool Implementation Pattern
 
-**`src/error.rs`** - Custom error types (`RobloxMcpError`) with fast-failure philosophy. Converts to MCP protocol `ErrorData`.
-
-**`src/tools/filesystem.rs`** - Utility functions (currently unused):
-- Path validation with traversal protection
-- Recursive file tree building
-- Luau script read/write operations
-
-**`plugin/init.lua`** - Roblox Studio plugin that:
-- Polls HTTP server every 0.5s for commands
-- Supports actions: `getSelection`, `getScriptSource`, `modifyScript`, `getDataModel`, `createInstance`
-- Returns results/errors back to server
-
-### Key Dependencies
-- `rmcp` - Rust MCP SDK (server mode + macros)
-- `schemars` - JSON Schema for tool parameters
-- `axum` - HTTP server framework
-- `tokio` - Async runtime
-- `notify` - File watching (for future Rojo sync)
-
-## rmcp Tool Pattern
-
-Tools use `#[tool_router]` and `#[tool]` macros:
+Tools use rmcp macros:
 ```rust
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct MyParams { pub field: String }
-
-#[tool_router]
-impl RobloxMcpServer {
-    #[tool(description = "Tool description")]
-    async fn my_tool(&self, Parameters(p): Parameters<MyParams>) -> Result<CallToolResult, ErrorData> { }
+#[tool(description = "Tool description here")]
+async fn tool_name(
+    &self,
+    Parameters(params): Parameters<ToolParams>,
+) -> Result<CallToolResult, ErrorData> {
+    let call = self.start_instrumentation("tool_name");
+    let result = self.tool_name_impl(params).await;
+    call.finish_with(result).await
 }
 ```
 
-## Transport Architecture
+## Environment Variables
 
-HTTP bridge spawns as background task, STDIO MCP runs on main thread:
-```rust
-tokio::spawn(run_http_bridge(bridge.clone()));  // Background
-server.serve(stdio()).await?;                    // Main thread (blocks)
+- `ROBLOX_OPEN_CLOUD_API_KEY` - Required for cloud tools
+- `ROBLOX_MCP_PORT` - HTTP bridge port (default: 8080)
+- `RUST_LOG` - Log level (default: roblox_studio_mcp=info)
+
+## Testing
+
+98 unit tests cover filesystem operations, HTTP bridge, error handling, and metrics. Integration tests require the compiled binary:
+
+```bash
+cargo test --test mcp_integration -- --ignored
 ```
-
-## What Needs Implementation
-
-See `IMPLEMENTATION_PLAN.md` for detailed phases:
-- **Phase 1**: MCP server + 6 filesystem tools
-- **Phase 2**: 8 Studio bridge tools + plugin updates
-- **Phase 3**: File change tracking + Open Cloud

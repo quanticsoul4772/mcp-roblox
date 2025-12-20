@@ -1,7 +1,6 @@
-# Rust
+# Rust build artifacts
 /target/
 **/*.rs.bk
-Cargo.lock
 
 # IDE
 .vscode/
@@ -20,3 +19,10 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Coverage
+lcov.info
+*.gcno
+*.gcda
+/coverage/
+tarpaulin-report.html
