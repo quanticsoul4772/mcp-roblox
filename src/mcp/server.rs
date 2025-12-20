@@ -13,7 +13,7 @@ use tokio::fs;
 use walkdir::WalkDir;
 
 use crate::bridge::http::PluginBridge;
-use crate::mcp::params::*;
+use crate::mcp::params::{FsGetTreeParams, FsReadScriptParams, FsWriteScriptParams, FsDeleteScriptParams, FsSearchContentParams, FsGetChangesParams};
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
 
 #[derive(Clone)]
@@ -174,7 +174,7 @@ impl RobloxMcpServer {
         }
 
         fs::remove_file(&validated_path).await.map_err(|e| {
-            ErrorData::internal_error(format!("Failed to delete file: {}", e), None)
+            ErrorData::internal_error(format!("Failed to delete file: {e}"), None)
         })?;
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -199,7 +199,7 @@ impl RobloxMcpServer {
 
         // Compile regex pattern
         let regex = Regex::new(&params.pattern).map_err(|e| {
-            ErrorData::internal_error(format!("Invalid regex pattern: {}", e), None)
+            ErrorData::internal_error(format!("Invalid regex pattern: {e}"), None)
         })?;
 
         let extension = params.extension.as_deref().unwrap_or("luau");
@@ -209,7 +209,7 @@ impl RobloxMcpServer {
         // Walk directory and search files
         for entry in WalkDir::new(&validated_path)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             let entry_path = entry.path();
 
@@ -232,9 +232,8 @@ impl RobloxMcpServer {
             }
 
             // Read and search file
-            let content = match fs::read_to_string(entry_path).await {
-                Ok(c) => c,
-                Err(_) => continue, // Skip files we can't read
+            let Ok(content) = fs::read_to_string(entry_path).await else {
+                continue; // Skip files we can't read
             };
 
             for (line_num, line) in content.lines().enumerate() {
@@ -283,7 +282,7 @@ impl RobloxMcpServer {
         // Walk directory and collect mtimes
         for entry in WalkDir::new(&validated_path)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             let entry_path = entry.path();
 

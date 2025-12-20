@@ -9,7 +9,7 @@ pub struct FileTree {
     pub path: String,
     pub name: String,
     pub is_file: bool,
-    pub children: Option<Vec<FileTree>>,
+    pub children: Option<Vec<Self>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,7 +195,7 @@ mod tests {
         if let Err(e) = result {
             match e {
                 RobloxMcpError::InvalidPath(_) => (),
-                _ => panic!("Expected InvalidPath error, got {:?}", e),
+                _ => panic!("Expected InvalidPath error, got {e:?}"),
             }
         }
     }
@@ -214,7 +214,7 @@ mod tests {
                 RobloxMcpError::InvalidPath(msg) => {
                     assert!(msg.contains(".luau"));
                 }
-                _ => panic!("Expected InvalidPath error, got {:?}", e),
+                _ => panic!("Expected InvalidPath error, got {e:?}"),
             }
         }
     }
@@ -247,7 +247,7 @@ mod tests {
                 RobloxMcpError::FileSystemError { path, .. } => {
                     assert!(path.contains("nonexistent.luau"));
                 }
-                _ => panic!("Expected FileSystemError, got {:?}", e),
+                _ => panic!("Expected FileSystemError, got {e:?}"),
             }
         }
     }

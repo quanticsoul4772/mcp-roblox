@@ -44,7 +44,7 @@ pub enum RobloxMcpError {
 /// Convert our custom errors to MCP protocol errors
 impl From<RobloxMcpError> for ErrorData {
     fn from(err: RobloxMcpError) -> Self {
-        ErrorData::internal_error(err.to_string(), None)
+        Self::internal_error(err.to_string(), None)
     }
 }
 
@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn test_plugin_timeout_error_display() {
         let err = RobloxMcpError::PluginTimeout(Duration::from_secs(15));
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("15"));
         assert!(msg.contains("Studio plugin disconnected"));
     }
@@ -67,14 +67,14 @@ mod tests {
     #[test]
     fn test_plugin_execution_error_display() {
         let err = RobloxMcpError::PluginExecutionError("Script not found".to_string());
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("Script not found"));
     }
 
     #[test]
     fn test_rojo_sync_failure_display() {
         let err = RobloxMcpError::RojoSyncFailure("Connection refused".to_string());
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("Connection refused"));
         assert!(msg.contains("Rojo"));
     }
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn test_invalid_studio_data_display() {
         let err = RobloxMcpError::InvalidStudioData("Malformed JSON".to_string());
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("Malformed JSON"));
         assert!(msg.contains("Invalid Studio response"));
     }
@@ -94,7 +94,7 @@ mod tests {
             path: "/test/script.luau".to_string(),
             source: io_err,
         };
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("/test/script.luau"));
         assert!(msg.contains("File operation failed"));
     }
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn test_path_traversal_error_display() {
         let err = RobloxMcpError::PathTraversal("/etc/passwd".to_string());
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("/etc/passwd"));
         assert!(msg.contains("traversal"));
     }
@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn test_invalid_path_error_display() {
         let err = RobloxMcpError::InvalidPath("Only .luau files supported".to_string());
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains(".luau"));
     }
 
@@ -126,7 +126,7 @@ mod tests {
     fn test_serialization_error_from_serde() {
         let serde_err: serde_json::Error = serde_json::from_str::<String>("invalid").unwrap_err();
         let err: RobloxMcpError = serde_err.into();
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("JSON serialization failed"));
     }
 }
