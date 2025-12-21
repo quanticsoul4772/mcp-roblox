@@ -1,0 +1,6 @@
+{
+  "name": "MCPServer",
+  "tree": {
+    "$path": "MCPServer.server.lua"
+  }
+}

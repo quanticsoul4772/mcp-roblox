@@ -43,6 +43,7 @@ use crate::mcp::params::{
     StudioDeleteInstanceParams,
     StudioFindInstancesParams,
     StudioGetDataModelPaginatedParams,
+    StudioGetOutputParams,
     StudioGetDataModelParams,
     StudioGetScriptSourceParams,
     StudioModifyScriptParams,
@@ -171,14 +172,15 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         _cloud_client: Option<Arc<OpenCloudClient>>,
         linter: L,
     ) -> RobloxMcpServer<B, L> {
-        // Note: We can't store generic cloud client, so for full mock testing
-        // we'd need a separate test-only server struct. For now, we support
-        // mock bridge without cloud client, which covers Studio tool testing.
+        // Note: Cloud client is not injectable for testing because OpenCloudClient<H>
+        // would require a third generic parameter or trait object type erasure.
+        // Cloud operations are tested directly via OpenCloudClient unit tests.
+        // Studio tool testing works without cloud client injection.
         Self {
             tool_router: Self::tool_router(),
             bridge,
             project_root,
-            cloud_client: None, // TODO: would need type erasure for full generic support
+            cloud_client: None,
             file_watcher: None,
             metrics: Arc::new(ServerMetrics::new()),
             linter,
@@ -982,6 +984,39 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
                     "className": params.class_name,
                     "root": params.root
                 }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Get recent Output window logs from Roblox Studio. Returns log entries with message, type, and timestamp."
+    )]
+    async fn studio_get_output(
+        &self,
+        Parameters(params): Parameters<StudioGetOutputParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_get_output");
+        let result = self.studio_get_output_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_get_output_impl(
+        &self,
+        params: StudioGetOutputParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let limit = params.limit.unwrap_or(100);
+        
+        let result = self
+            .bridge
+            .execute_command(
+                "getOutput",
+                json!({ "limit": limit }),
             )
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;

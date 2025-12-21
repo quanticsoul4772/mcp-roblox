@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::http::PLUGIN_HEARTBEAT_TIMEOUT_SECS;
 use super::StudioBridge;
 use crate::error::RobloxMcpError;
 
@@ -148,7 +149,9 @@ impl StudioBridge for MockBridge {
     ) -> Result<serde_json::Value, RobloxMcpError> {
         // Check connection status first
         if !self.connected.load(Ordering::SeqCst) {
-            return Err(RobloxMcpError::PluginTimeout(Duration::from_secs(10)));
+            return Err(RobloxMcpError::PluginTimeout(Duration::from_secs(
+                PLUGIN_HEARTBEAT_TIMEOUT_SECS,
+            )));
         }
 
         // Record the call

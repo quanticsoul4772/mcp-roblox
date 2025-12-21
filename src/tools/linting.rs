@@ -760,4 +760,130 @@ mod tests {
         let cloned = linter.clone();
         let _ = format!("{:?}", cloned);
     }
+
+    // ========================================
+    // SeleneOutput Edge Cases
+    // ========================================
+
+    #[test]
+    fn test_selene_output_missing_diagnostics_field() {
+        // When diagnostics field is missing, #[serde(default)] should make it empty
+        let json = r#"{}"#;
+        let output: SeleneOutput = serde_json::from_str(json).unwrap();
+        assert!(output.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_selene_output_multiple_diagnostics() {
+        let json = r#"{
+            "diagnostics": [
+                {
+                    "severity": "error",
+                    "code": "syntax_error",
+                    "message": "Unexpected token",
+                    "primary_label": {
+                        "span": { "start_line": 1, "start_column": 1, "end_line": 1, "end_column": 5 }
+                    }
+                },
+                {
+                    "severity": "warning",
+                    "code": "unused_variable",
+                    "message": "x is unused",
+                    "primary_label": {
+                        "span": { "start_line": 10, "start_column": 7, "end_line": 10, "end_column": 8 }
+                    }
+                }
+            ]
+        }"#;
+        let output: SeleneOutput = serde_json::from_str(json).unwrap();
+        assert_eq!(output.diagnostics.len(), 2);
+        assert_eq!(output.diagnostics[0].severity, "error");
+        assert_eq!(output.diagnostics[1].severity, "warning");
+    }
+
+    #[test]
+    fn test_selene_diagnostic_parsing() {
+        let json = r#"{
+            "severity": "Warning",
+            "code": "shadowing",
+            "message": "Variable shadows outer scope",
+            "primary_label": {
+                "span": {
+                    "start_line": 5,
+                    "start_column": 11,
+                    "end_line": 5,
+                    "end_column": 12
+                }
+            }
+        }"#;
+        let diag: SeleneDiagnostic = serde_json::from_str(json).unwrap();
+        assert_eq!(diag.severity, "Warning");
+        assert_eq!(diag.code, "shadowing");
+        assert_eq!(diag.primary_label.span.start_line, 5);
+        assert_eq!(diag.primary_label.span.end_column, 12);
+    }
+
+    #[test]
+    fn test_lint_result_round_trip() {
+        let result = LintResult {
+            file_path: "path/to/script.luau".to_string(),
+            diagnostics: vec![
+                LintDiagnostic {
+                    severity: "error".to_string(),
+                    code: "E001".to_string(),
+                    message: "Error message".to_string(),
+                    line: 42,
+                    column: 10,
+                    end_line: Some(42),
+                    end_column: Some(20),
+                },
+            ],
+            error_count: 1,
+            warning_count: 0,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: LintResult = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.file_path, result.file_path);
+        assert_eq!(parsed.diagnostics.len(), 1);
+        assert_eq!(parsed.diagnostics[0].line, 42);
+        assert_eq!(parsed.error_count, 1);
+    }
+
+    #[test]
+    fn test_lint_diagnostic_with_all_optional_fields() {
+        let diag = LintDiagnostic {
+            severity: "warning".to_string(),
+            code: "test_code".to_string(),
+            message: "Test message".to_string(),
+            line: 1,
+            column: 1,
+            end_line: Some(2),
+            end_column: Some(10),
+        };
+
+        let json = serde_json::to_string(&diag).unwrap();
+        assert!(json.contains("\"end_line\":2"));
+        assert!(json.contains("\"end_column\":10"));
+    }
+
+    #[test]
+    fn test_lint_diagnostic_without_optional_fields() {
+        let diag = LintDiagnostic {
+            severity: "error".to_string(),
+            code: "parse_error".to_string(),
+            message: "Parse failed".to_string(),
+            line: 1,
+            column: 1,
+            end_line: None,
+            end_column: None,
+        };
+
+        let json = serde_json::to_string(&diag).unwrap();
+        // Optional fields should still be present but null
+        let parsed: LintDiagnostic = serde_json::from_str(&json).unwrap();
+        assert!(parsed.end_line.is_none());
+        assert!(parsed.end_column.is_none());
+    }
 }

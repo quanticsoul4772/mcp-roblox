@@ -183,6 +183,24 @@ impl McpTestClient {
         Ok(())
     }
 
+    /// Send a JSON-RPC notification (no response expected)
+    fn send_notification(
+        &mut self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let notification = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params.unwrap_or(json!({}))
+        });
+
+        let stdin = self.child.stdin.as_mut().ok_or("No stdin")?;
+        writeln!(stdin, "{}", serde_json::to_string(&notification)?)?;
+        stdin.flush()?;
+        Ok(())
+    }
+
     /// List available tools
     fn list_tools(&mut self) -> Result<JsonRpcResponse, Box<dyn std::error::Error>> {
         self.send_request("tools/list", None)
@@ -769,4 +787,68 @@ fn test_studio_tool_returns_timeout_when_plugin_not_connected() {
         "Studio tool should fail with timeout when plugin not connected. Response: {:?}",
         response
     );
+}
+
+#[test]
+#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
+fn test_server_bootstrap_and_tool_count() {
+    let mut client = McpTestClient::spawn().expect("Failed to spawn server");
+
+    // Send initialize request (MCP protocol handshake)
+    let response = client
+        .initialize()
+        .expect("Failed to send initialize");
+
+    // Verify server responds with its info
+    let result = response.result.expect("Expected result from initialize");
+    assert!(
+        result.get("serverInfo").is_some(),
+        "Missing serverInfo in initialize response"
+    );
+    assert!(
+        result.get("protocolVersion").is_some(),
+        "Missing protocolVersion in initialize response"
+    );
+
+    // Send initialized notification (completes handshake)
+    client
+        .send_notification("notifications/initialized", None)
+        .expect("Failed to send initialized notification");
+
+    // Small delay to ensure server is ready
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Verify we can list tools after initialization
+    let tools_response = client
+        .list_tools()
+        .expect("Failed to list tools");
+
+    let tools = tools_response
+        .result
+        .expect("Expected tools result")
+        .get("tools")
+        .expect("Expected tools array")
+        .as_array()
+        .expect("Tools should be array")
+        .clone();
+
+    // Should have all 24 tools (7 fs + 10 studio + 5 cloud + 2 monitoring)
+    assert!(
+        tools.len() >= 24,
+        "Expected at least 24 tools, got {}. Tools: {:?}",
+        tools.len(),
+        tools.iter().filter_map(|t| t.get("name")).collect::<Vec<_>>()
+    );
+
+    // Verify all tool categories are present
+    let tool_names: Vec<&str> = tools
+        .iter()
+        .filter_map(|t| t.get("name")?.as_str())
+        .collect();
+
+    // Check for key tools from each category
+    assert!(tool_names.contains(&"fs_get_tree"), "Missing fs_get_tree");
+    assert!(tool_names.contains(&"studio_health_check"), "Missing studio_health_check");
+    assert!(tool_names.contains(&"cloud_datastore_get"), "Missing cloud_datastore_get");
+    assert!(tool_names.contains(&"server_get_metrics"), "Missing server_get_metrics");
 }

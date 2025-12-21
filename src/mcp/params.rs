@@ -130,6 +130,12 @@ pub struct StudioFindInstancesParams {
     pub root: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StudioGetOutputParams {
+    #[schemars(description = "Maximum number of log entries to return (default: 100)")]
+    pub limit: Option<usize>,
+}
+
 // === CLOUD PARAMS ===
 // These parameter structs define the JSON schema for Open Cloud MCP tools
 // All Cloud tools require ROBLOX_OPEN_CLOUD_API_KEY environment variable

@@ -8,6 +8,12 @@ use tokio::time::{timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
 
+/// How long before a plugin heartbeat is considered stale (seconds)
+pub const PLUGIN_HEARTBEAT_TIMEOUT_SECS: u64 = 10;
+
+/// Maximum time to wait for a plugin command response (seconds)
+pub const PLUGIN_COMMAND_TIMEOUT_SECS: u64 = 30;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Command {
     pub id: String,
@@ -38,12 +44,13 @@ impl PluginBridge {
         }
     }
 
-    /// Check if plugin is connected (heartbeat within 10 seconds)
+    /// Check if plugin is connected (heartbeat within timeout threshold)
     ///
     /// Public API for health checks - used in tests and available for external consumers
     #[allow(dead_code)]
     pub async fn is_connected(&self) -> bool {
-        self.last_heartbeat.read().await.elapsed() < Duration::from_secs(10)
+        self.last_heartbeat.read().await.elapsed()
+            < Duration::from_secs(PLUGIN_HEARTBEAT_TIMEOUT_SECS)
     }
 
     /// Execute a command via the plugin bridge with fast-failure timeout
@@ -54,7 +61,7 @@ impl PluginBridge {
     ) -> Result<serde_json::Value, RobloxMcpError> {
         // Check heartbeat - FAIL IMMEDIATELY if stale
         let elapsed = self.last_heartbeat.read().await.elapsed();
-        if elapsed > Duration::from_secs(10) {
+        if elapsed > Duration::from_secs(PLUGIN_HEARTBEAT_TIMEOUT_SECS) {
             return Err(RobloxMcpError::PluginTimeout(elapsed));
         }
 
@@ -76,14 +83,18 @@ impl PluginBridge {
         self.pending_commands.write().await.push(command);
 
         // Wait for response with HARD TIMEOUT - no fallback
-        let response = match timeout(Duration::from_secs(30), rx).await {
+        let response = match timeout(Duration::from_secs(PLUGIN_COMMAND_TIMEOUT_SECS), rx).await {
             Ok(Ok(resp)) => resp,
             Ok(Err(_)) => {
                 return Err(RobloxMcpError::PluginExecutionError(
                     "Result channel closed unexpectedly".to_string(),
                 ))
             }
-            Err(_) => return Err(RobloxMcpError::PluginTimeout(Duration::from_secs(30))),
+            Err(_) => {
+                return Err(RobloxMcpError::PluginTimeout(Duration::from_secs(
+                    PLUGIN_COMMAND_TIMEOUT_SECS,
+                )))
+            }
         };
 
         // Check for plugin-side errors - PROPAGATE IMMEDIATELY
@@ -160,7 +171,7 @@ pub struct HealthStatus {
 /// HTTP endpoint: Health check for monitoring
 async fn health_handler(State(bridge): State<PluginBridge>) -> Json<HealthStatus> {
     let heartbeat_age = bridge.last_heartbeat.read().await.elapsed();
-    let connected = heartbeat_age < Duration::from_secs(10);
+    let connected = heartbeat_age < Duration::from_secs(PLUGIN_HEARTBEAT_TIMEOUT_SECS);
 
     Json(HealthStatus {
         status: if connected { "healthy" } else { "degraded" },

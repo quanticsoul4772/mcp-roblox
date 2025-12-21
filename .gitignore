@@ -19,6 +19,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.mcp.json
 
 # Coverage
 lcov.info
@@ -26,3 +27,6 @@ lcov.info
 *.gcda
 /coverage/
 tarpaulin-report.html
+
+# Data files
+data/
