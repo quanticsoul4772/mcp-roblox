@@ -154,6 +154,46 @@ pub struct LateResultMetricsSnapshot {
     pub errors: u64,
 }
 
+/// Metrics for unknown command results (plugin sends result for unknown command ID)
+///
+/// This tracks an anomaly where the plugin returns a result for a command ID
+/// that isn't registered. This could indicate:
+/// - A bug in command tracking
+/// - Plugin sending duplicate results
+/// - Command ID collision (unlikely with UUID)
+#[derive(Debug, Default)]
+pub struct UnknownCommandMetrics {
+    /// Total unknown command results received
+    pub total: AtomicU64,
+}
+
+impl UnknownCommandMetrics {
+    pub fn new() -> Self {
+        Self {
+            total: AtomicU64::new(0),
+        }
+    }
+
+    /// Record an unknown command result
+    pub fn record(&self) {
+        self.total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get unknown command metrics snapshot
+    pub fn snapshot(&self) -> UnknownCommandMetricsSnapshot {
+        UnknownCommandMetricsSnapshot {
+            total: self.total.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Serializable unknown command metrics snapshot
+#[derive(Debug, Clone, Serialize)]
+pub struct UnknownCommandMetricsSnapshot {
+    /// Total unknown command results received
+    pub total: u64,
+}
+
 /// Connection status tracking
 #[derive(Debug, Default)]
 pub struct ConnectionMetrics {
@@ -229,6 +269,8 @@ pub struct ServerMetrics {
     connection: ConnectionMetrics,
     /// Late plugin result metrics (results arriving after caller timeout)
     late_results: LateResultMetrics,
+    /// Unknown command metrics (plugin sends result for unregistered command ID)
+    unknown_commands: UnknownCommandMetrics,
 }
 
 impl ServerMetrics {
@@ -238,6 +280,7 @@ impl ServerMetrics {
             started_at: std::time::Instant::now(),
             connection: ConnectionMetrics::new(),
             late_results: LateResultMetrics::new(),
+            unknown_commands: UnknownCommandMetrics::new(),
         }
     }
 
@@ -263,6 +306,22 @@ impl ServerMetrics {
     #[allow(dead_code)]
     pub fn late_results_snapshot(&self) -> LateResultMetricsSnapshot {
         self.late_results.snapshot()
+    }
+
+    /// Record an unknown command result (plugin sent result for unregistered command ID)
+    ///
+    /// This indicates a potential bug in command tracking or duplicate plugin responses.
+    pub fn record_unknown_command(&self) {
+        self.unknown_commands.record();
+    }
+
+    /// Get unknown command metrics snapshot
+    ///
+    /// Used for targeted monitoring of unknown commands without full server metrics.
+    /// For comprehensive metrics, use `snapshot()` which includes unknown_commands.
+    #[allow(dead_code)]
+    pub fn unknown_commands_snapshot(&self) -> UnknownCommandMetricsSnapshot {
+        self.unknown_commands.snapshot()
     }
 
     /// Get or create metrics for a tool
@@ -297,6 +356,7 @@ impl ServerMetrics {
             tools: tool_snapshots,
             connection: self.connection.snapshot(),
             late_results: self.late_results.snapshot(),
+            unknown_commands: self.unknown_commands.snapshot(),
         }
     }
 }
@@ -315,6 +375,8 @@ pub struct ServerMetricsSnapshot {
     pub connection: ConnectionMetricsSnapshot,
     /// Late plugin results (results arriving after caller timeout)
     pub late_results: LateResultMetricsSnapshot,
+    /// Unknown command results (plugin sent result for unregistered command ID)
+    pub unknown_commands: UnknownCommandMetricsSnapshot,
 }
 
 #[cfg(test)]
@@ -580,5 +642,50 @@ mod tests {
         assert_eq!(snapshot.late_results.total, 2);
         assert_eq!(snapshot.late_results.successful, 1);
         assert_eq!(snapshot.late_results.errors, 1);
+    }
+
+    // === UNKNOWN COMMAND METRICS TESTS ===
+
+    #[test]
+    fn test_unknown_command_metrics_new() {
+        let metrics = UnknownCommandMetrics::new();
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.total, 0);
+    }
+
+    #[test]
+    fn test_unknown_command_metrics_record() {
+        let metrics = UnknownCommandMetrics::new();
+
+        metrics.record();
+        metrics.record();
+        metrics.record();
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.total, 3);
+    }
+
+    #[test]
+    fn test_server_metrics_unknown_command_tracking() {
+        let server_metrics = ServerMetrics::new();
+
+        server_metrics.record_unknown_command();
+        server_metrics.record_unknown_command();
+
+        let snapshot = server_metrics.unknown_commands_snapshot();
+        assert_eq!(snapshot.total, 2);
+    }
+
+    #[tokio::test]
+    async fn test_server_metrics_snapshot_includes_unknown_commands() {
+        let server_metrics = ServerMetrics::new();
+
+        server_metrics.record_unknown_command();
+        server_metrics.record_unknown_command();
+        server_metrics.record_unknown_command();
+
+        let snapshot = server_metrics.snapshot().await;
+        assert_eq!(snapshot.unknown_commands.total, 3);
     }
 }

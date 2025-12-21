@@ -70,6 +70,13 @@ impl PluginBridge {
         }
     }
 
+    /// Record an unknown command result (plugin sent result for unregistered command ID)
+    pub fn record_unknown_command(&self) {
+        if let Some(metrics) = &self.metrics {
+            metrics.record_unknown_command();
+        }
+    }
+
     /// Check if plugin is connected (heartbeat within timeout threshold)
     ///
     /// Public API for health checks - used in tests and available for external consumers
@@ -177,7 +184,9 @@ async fn result_handler(
             }
         }
         None => {
-            // No sender registered - this should not happen, LOG IT
+            // No sender registered - this should not happen, track it
+            // Could indicate: command tracking bug, duplicate plugin response, or cancelled command
+            bridge.record_unknown_command();
             warn!(
                 command_id = %response.id,
                 "Plugin result received but no sender registered - command may have been cancelled"
@@ -1173,5 +1182,135 @@ mod tests {
         assert_eq!(snapshot.total, 1);
         assert_eq!(snapshot.successful, 0);
         assert_eq!(snapshot.errors, 1);
+    }
+
+    // === UNKNOWN COMMAND TRACKING TESTS ===
+
+    #[tokio::test]
+    async fn test_plugin_bridge_record_unknown_command() {
+        let metrics = Arc::new(crate::metrics::ServerMetrics::new());
+        let bridge = PluginBridge::with_metrics(metrics.clone());
+
+        // Record unknown commands
+        bridge.record_unknown_command();
+        bridge.record_unknown_command();
+
+        // Verify metrics were recorded
+        let snapshot = metrics.unknown_commands_snapshot();
+        assert_eq!(snapshot.total, 2);
+    }
+
+    #[tokio::test]
+    async fn test_plugin_bridge_without_metrics_unknown_command_no_panic() {
+        let bridge = PluginBridge::new();
+
+        // Should not panic even without metrics
+        bridge.record_unknown_command();
+        bridge.record_unknown_command();
+    }
+
+    #[tokio::test]
+    async fn test_unknown_command_recorded_when_no_sender() {
+        let metrics = Arc::new(crate::metrics::ServerMetrics::new());
+        let bridge = PluginBridge::with_metrics(metrics.clone());
+
+        // DO NOT register any sender - simulate unknown command ID scenario
+        // Send result via HTTP handler for an ID that was never registered
+        let router = create_router(bridge);
+
+        let _response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "unknown-command-id".to_string(),
+                            result: Some(serde_json::json!({"data": "orphaned"})),
+                            error: None,
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Verify the unknown command was recorded
+        let snapshot = metrics.unknown_commands_snapshot();
+        assert_eq!(snapshot.total, 1);
+    }
+
+    #[tokio::test]
+    async fn test_unknown_command_vs_late_result_distinction() {
+        let metrics = Arc::new(crate::metrics::ServerMetrics::new());
+        let bridge = PluginBridge::with_metrics(metrics.clone());
+
+        // Scenario 1: Unknown command (no sender ever registered)
+        // Scenario 2: Late result (sender was registered but receiver dropped)
+
+        // First, create an unknown command scenario
+        let router = create_router(bridge.clone());
+
+        let _ = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "never-registered".to_string(),
+                            result: Some(serde_json::json!({"orphan": true})),
+                            error: None,
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Now create a late result scenario (register sender, drop receiver, send result)
+        let (tx, rx) = oneshot::channel();
+        bridge
+            .pending_results
+            .write()
+            .await
+            .insert("registered-then-dropped".to_string(), tx);
+        drop(rx); // Caller times out
+
+        let router2 = create_router(bridge);
+
+        let _ = router2
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "registered-then-dropped".to_string(),
+                            result: Some(serde_json::json!({"late": true})),
+                            error: None,
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Verify both scenarios tracked correctly
+        let unknown_snapshot = metrics.unknown_commands_snapshot();
+        let late_snapshot = metrics.late_results_snapshot();
+
+        assert_eq!(unknown_snapshot.total, 1, "Should have 1 unknown command");
+        assert_eq!(late_snapshot.total, 1, "Should have 1 late result");
+        assert_eq!(
+            late_snapshot.successful, 1,
+            "Late result should be marked successful"
+        );
     }
 }
