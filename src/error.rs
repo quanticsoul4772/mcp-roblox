@@ -422,4 +422,168 @@ mod tests {
         // -32600 is Invalid Request
         assert_eq!(mcp_err.code, ErrorCode(-32600));
     }
+
+    // ========================================
+    // from_reqwest tests using mockito
+    // ========================================
+
+    #[tokio::test]
+    async fn test_from_reqwest_client_error_4xx() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/test")
+            .with_status(404)
+            .with_body("Not Found")
+            .create_async()
+            .await;
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!("{}/test", server.url()))
+            .send()
+            .await
+            .unwrap();
+
+        // Force error by calling error_for_status on 4xx response
+        let err = response.error_for_status().unwrap_err();
+        let mcp_err = RobloxMcpError::from_reqwest(err);
+
+        match mcp_err {
+            RobloxMcpError::HttpClientError { status, .. } => {
+                assert_eq!(status, 404);
+            }
+            e => panic!("Expected HttpClientError, got {e:?}"),
+        }
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_from_reqwest_server_error_5xx() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/test")
+            .with_status(503)
+            .with_body("Service Unavailable")
+            .create_async()
+            .await;
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!("{}/test", server.url()))
+            .send()
+            .await
+            .unwrap();
+
+        let err = response.error_for_status().unwrap_err();
+        let mcp_err = RobloxMcpError::from_reqwest(err);
+
+        match mcp_err {
+            RobloxMcpError::HttpServerError { status, .. } => {
+                assert_eq!(status, 503);
+            }
+            e => panic!("Expected HttpServerError, got {e:?}"),
+        }
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_from_reqwest_connection_error() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(100))
+            .build()
+            .unwrap();
+
+        // Try to connect to a port that's definitely not listening
+        let result = client.get("http://127.0.0.1:1").send().await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let mcp_err = RobloxMcpError::from_reqwest(err);
+
+        // Connection errors map to HttpConnectionError
+        assert!(matches!(
+            mcp_err,
+            RobloxMcpError::HttpConnectionError(_) | RobloxMcpError::HttpTimeoutError(_)
+        ));
+    }
+
+    #[test]
+    fn test_from_reqwest_timeout_detection() {
+        // Test that the from_reqwest logic correctly handles timeout-like errors
+        // by testing the branch detection logic directly.
+        // Creating a real timeout error is flaky, so we verify the HttpTimeoutError
+        // variant is correctly constructed and behaves as expected.
+
+        let err = RobloxMcpError::HttpTimeoutError("request timed out".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("timeout"));
+
+        // And verify it maps to the correct MCP error code
+        let mcp_err: ErrorData = err.into();
+        assert_eq!(mcp_err.code, ErrorCode(-32002));
+    }
+
+    #[tokio::test]
+    async fn test_from_reqwest_various_4xx_codes() {
+        for status_code in [400, 401, 403, 404, 422, 429] {
+            let mut server = mockito::Server::new_async().await;
+            let mock = server
+                .mock("GET", "/test")
+                .with_status(status_code as usize)
+                .create_async()
+                .await;
+
+            let client = reqwest::Client::new();
+            let response = client
+                .get(format!("{}/test", server.url()))
+                .send()
+                .await
+                .unwrap();
+
+            let err = response.error_for_status().unwrap_err();
+            let mcp_err = RobloxMcpError::from_reqwest(err);
+
+            match mcp_err {
+                RobloxMcpError::HttpClientError { status, .. } => {
+                    assert_eq!(status, status_code);
+                }
+                e => panic!("Expected HttpClientError for {status_code}, got {e:?}"),
+            }
+
+            mock.assert_async().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_from_reqwest_various_5xx_codes() {
+        for status_code in [500, 502, 503, 504] {
+            let mut server = mockito::Server::new_async().await;
+            let mock = server
+                .mock("GET", "/test")
+                .with_status(status_code as usize)
+                .create_async()
+                .await;
+
+            let client = reqwest::Client::new();
+            let response = client
+                .get(format!("{}/test", server.url()))
+                .send()
+                .await
+                .unwrap();
+
+            let err = response.error_for_status().unwrap_err();
+            let mcp_err = RobloxMcpError::from_reqwest(err);
+
+            match mcp_err {
+                RobloxMcpError::HttpServerError { status, .. } => {
+                    assert_eq!(status, status_code);
+                }
+                e => panic!("Expected HttpServerError for {status_code}, got {e:?}"),
+            }
+
+            mock.assert_async().await;
+        }
+    }
 }

@@ -341,4 +341,57 @@ mod tests {
             RobloxMcpError::HttpConnectionError(_)
         ));
     }
+
+    // ========================================
+    // Accessor method tests
+    // ========================================
+
+    #[test]
+    fn test_api_key_accessor() {
+        let mock = MockHttpClient::new();
+        let client = OpenCloudClient::with_http(mock, "my-secret-key-123");
+
+        assert_eq!(client.api_key(), "my-secret-key-123");
+    }
+
+    #[test]
+    fn test_base_url_accessor() {
+        let mock = MockHttpClient::new();
+        let client = OpenCloudClient::with_http(mock, "key");
+
+        assert_eq!(client.base_url(), "https://apis.roblox.com");
+    }
+
+    #[test]
+    fn test_http_accessor() {
+        let mock = MockHttpClient::new();
+        let client = OpenCloudClient::with_http(mock, "key");
+
+        // Just verify we can get the HTTP client reference
+        let _http = client.http();
+        // The accessor works if we get here without panic
+    }
+
+    #[test]
+    fn test_with_http_sets_default_base_url() {
+        let mock = MockHttpClient::new();
+        let client = OpenCloudClient::with_http(mock, "test-key");
+
+        // Verify with_http uses the default base URL
+        assert!(client.base_url().starts_with("https://"));
+        assert!(client.base_url().contains("roblox.com"));
+    }
+
+    #[test]
+    fn test_api_key_from_various_string_types() {
+        // Test with &str
+        let mock1 = MockHttpClient::new();
+        let client1 = OpenCloudClient::with_http(mock1, "static-str");
+        assert_eq!(client1.api_key(), "static-str");
+
+        // Test with String
+        let mock2 = MockHttpClient::new();
+        let client2 = OpenCloudClient::with_http(mock2, String::from("owned-string"));
+        assert_eq!(client2.api_key(), "owned-string");
+    }
 }

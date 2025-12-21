@@ -361,4 +361,201 @@ mod tests {
         assert!(size > 0);
         assert!(size <= 10000); // Reasonable upper bound
     }
+
+    // ========================================
+    // Tests for queue_error and handle_event
+    // ========================================
+
+    #[tokio::test]
+    async fn test_queue_error_adds_watcher_error_entry() {
+        let queue = Arc::new(RwLock::new(VecDeque::new()));
+
+        FileWatcher::queue_error(queue.clone(), "Test error message".to_string()).await;
+
+        let changes = queue.read().await;
+        assert_eq!(changes.len(), 1);
+
+        let change = &changes[0];
+        assert!(change.path.contains("[WATCHER_ERROR]"));
+        assert!(change.path.contains("Test error message"));
+        assert!(matches!(change.kind, ChangeKind::WatcherError));
+        assert!(change.timestamp > 0);
+    }
+
+    #[tokio::test]
+    async fn test_queue_error_respects_max_queue_size() {
+        let queue = Arc::new(RwLock::new(VecDeque::new()));
+
+        // Fill the queue to max capacity
+        for i in 0..MAX_QUEUE_SIZE {
+            queue.write().await.push_back(FileChange {
+                path: format!("file{}.luau", i),
+                kind: ChangeKind::Modified,
+                timestamp: i as u64,
+            });
+        }
+
+        assert_eq!(queue.read().await.len(), MAX_QUEUE_SIZE);
+
+        // Add one more via queue_error - should drop the oldest
+        FileWatcher::queue_error(queue.clone(), "Overflow error".to_string()).await;
+
+        let changes = queue.read().await;
+        assert_eq!(changes.len(), MAX_QUEUE_SIZE);
+
+        // First item should now be file1.luau (file0.luau was dropped)
+        assert_eq!(changes[0].path, "file1.luau");
+
+        // Last item should be the error
+        let last = changes.back().unwrap();
+        assert!(matches!(last.kind, ChangeKind::WatcherError));
+    }
+
+    #[tokio::test]
+    async fn test_handle_event_filters_non_luau_files() {
+        let queue = Arc::new(RwLock::new(VecDeque::new()));
+        let project_root = Arc::new(PathBuf::from("/project"));
+
+        // Create an event with non-.luau files
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![
+                PathBuf::from("/project/readme.md"),
+                PathBuf::from("/project/main.rs"),
+                PathBuf::from("/project/config.json"),
+            ],
+            attrs: Default::default(),
+        };
+
+        FileWatcher::handle_event(event, queue.clone(), project_root).await;
+
+        // Queue should be empty - no .luau files
+        assert_eq!(queue.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_event_accepts_luau_files() {
+        let queue = Arc::new(RwLock::new(VecDeque::new()));
+        let project_root = Arc::new(PathBuf::from("/project"));
+
+        // Create an event with a .luau file
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![PathBuf::from("/project/script.luau")],
+            attrs: Default::default(),
+        };
+
+        FileWatcher::handle_event(event, queue.clone(), project_root).await;
+
+        let changes = queue.read().await;
+        assert_eq!(changes.len(), 1);
+        assert!(changes[0].path.contains("script.luau"));
+        assert!(matches!(changes[0].kind, ChangeKind::Created));
+    }
+
+    #[tokio::test]
+    async fn test_handle_event_maps_event_kinds() {
+        let queue = Arc::new(RwLock::new(VecDeque::new()));
+        let project_root = Arc::new(PathBuf::from("/project"));
+
+        // Test Create event
+        let create_event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![PathBuf::from("/project/new.luau")],
+            attrs: Default::default(),
+        };
+        FileWatcher::handle_event(create_event, queue.clone(), project_root.clone()).await;
+
+        // Test Modify event
+        let modify_event = Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )),
+            paths: vec![PathBuf::from("/project/modified.luau")],
+            attrs: Default::default(),
+        };
+        FileWatcher::handle_event(modify_event, queue.clone(), project_root.clone()).await;
+
+        // Test Remove event
+        let remove_event = Event {
+            kind: EventKind::Remove(notify::event::RemoveKind::File),
+            paths: vec![PathBuf::from("/project/deleted.luau")],
+            attrs: Default::default(),
+        };
+        FileWatcher::handle_event(remove_event, queue.clone(), project_root).await;
+
+        let changes = queue.read().await;
+        assert_eq!(changes.len(), 3);
+        assert!(matches!(changes[0].kind, ChangeKind::Created));
+        assert!(matches!(changes[1].kind, ChangeKind::Modified));
+        assert!(matches!(changes[2].kind, ChangeKind::Deleted));
+    }
+
+    #[tokio::test]
+    async fn test_handle_event_ignores_other_event_kinds() {
+        let queue = Arc::new(RwLock::new(VecDeque::new()));
+        let project_root = Arc::new(PathBuf::from("/project"));
+
+        // Create an Access event (should be ignored)
+        let event = Event {
+            kind: EventKind::Access(notify::event::AccessKind::Read),
+            paths: vec![PathBuf::from("/project/script.luau")],
+            attrs: Default::default(),
+        };
+
+        FileWatcher::handle_event(event, queue.clone(), project_root).await;
+
+        // Queue should be empty - Access events are ignored
+        assert_eq!(queue.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_event_respects_max_queue_size() {
+        let queue = Arc::new(RwLock::new(VecDeque::new()));
+        let project_root = Arc::new(PathBuf::from("/project"));
+
+        // Fill the queue to max capacity
+        for i in 0..MAX_QUEUE_SIZE {
+            queue.write().await.push_back(FileChange {
+                path: format!("file{}.luau", i),
+                kind: ChangeKind::Modified,
+                timestamp: i as u64,
+            });
+        }
+
+        // Add one more via handle_event
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![PathBuf::from("/project/overflow.luau")],
+            attrs: Default::default(),
+        };
+        FileWatcher::handle_event(event, queue.clone(), project_root).await;
+
+        let changes = queue.read().await;
+        assert_eq!(changes.len(), MAX_QUEUE_SIZE);
+
+        // Last item should be the new file
+        let last = changes.back().unwrap();
+        assert!(last.path.contains("overflow.luau"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_event_strips_project_root_prefix() {
+        let queue = Arc::new(RwLock::new(VecDeque::new()));
+        let project_root = Arc::new(PathBuf::from("/project/root"));
+
+        let event = Event {
+            kind: EventKind::Create(notify::event::CreateKind::File),
+            paths: vec![PathBuf::from("/project/root/src/main.luau")],
+            attrs: Default::default(),
+        };
+
+        FileWatcher::handle_event(event, queue.clone(), project_root).await;
+
+        let changes = queue.read().await;
+        assert_eq!(changes.len(), 1);
+        // Path should be relative (prefix stripped)
+        assert!(!changes[0].path.starts_with("/project/root"));
+        assert!(changes[0].path.contains("main.luau"));
+    }
 }
