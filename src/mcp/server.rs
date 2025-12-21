@@ -43,8 +43,8 @@ use crate::mcp::params::{
     StudioDeleteInstanceParams,
     StudioFindInstancesParams,
     StudioGetDataModelPaginatedParams,
-    StudioGetOutputParams,
     StudioGetDataModelParams,
+    StudioGetOutputParams,
     StudioGetScriptSourceParams,
     StudioModifyScriptParams,
     StudioSetPropertyParams,
@@ -1011,13 +1011,10 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         params: StudioGetOutputParams,
     ) -> Result<CallToolResult, ErrorData> {
         let limit = params.limit.unwrap_or(100);
-        
+
         let result = self
             .bridge
-            .execute_command(
-                "getOutput",
-                json!({ "limit": limit }),
-            )
+            .execute_command("getOutput", json!({ "limit": limit }))
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 

@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn test_asset_type_clone() {
         let original = AssetType::Image;
-        let cloned = original.clone();
+        let cloned = original;
         assert_eq!(cloned, original);
     }
 

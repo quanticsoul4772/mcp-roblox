@@ -827,17 +827,15 @@ mod tests {
     fn test_lint_result_round_trip() {
         let result = LintResult {
             file_path: "path/to/script.luau".to_string(),
-            diagnostics: vec![
-                LintDiagnostic {
-                    severity: "error".to_string(),
-                    code: "E001".to_string(),
-                    message: "Error message".to_string(),
-                    line: 42,
-                    column: 10,
-                    end_line: Some(42),
-                    end_column: Some(20),
-                },
-            ],
+            diagnostics: vec![LintDiagnostic {
+                severity: "error".to_string(),
+                code: "E001".to_string(),
+                message: "Error message".to_string(),
+                line: 42,
+                column: 10,
+                end_line: Some(42),
+                end_column: Some(20),
+            }],
             error_count: 1,
             warning_count: 0,
         };

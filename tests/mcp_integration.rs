@@ -795,9 +795,7 @@ fn test_server_bootstrap_and_tool_count() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
     // Send initialize request (MCP protocol handshake)
-    let response = client
-        .initialize()
-        .expect("Failed to send initialize");
+    let response = client.initialize().expect("Failed to send initialize");
 
     // Verify server responds with its info
     let result = response.result.expect("Expected result from initialize");
@@ -819,9 +817,7 @@ fn test_server_bootstrap_and_tool_count() {
     std::thread::sleep(Duration::from_millis(100));
 
     // Verify we can list tools after initialization
-    let tools_response = client
-        .list_tools()
-        .expect("Failed to list tools");
+    let tools_response = client.list_tools().expect("Failed to list tools");
 
     let tools = tools_response
         .result
@@ -837,7 +833,10 @@ fn test_server_bootstrap_and_tool_count() {
         tools.len() >= 24,
         "Expected at least 24 tools, got {}. Tools: {:?}",
         tools.len(),
-        tools.iter().filter_map(|t| t.get("name")).collect::<Vec<_>>()
+        tools
+            .iter()
+            .filter_map(|t| t.get("name"))
+            .collect::<Vec<_>>()
     );
 
     // Verify all tool categories are present
@@ -848,7 +847,16 @@ fn test_server_bootstrap_and_tool_count() {
 
     // Check for key tools from each category
     assert!(tool_names.contains(&"fs_get_tree"), "Missing fs_get_tree");
-    assert!(tool_names.contains(&"studio_health_check"), "Missing studio_health_check");
-    assert!(tool_names.contains(&"cloud_datastore_get"), "Missing cloud_datastore_get");
-    assert!(tool_names.contains(&"server_get_metrics"), "Missing server_get_metrics");
+    assert!(
+        tool_names.contains(&"studio_health_check"),
+        "Missing studio_health_check"
+    );
+    assert!(
+        tool_names.contains(&"cloud_datastore_get"),
+        "Missing cloud_datastore_get"
+    );
+    assert!(
+        tool_names.contains(&"server_get_metrics"),
+        "Missing server_get_metrics"
+    );
 }

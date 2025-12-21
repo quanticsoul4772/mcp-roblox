@@ -357,7 +357,8 @@ mod tests {
     #[test]
     fn test_max_queue_size_constant() {
         // Verify the constant exists and has a reasonable value
-        assert!(MAX_QUEUE_SIZE > 0);
-        assert!(MAX_QUEUE_SIZE <= 10000); // Reasonable upper bound
+        let size = MAX_QUEUE_SIZE;
+        assert!(size > 0);
+        assert!(size <= 10000); // Reasonable upper bound
     }
 }
