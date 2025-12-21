@@ -1,4 +1,5 @@
 use crate::error::RobloxMcpError;
+use crate::metrics::ServerMetrics;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -33,14 +34,39 @@ pub struct PluginBridge {
     pending_commands: Arc<RwLock<Vec<Command>>>,
     pending_results: Arc<RwLock<HashMap<String, oneshot::Sender<PluginResponse>>>>,
     pub last_heartbeat: Arc<RwLock<Instant>>,
+    /// Optional metrics collector for tracking late results
+    metrics: Option<Arc<ServerMetrics>>,
 }
 
 impl PluginBridge {
+    /// Create a new PluginBridge without metrics tracking
+    ///
+    /// For production use with late result tracking, prefer `with_metrics()`.
+    /// This constructor is kept for backwards compatibility and testing.
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             pending_commands: Arc::new(RwLock::new(Vec::new())),
             pending_results: Arc::new(RwLock::new(HashMap::new())),
             last_heartbeat: Arc::new(RwLock::new(Instant::now())),
+            metrics: None,
+        }
+    }
+
+    /// Create a new PluginBridge with metrics tracking
+    pub fn with_metrics(metrics: Arc<ServerMetrics>) -> Self {
+        Self {
+            pending_commands: Arc::new(RwLock::new(Vec::new())),
+            pending_results: Arc::new(RwLock::new(HashMap::new())),
+            last_heartbeat: Arc::new(RwLock::new(Instant::now())),
+            metrics: Some(metrics),
+        }
+    }
+
+    /// Record a late result (result arrived after caller timed out)
+    pub fn record_late_result(&self, had_error: bool) {
+        if let Some(metrics) = &self.metrics {
+            metrics.record_late_result(had_error);
         }
     }
 
@@ -140,7 +166,9 @@ async fn result_handler(
             let had_error = response.error.is_some();
 
             if tx.send(response).is_err() {
-                // Caller timed out before we could deliver the result - LOG THIS
+                // Caller timed out before we could deliver the result
+                // Track this as a "late result" - plugin did work that went unused
+                bridge.record_late_result(had_error);
                 warn!(
                     command_id = %response_id,
                     had_error = had_error,
@@ -1028,5 +1056,122 @@ mod tests {
         // Compile-time assertions above validate these, runtime test for documentation
         assert_eq!(PLUGIN_HEARTBEAT_TIMEOUT_SECS, 10);
         assert_eq!(PLUGIN_COMMAND_TIMEOUT_SECS, 30);
+    }
+
+    // === LATE RESULT TRACKING TESTS ===
+
+    #[tokio::test]
+    async fn test_plugin_bridge_with_metrics() {
+        let metrics = Arc::new(crate::metrics::ServerMetrics::new());
+        let bridge = PluginBridge::with_metrics(metrics.clone());
+
+        // Record a late result
+        bridge.record_late_result(false);
+        bridge.record_late_result(true);
+
+        // Verify metrics were recorded
+        let snapshot = metrics.late_results_snapshot();
+        assert_eq!(snapshot.total, 2);
+        assert_eq!(snapshot.successful, 1);
+        assert_eq!(snapshot.errors, 1);
+    }
+
+    #[tokio::test]
+    async fn test_plugin_bridge_without_metrics_no_panic() {
+        let bridge = PluginBridge::new();
+
+        // Should not panic even without metrics
+        bridge.record_late_result(false);
+        bridge.record_late_result(true);
+    }
+
+    #[tokio::test]
+    async fn test_late_result_recorded_on_caller_timeout() {
+        let metrics = Arc::new(crate::metrics::ServerMetrics::new());
+        let bridge = PluginBridge::with_metrics(metrics.clone());
+
+        // Register a result receiver, then drop it to simulate caller timeout
+        let (tx, rx) = oneshot::channel();
+        bridge
+            .pending_results
+            .write()
+            .await
+            .insert("late-test-id".to_string(), tx);
+
+        // Drop the receiver to simulate caller timeout
+        drop(rx);
+
+        // Send result via HTTP handler
+        let router = create_router(bridge);
+
+        let _response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "late-test-id".to_string(),
+                            result: Some(serde_json::json!({"completed": "work"})),
+                            error: None,
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Verify the late result was recorded as successful (no error)
+        let snapshot = metrics.late_results_snapshot();
+        assert_eq!(snapshot.total, 1);
+        assert_eq!(snapshot.successful, 1);
+        assert_eq!(snapshot.errors, 0);
+    }
+
+    #[tokio::test]
+    async fn test_late_result_with_error_recorded() {
+        let metrics = Arc::new(crate::metrics::ServerMetrics::new());
+        let bridge = PluginBridge::with_metrics(metrics.clone());
+
+        // Register a result receiver, then drop it to simulate caller timeout
+        let (tx, rx) = oneshot::channel();
+        bridge
+            .pending_results
+            .write()
+            .await
+            .insert("late-error-id".to_string(), tx);
+
+        // Drop the receiver to simulate caller timeout
+        drop(rx);
+
+        // Send result with error via HTTP handler
+        let router = create_router(bridge);
+
+        let _response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "late-error-id".to_string(),
+                            result: None,
+                            error: Some("Plugin error that arrived late".to_string()),
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Verify the late result was recorded as error
+        let snapshot = metrics.late_results_snapshot();
+        assert_eq!(snapshot.total, 1);
+        assert_eq!(snapshot.successful, 0);
+        assert_eq!(snapshot.errors, 1);
     }
 }

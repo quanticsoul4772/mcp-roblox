@@ -103,6 +103,57 @@ pub struct ToolMetricsSnapshot {
     pub p99_duration_ms: u64,
 }
 
+/// Metrics for late plugin results (results arriving after caller timeout)
+#[derive(Debug, Default)]
+pub struct LateResultMetrics {
+    /// Total late results received
+    pub total: AtomicU64,
+    /// Late results that were successful (plugin did work that went unused)
+    pub successful: AtomicU64,
+    /// Late results that were errors
+    pub errors: AtomicU64,
+}
+
+impl LateResultMetrics {
+    pub fn new() -> Self {
+        Self {
+            total: AtomicU64::new(0),
+            successful: AtomicU64::new(0),
+            errors: AtomicU64::new(0),
+        }
+    }
+
+    /// Record a late result (result arrived after caller timed out)
+    pub fn record(&self, had_error: bool) {
+        self.total.fetch_add(1, Ordering::Relaxed);
+        if had_error {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.successful.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Get late result metrics snapshot
+    pub fn snapshot(&self) -> LateResultMetricsSnapshot {
+        LateResultMetricsSnapshot {
+            total: self.total.load(Ordering::Relaxed),
+            successful: self.successful.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Serializable late result metrics snapshot
+#[derive(Debug, Clone, Serialize)]
+pub struct LateResultMetricsSnapshot {
+    /// Total late results received
+    pub total: u64,
+    /// Late results that were successful (wasted work)
+    pub successful: u64,
+    /// Late results that were errors
+    pub errors: u64,
+}
+
 /// Connection status tracking
 #[derive(Debug, Default)]
 pub struct ConnectionMetrics {
@@ -176,6 +227,8 @@ pub struct ServerMetrics {
     started_at: std::time::Instant,
     /// Studio connection metrics
     connection: ConnectionMetrics,
+    /// Late plugin result metrics (results arriving after caller timeout)
+    late_results: LateResultMetrics,
 }
 
 impl ServerMetrics {
@@ -184,6 +237,7 @@ impl ServerMetrics {
             tools: RwLock::new(std::collections::HashMap::new()),
             started_at: std::time::Instant::now(),
             connection: ConnectionMetrics::new(),
+            late_results: LateResultMetrics::new(),
         }
     }
 
@@ -195,6 +249,20 @@ impl ServerMetrics {
     /// Get connection metrics snapshot
     pub fn connection_snapshot(&self) -> ConnectionMetricsSnapshot {
         self.connection.snapshot()
+    }
+
+    /// Record a late plugin result (result arrived after caller timed out)
+    pub fn record_late_result(&self, had_error: bool) {
+        self.late_results.record(had_error);
+    }
+
+    /// Get late result metrics snapshot
+    ///
+    /// Used for targeted monitoring of late results without full server metrics.
+    /// For comprehensive metrics, use `snapshot()` which includes late_results.
+    #[allow(dead_code)]
+    pub fn late_results_snapshot(&self) -> LateResultMetricsSnapshot {
+        self.late_results.snapshot()
     }
 
     /// Get or create metrics for a tool
@@ -228,6 +296,7 @@ impl ServerMetrics {
             uptime_secs: self.started_at.elapsed().as_secs(),
             tools: tool_snapshots,
             connection: self.connection.snapshot(),
+            late_results: self.late_results.snapshot(),
         }
     }
 }
@@ -244,6 +313,8 @@ pub struct ServerMetricsSnapshot {
     pub uptime_secs: u64,
     pub tools: std::collections::HashMap<String, ToolMetricsSnapshot>,
     pub connection: ConnectionMetricsSnapshot,
+    /// Late plugin results (results arriving after caller timeout)
+    pub late_results: LateResultMetricsSnapshot,
 }
 
 #[cfg(test)]
@@ -426,5 +497,88 @@ mod tests {
         let snapshot = server_metrics.snapshot().await;
         assert_eq!(snapshot.connection.total_checks, 1);
         assert!(snapshot.connection.last_connected);
+    }
+
+    // === LATE RESULT METRICS TESTS ===
+
+    #[test]
+    fn test_late_result_metrics_new() {
+        let metrics = LateResultMetrics::new();
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.total, 0);
+        assert_eq!(snapshot.successful, 0);
+        assert_eq!(snapshot.errors, 0);
+    }
+
+    #[test]
+    fn test_late_result_metrics_record_successful() {
+        let metrics = LateResultMetrics::new();
+
+        metrics.record(false); // successful late result
+        metrics.record(false);
+        metrics.record(false);
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.total, 3);
+        assert_eq!(snapshot.successful, 3);
+        assert_eq!(snapshot.errors, 0);
+    }
+
+    #[test]
+    fn test_late_result_metrics_record_errors() {
+        let metrics = LateResultMetrics::new();
+
+        metrics.record(true); // late result with error
+        metrics.record(true);
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.total, 2);
+        assert_eq!(snapshot.successful, 0);
+        assert_eq!(snapshot.errors, 2);
+    }
+
+    #[test]
+    fn test_late_result_metrics_mixed() {
+        let metrics = LateResultMetrics::new();
+
+        // 3 successful, 2 errors
+        metrics.record(false);
+        metrics.record(true);
+        metrics.record(false);
+        metrics.record(true);
+        metrics.record(false);
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.total, 5);
+        assert_eq!(snapshot.successful, 3);
+        assert_eq!(snapshot.errors, 2);
+    }
+
+    #[test]
+    fn test_server_metrics_late_result_tracking() {
+        let server_metrics = ServerMetrics::new();
+
+        server_metrics.record_late_result(false); // successful
+        server_metrics.record_late_result(true); // error
+        server_metrics.record_late_result(false); // successful
+
+        let snapshot = server_metrics.late_results_snapshot();
+        assert_eq!(snapshot.total, 3);
+        assert_eq!(snapshot.successful, 2);
+        assert_eq!(snapshot.errors, 1);
+    }
+
+    #[tokio::test]
+    async fn test_server_metrics_snapshot_includes_late_results() {
+        let server_metrics = ServerMetrics::new();
+
+        server_metrics.record_late_result(false);
+        server_metrics.record_late_result(true);
+
+        let snapshot = server_metrics.snapshot().await;
+        assert_eq!(snapshot.late_results.total, 2);
+        assert_eq!(snapshot.late_results.successful, 1);
+        assert_eq!(snapshot.late_results.errors, 1);
     }
 }

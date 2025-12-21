@@ -6,7 +6,6 @@
 use crate::error::RobloxMcpError;
 use crate::http::HttpClient;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use md5;
 use serde::{Deserialize, Serialize};
 
 /// Result from reading a DataStore entry

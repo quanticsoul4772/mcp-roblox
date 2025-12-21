@@ -17,6 +17,7 @@ use tracing::{error, info};
 use crate::bridge::http::{create_router, PluginBridge};
 use crate::config::ServerConfig;
 use crate::mcp::RobloxMcpServer;
+use crate::metrics::ServerMetrics;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -36,8 +37,12 @@ async fn main() -> Result<()> {
     info!("Roblox Studio MCP Server starting...");
     info!("Project root: {}", project_root.display());
 
-    // Create shared plugin bridge
-    let bridge = Arc::new(PluginBridge::new());
+    // Create shared metrics for cross-component tracking
+    // This enables late result tracking when plugin returns data after caller has timed out
+    let metrics = Arc::new(ServerMetrics::new());
+
+    // Create shared plugin bridge with metrics for late result tracking
+    let bridge = Arc::new(PluginBridge::with_metrics(metrics.clone()));
 
     // Spawn HTTP bridge as background task (for plugin communication)
     // Graceful degradation: if port binding fails, MCP server continues without plugin support
@@ -73,8 +78,8 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Create MCP server with filesystem tools
-    let server = RobloxMcpServer::new(bridge, project_root);
+    // Create MCP server with shared metrics for unified tracking
+    let server = RobloxMcpServer::new(bridge, project_root).with_shared_metrics(metrics);
 
     // Run MCP server on STDIO (blocks main thread)
     info!("Starting MCP server on STDIO");

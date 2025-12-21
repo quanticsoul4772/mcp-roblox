@@ -186,6 +186,22 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         }
     }
 
+    /// Set shared metrics for cross-component tracking (e.g., late plugin results)
+    ///
+    /// When metrics are shared between RobloxMcpServer and PluginBridge,
+    /// late result tracking becomes available for operational visibility.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let metrics = Arc::new(ServerMetrics::new());
+    /// let bridge = Arc::new(PluginBridge::with_metrics(metrics.clone()));
+    /// let server = RobloxMcpServer::new(bridge, root).with_shared_metrics(metrics);
+    /// ```
+    pub fn with_shared_metrics(mut self, metrics: Arc<ServerMetrics>) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
     /// Set a custom cloud client (for testing cloud tool success paths)
     ///
     /// # Example
