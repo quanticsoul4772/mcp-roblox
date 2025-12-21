@@ -7,6 +7,30 @@ use crate::error::RobloxMcpError;
 use crate::http::HttpClient;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tracing::warn;
+
+/// Extract a header value, logging a warning if missing
+///
+/// Critical metadata headers from Roblox DataStore API should always be present
+/// on successful responses. If missing, this could indicate API changes or issues.
+fn extract_header_with_warning(
+    headers: &HashMap<String, String>,
+    header_name: &str,
+    context: &str,
+) -> String {
+    match headers.get(header_name) {
+        Some(value) => value.clone(),
+        None => {
+            warn!(
+                header = header_name,
+                context = context,
+                "DataStore response missing expected header - metadata may be incomplete"
+            );
+            String::new()
+        }
+    }
+}
 
 /// Result from reading a DataStore entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,23 +99,21 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
         }
 
         // The response body IS the value, metadata comes from headers
-        let version = response
-            .headers
-            .get("roblox-entry-version")
-            .cloned()
-            .unwrap_or_default();
+        // Log warnings if critical headers are missing (helps diagnose API issues)
+        let context = format!(
+            "datastore_get universe={} datastore={} key={}",
+            universe_id, datastore_name, key
+        );
 
-        let created_time = response
-            .headers
-            .get("roblox-entry-created-time")
-            .cloned()
-            .unwrap_or_default();
-
-        let updated_time = response
-            .headers
-            .get("roblox-entry-version-created-time")
-            .cloned()
-            .unwrap_or_default();
+        let version =
+            extract_header_with_warning(&response.headers, "roblox-entry-version", &context);
+        let created_time =
+            extract_header_with_warning(&response.headers, "roblox-entry-created-time", &context);
+        let updated_time = extract_header_with_warning(
+            &response.headers,
+            "roblox-entry-version-created-time",
+            &context,
+        );
 
         let value: serde_json::Value = response.json()?;
 
@@ -170,23 +192,21 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
         }
 
         // Extract metadata from response headers
-        let version = response
-            .headers
-            .get("roblox-entry-version")
-            .cloned()
-            .unwrap_or_default();
+        // Log warnings if critical headers are missing (helps diagnose API issues)
+        let context = format!(
+            "datastore_set universe={} datastore={} key={}",
+            universe_id, datastore_name, key
+        );
 
-        let created_time = response
-            .headers
-            .get("roblox-entry-created-time")
-            .cloned()
-            .unwrap_or_default();
-
-        let updated_time = response
-            .headers
-            .get("roblox-entry-version-created-time")
-            .cloned()
-            .unwrap_or_default();
+        let version =
+            extract_header_with_warning(&response.headers, "roblox-entry-version", &context);
+        let created_time =
+            extract_header_with_warning(&response.headers, "roblox-entry-created-time", &context);
+        let updated_time = extract_header_with_warning(
+            &response.headers,
+            "roblox-entry-version-created-time",
+            &context,
+        );
 
         Ok(DataStoreEntry {
             value,
@@ -516,7 +536,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_datastore_get_missing_headers() {
-        // Test that missing metadata headers result in empty strings (not errors)
+        // Test that missing metadata headers result in empty strings with warnings (not errors)
+        // This allows the operation to succeed while alerting operators to incomplete metadata
         let mock = MockHttpClient::new();
         mock.queue_response(MockResponse::json(
             200,
@@ -527,9 +548,34 @@ mod tests {
 
         let result = client.datastore_get(123, "Store", "key", None).await;
 
+        // Operation should succeed - value is returned even if metadata is incomplete
         assert!(result.is_ok());
         let entry = result.unwrap();
+        assert_eq!(entry.value, serde_json::json!({"simple": "value"}));
+        // Missing headers result in empty strings (warnings logged at runtime)
         assert_eq!(entry.version, "");
+        assert_eq!(entry.created_time, "");
+        assert_eq!(entry.updated_time, "");
+    }
+
+    #[tokio::test]
+    async fn test_datastore_get_partial_headers() {
+        // Test with only some headers present
+        let mock = MockHttpClient::new();
+        mock.queue_response(
+            MockResponse::json(200, serde_json::json!({"data": "test"}))
+                .with_headers([("roblox-entry-version".to_string(), "v123".to_string())]),
+        );
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+
+        let result = client.datastore_get(123, "Store", "key", None).await;
+
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        // Version is present
+        assert_eq!(entry.version, "v123");
+        // Other headers missing - should be empty strings with warnings logged
         assert_eq!(entry.created_time, "");
         assert_eq!(entry.updated_time, "");
     }
@@ -727,20 +773,88 @@ mod tests {
 
     #[tokio::test]
     async fn test_datastore_set_missing_headers() {
-        // Test that missing metadata headers result in empty strings (not errors)
+        // Test that missing metadata headers result in empty strings with warnings (not errors)
+        // This allows the operation to succeed while alerting operators to incomplete metadata
         let mock = MockHttpClient::new();
         mock.queue_response(MockResponse::json(200, serde_json::json!({})));
 
         let client = OpenCloudClient::with_http(mock, "test-key");
 
+        let value = serde_json::json!("value");
         let result = client
-            .datastore_set(123, "Store", "key", serde_json::json!("value"), None)
+            .datastore_set(123, "Store", "key", value.clone(), None)
+            .await;
+
+        // Operation should succeed - value is confirmed even if metadata is incomplete
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        assert_eq!(entry.value, value);
+        // Missing headers result in empty strings (warnings logged at runtime)
+        assert_eq!(entry.version, "");
+        assert_eq!(entry.created_time, "");
+        assert_eq!(entry.updated_time, "");
+    }
+
+    #[tokio::test]
+    async fn test_datastore_set_partial_headers() {
+        // Test with only some headers present
+        let mock = MockHttpClient::new();
+        mock.queue_response(
+            MockResponse::json(200, serde_json::json!({})).with_headers([
+                ("roblox-entry-version".to_string(), "v999".to_string()),
+                (
+                    "roblox-entry-created-time".to_string(),
+                    "2024-01-01T00:00:00Z".to_string(),
+                ),
+            ]),
+        );
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+
+        let value = serde_json::json!({"test": true});
+        let result = client
+            .datastore_set(123, "Store", "key", value.clone(), None)
             .await;
 
         assert!(result.is_ok());
         let entry = result.unwrap();
-        assert_eq!(entry.version, "");
-        assert_eq!(entry.created_time, "");
+        assert_eq!(entry.value, value);
+        // Version and created_time are present
+        assert_eq!(entry.version, "v999");
+        assert_eq!(entry.created_time, "2024-01-01T00:00:00Z");
+        // updated_time missing - should be empty string with warning logged
         assert_eq!(entry.updated_time, "");
+    }
+
+    // ========================================
+    // Tests for extract_header_with_warning helper
+    // ========================================
+
+    #[test]
+    fn test_extract_header_with_warning_present() {
+        let mut headers = HashMap::new();
+        headers.insert("test-header".to_string(), "test-value".to_string());
+
+        let result = extract_header_with_warning(&headers, "test-header", "test_context");
+        assert_eq!(result, "test-value");
+    }
+
+    #[test]
+    fn test_extract_header_with_warning_missing() {
+        let headers = HashMap::new();
+
+        // Should return empty string (warning logged at runtime)
+        let result = extract_header_with_warning(&headers, "missing-header", "test_context");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_extract_header_with_warning_empty_value() {
+        let mut headers = HashMap::new();
+        headers.insert("empty-header".to_string(), "".to_string());
+
+        // Empty string value is still "present" - no warning for this case
+        let result = extract_header_with_warning(&headers, "empty-header", "test_context");
+        assert_eq!(result, "");
     }
 }
