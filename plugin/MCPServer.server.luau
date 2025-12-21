@@ -6,18 +6,193 @@ local HttpService = game:GetService("HttpService")
 local Selection = game:GetService("Selection")
 local ScriptEditorService = game:GetService("ScriptEditorService")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
+local LogService = game:GetService("LogService")
 
-local SERVER_URL = "http://127.0.0.1:8081"
+local SERVER_URL = "http://127.0.0.1:8080"
 local POLL_INTERVAL = 0.5
 local MAX_BACKOFF = 30  -- Maximum backoff in seconds
 local INITIAL_BACKOFF = 1  -- Initial backoff in seconds
+local MAX_OUTPUT_BUFFER = 500  -- Maximum log entries to keep
 
 local toolbar = plugin:CreateToolbar("MCP Server")
-local button = toolbar:CreateButton("Connect", "Connect to MCP Server", "rbxasset://textures/ui/LuaApp/icons/ic-studio-settings.png")
+local button = toolbar:CreateButton("Connect", "Connect to MCP Server", "")
 
 local connected = false
 local currentBackoff = INITIAL_BACKOFF
 local consecutiveFailures = 0
+
+-- Output buffer for getOutput action
+local outputBuffer = {}
+
+-- Capture log messages
+LogService.MessageOut:Connect(function(message, messageType)
+    local entry = {
+        message = message,
+        messageType = tostring(messageType),
+        timestamp = os.time()
+    }
+    table.insert(outputBuffer, entry)
+    -- Keep buffer size limited
+    while #outputBuffer > MAX_OUTPUT_BUFFER do
+        table.remove(outputBuffer, 1)
+    end
+end)
+
+-- Helper function to resolve dot-notation paths like "Workspace.Part.SubPart"
+local function resolveInstancePath(path)
+    if not path or path == "" then
+        return nil
+    end
+
+    -- Handle "game" prefix
+    local workingPath = path
+    if workingPath:sub(1, 5) == "game." then
+        workingPath = workingPath:sub(6)
+    elseif workingPath == "game" then
+        return game
+    end
+
+    -- Split path by dots
+    local parts = {}
+    for part in workingPath:gmatch("[^.]+") do
+        table.insert(parts, part)
+    end
+
+    if #parts == 0 then
+        return nil
+    end
+
+    -- Start from game and traverse
+    local current = game
+    for _, part in ipairs(parts) do
+        local child = current:FindFirstChild(part)
+        if not child then
+            -- Try recursive search as fallback for first part only
+            if current == game then
+                child = game:FindFirstChild(part, true)
+            end
+            if not child then
+                return nil
+            end
+        end
+        current = child
+    end
+
+    return current
+end
+
+-- Helper function to convert JSON values to Roblox types
+local function convertValue(value, propertyName)
+    if value == nil then
+        return nil
+    end
+
+    -- If it's already a primitive type, return as-is
+    if type(value) ~= "table" and type(value) ~= "string" then
+        return value
+    end
+
+    -- Handle string values that might need conversion
+    if type(value) == "string" then
+        -- Check if it looks like a BrickColor name
+        local lowerProp = propertyName and propertyName:lower() or ""
+        if lowerProp == "brickcolor" or lowerProp:find("color") then
+            -- Try BrickColor first
+            local success, brickColor = pcall(function()
+                return BrickColor.new(value)
+            end)
+            if success then
+                return brickColor
+            end
+        end
+
+        -- Check for hex color format (#RRGGBB or #RGB)
+        if value:match("^#%x+$") then
+            local hex = value:sub(2)
+            if #hex == 3 then
+                hex = hex:sub(1,1):rep(2) .. hex:sub(2,2):rep(2) .. hex:sub(3,3):rep(2)
+            end
+            if #hex == 6 then
+                local r = tonumber(hex:sub(1,2), 16) / 255
+                local g = tonumber(hex:sub(3,4), 16) / 255
+                local b = tonumber(hex:sub(5,6), 16) / 255
+                return Color3.new(r, g, b)
+            end
+        end
+
+        -- Return string as-is for other cases
+        return value
+    end
+
+    -- Handle table/array values
+    if type(value) == "table" then
+        -- Check for explicit type specification: {type = "Vector3", value = {1, 2, 3}}
+        if value.type then
+            local t = value.type
+            local v = value.value or value
+
+            if t == "Vector3" and type(v) == "table" then
+                return Vector3.new(v[1] or v.x or 0, v[2] or v.y or 0, v[3] or v.z or 0)
+            elseif t == "Vector2" and type(v) == "table" then
+                return Vector2.new(v[1] or v.x or 0, v[2] or v.y or 0)
+            elseif t == "Color3" and type(v) == "table" then
+                return Color3.new(v[1] or v.r or 0, v[2] or v.g or 0, v[3] or v.b or 0)
+            elseif t == "Color3FromRGB" and type(v) == "table" then
+                return Color3.fromRGB(v[1] or v.r or 0, v[2] or v.g or 0, v[3] or v.b or 0)
+            elseif t == "BrickColor" then
+                if type(v) == "string" then
+                    return BrickColor.new(v)
+                elseif type(v) == "number" then
+                    return BrickColor.new(v)
+                end
+            elseif t == "UDim2" and type(v) == "table" then
+                return UDim2.new(v[1] or 0, v[2] or 0, v[3] or 0, v[4] or 0)
+            elseif t == "UDim" and type(v) == "table" then
+                return UDim.new(v[1] or 0, v[2] or 0)
+            elseif t == "CFrame" and type(v) == "table" then
+                if #v == 3 then
+                    return CFrame.new(v[1], v[2], v[3])
+                elseif #v >= 12 then
+                    return CFrame.new(v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12])
+                end
+            elseif t == "Enum" and value.enum and value.item then
+                return Enum[value.enum][value.item]
+            end
+        end
+
+        -- Auto-detect based on array length and property name
+        local lowerProp = propertyName and propertyName:lower() or ""
+
+        -- 3-element array: likely Vector3, Color3, or Size
+        if #value == 3 then
+            if lowerProp:find("color") then
+                -- Assume RGB 0-1 range
+                if value[1] <= 1 and value[2] <= 1 and value[3] <= 1 then
+                    return Color3.new(value[1], value[2], value[3])
+                else
+                    -- Assume RGB 0-255 range
+                    return Color3.fromRGB(value[1], value[2], value[3])
+                end
+            else
+                -- Default to Vector3 for Position, Size, etc.
+                return Vector3.new(value[1], value[2], value[3])
+            end
+        end
+
+        -- 2-element array: likely Vector2
+        if #value == 2 then
+            return Vector2.new(value[1], value[2])
+        end
+
+        -- 4-element array: likely UDim2
+        if #value == 4 then
+            return UDim2.new(value[1], value[2], value[3], value[4])
+        end
+    end
+
+    -- Return as-is if no conversion matched
+    return value
+end
 
 local function executeCommand(action, params)
     if action == "getSelection" then
@@ -33,14 +208,14 @@ local function executeCommand(action, params)
         return { instances = instances }
 
     elseif action == "getScriptSource" then
-        local script = game:FindFirstChild(params.path, true)
+        local script = resolveInstancePath(params.path) or game:FindFirstChild(params.path, true)
         if not script or not script:IsA("LuaSourceContainer") then
             error("Script not found: " .. params.path)
         end
         return { source = script.Source }
 
     elseif action == "modifyScript" then
-        local script = game:FindFirstChild(params.path, true)
+        local script = resolveInstancePath(params.path) or game:FindFirstChild(params.path, true)
         if not script or not script:IsA("LuaSourceContainer") then
             error("Script not found: " .. params.path)
         end
@@ -102,7 +277,7 @@ local function executeCommand(action, params)
         if startPath == "game" then
             startInstance = game
         else
-            startInstance = game:FindFirstChild(startPath, true)
+            startInstance = resolveInstancePath(startPath) or game:FindFirstChild(startPath, true)
             if not startInstance then
                 error("Start path not found: " .. startPath)
             end
@@ -130,6 +305,7 @@ local function executeCommand(action, params)
             local current = table.remove(queue, 1)
             local inst = current.instance
             local depth = current.depth
+            local shouldProcess = true
 
             -- Check if we've reached the cursor position
             if not reachedCursor then
@@ -142,11 +318,13 @@ local function executeCommand(action, params)
                             table.insert(queue, {instance = children[i], depth = depth + 1})
                         end
                     end
-                    goto continue
+                    shouldProcess = false
+                else
+                    shouldProcess = false
                 end
             end
 
-            if reachedCursor then
+            if shouldProcess and reachedCursor then
                 -- Add this instance to results
                 table.insert(instances, {
                     Name = inst.Name,
@@ -174,8 +352,6 @@ local function executeCommand(action, params)
                     end
                 end
             end
-
-            ::continue::
         end
 
         return {
@@ -199,7 +375,7 @@ local function executeCommand(action, params)
         end
         instance.Name = params.name
 
-        local parent = game:FindFirstChild(params.parent, true)
+        local parent = resolveInstancePath(params.parent) or game:FindFirstChild(params.parent, true)
         if not parent then
             error("Parent not found: " .. params.parent)
         end
@@ -207,10 +383,10 @@ local function executeCommand(action, params)
 
         if params.properties then
             for key, value in pairs(params.properties) do
-                local success, err = pcall(function()
-                    instance[key] = value
+                local propSuccess, err = pcall(function()
+                    instance[key] = convertValue(value, key)
                 end)
-                if not success then
+                if not propSuccess then
                     error("Failed to set property '" .. key .. "': " .. tostring(err))
                 end
             end
@@ -226,7 +402,7 @@ local function executeCommand(action, params)
         }
 
     elseif action == "setProperty" then
-        local instance = game:FindFirstChild(params.path, true)
+        local instance = resolveInstancePath(params.path) or game:FindFirstChild(params.path, true)
         if not instance then
             error("Instance not found: " .. params.path)
         end
@@ -235,8 +411,10 @@ local function executeCommand(action, params)
             error("Property name is required")
         end
 
+        local convertedValue = convertValue(params.value, params.property)
+
         local success, err = pcall(function()
-            instance[params.property] = params.value
+            instance[params.property] = convertedValue
         end)
 
         if not success then
@@ -250,7 +428,7 @@ local function executeCommand(action, params)
         return { success = true }
 
     elseif action == "deleteInstance" then
-        local instance = game:FindFirstChild(params.path, true)
+        local instance = resolveInstancePath(params.path) or game:FindFirstChild(params.path, true)
         if not instance then
             error("Instance not found: " .. params.path)
         end
@@ -269,7 +447,7 @@ local function executeCommand(action, params)
 
         local root = game
         if params.root then
-            root = game:FindFirstChild(params.root, true)
+            root = resolveInstancePath(params.root) or game:FindFirstChild(params.root, true)
             if not root then
                 error("Root not found: " .. params.root)
             end
@@ -287,6 +465,18 @@ local function executeCommand(action, params)
         end
 
         return { instances = results }
+
+    elseif action == "getOutput" then
+        local limit = params.limit or 100
+        local entries = {}
+
+        -- Get the most recent entries up to limit
+        local startIndex = math.max(1, #outputBuffer - limit + 1)
+        for i = startIndex, #outputBuffer do
+            table.insert(entries, outputBuffer[i])
+        end
+
+        return { entries = entries, count = #entries }
     end
 
     error("Unknown action: " .. action)
@@ -384,7 +574,6 @@ button.Click:Connect(function()
         currentBackoff = INITIAL_BACKOFF
 
         print("[MCP Plugin] Connecting to MCP server at", SERVER_URL)
-        button.Text = "Disconnect"
 
         -- Check server health first
         if checkHealth() then
@@ -397,7 +586,6 @@ button.Click:Connect(function()
         pollTask = task.spawn(pollLoop)
     else
         print("[MCP Plugin] Disconnected from MCP server")
-        button.Text = "Connect"
 
         -- Stop polling loop
         if pollTask then

@@ -1,6 +1,1 @@
-{
-  "name": "MCPServer",
-  "tree": {
-    "$path": "MCPServer.server.lua"
-  }
-}
+{"name": "MCPServer", "tree": {"$path": "MCPServer.server.luau"}}
