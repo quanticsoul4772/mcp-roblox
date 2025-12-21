@@ -29,6 +29,10 @@ reqwest = { version = "0.12", features = ["json", "multipart"] }
 # URL encoding for DataStore keys
 urlencoding = "2"
 
+# MD5 and Base64 for DataStore API content-md5 header
+md5 = "0.7"
+base64 = "0.22"
+
 # File watching
 notify = "7"
 

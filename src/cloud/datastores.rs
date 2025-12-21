@@ -1,9 +1,12 @@
 //! Open Cloud DataStore functionality
 //!
 //! Read and write data from Roblox DataStores via Open Cloud API.
+//! Uses the v1 API endpoint format: /datastores/v1/universes/{id}/standard-datastores/datastore/entries/entry
 
 use crate::error::RobloxMcpError;
 use crate::http::HttpClient;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use md5;
 use serde::{Deserialize, Serialize};
 
 /// Result from reading a DataStore entry
@@ -43,17 +46,18 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
     ) -> Result<DataStoreEntry, RobloxMcpError> {
         let scope = scope.unwrap_or("global");
 
-        // URL encode the key and datastore name
+        // URL encode the key and datastore name for query params
         let encoded_key = urlencoding::encode(key);
         let encoded_datastore = urlencoding::encode(datastore_name);
 
+        // V1 API format: /datastores/v1/universes/{id}/standard-datastores/datastore/entries/entry
         let url = format!(
-            "{}/cloud/v2/universes/{}/data-stores/{}/scopes/{}/entries/{}",
+            "{}/datastores/v1/universes/{}/standard-datastores/datastore/entries/entry?datastoreName={}&entryKey={}&scope={}",
             self.base_url(),
             universe_id,
             encoded_datastore,
-            scope,
-            encoded_key
+            encoded_key,
+            scope
         );
 
         let response = self
@@ -121,28 +125,38 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
     ) -> Result<DataStoreEntry, RobloxMcpError> {
         let scope = scope.unwrap_or("global");
 
-        // URL encode the key and datastore name
+        // URL encode the key and datastore name for query params
         let encoded_key = urlencoding::encode(key);
         let encoded_datastore = urlencoding::encode(datastore_name);
 
+        // V1 API format: /datastores/v1/universes/{id}/standard-datastores/datastore/entries/entry
         let url = format!(
-            "{}/cloud/v2/universes/{}/data-stores/{}/scopes/{}/entries/{}",
+            "{}/datastores/v1/universes/{}/standard-datastores/datastore/entries/entry?datastoreName={}&entryKey={}&scope={}",
             self.base_url(),
             universe_id,
             encoded_datastore,
-            scope,
-            encoded_key
+            encoded_key,
+            scope
         );
+
+        // V1 API requires content-md5 header with base64-encoded MD5 of the body
+        let body_bytes = serde_json::to_vec(&value).map_err(|e| {
+            RobloxMcpError::InvalidStudioData(format!("Failed to serialize value: {}", e))
+        })?;
+        let md5_digest = md5::compute(&body_bytes);
+        let content_md5 = BASE64.encode(md5_digest.as_ref());
 
         let response = self
             .http()
-            .post_json(
+            .post_binary(
                 &url,
                 &[
                     ("x-api-key", self.api_key()),
                     ("Content-Type", "application/json"),
+                    ("content-md5", &content_md5),
                 ],
-                value.clone(),
+                body_bytes,
+                None,
             )
             .await?;
 
@@ -385,7 +399,8 @@ mod tests {
 
         let requests = mock.requests();
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].url.contains("scopes/custom_scope"));
+        // V1 API uses scope as query parameter
+        assert!(requests[0].url.contains("scope=custom_scope"));
     }
 
     #[tokio::test]
@@ -402,7 +417,8 @@ mod tests {
 
         let requests = mock.requests();
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].url.contains("scopes/global"));
+        // V1 API uses scope as query parameter
+        assert!(requests[0].url.contains("scope=global"));
     }
 
     #[tokio::test]
@@ -575,7 +591,8 @@ mod tests {
 
         let requests = mock.requests();
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].url.contains("scopes/custom_scope"));
+        // V1 API uses scope as query parameter
+        assert!(requests[0].url.contains("scope=custom_scope"));
     }
 
     #[tokio::test]
@@ -592,7 +609,8 @@ mod tests {
 
         let requests = mock.requests();
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].url.contains("scopes/global"));
+        // V1 API uses scope as query parameter
+        assert!(requests[0].url.contains("scope=global"));
     }
 
     #[tokio::test]
