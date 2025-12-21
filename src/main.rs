@@ -5,6 +5,7 @@ mod error;
 mod http;
 mod mcp;
 mod metrics;
+mod tasks;
 mod tools;
 mod watcher;
 
@@ -18,6 +19,7 @@ use crate::bridge::http::{create_router, PluginBridge};
 use crate::config::ServerConfig;
 use crate::mcp::RobloxMcpServer;
 use crate::metrics::ServerMetrics;
+use crate::tasks::spawn_monitored;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -50,7 +52,9 @@ async fn main() -> Result<()> {
     // PluginBridge is cheap to clone (just Arc pointers internally).
     let http_bridge = (*bridge).clone();
 
-    tokio::spawn(async move {
+    // Use spawn_monitored to ensure panics and errors are logged.
+    // This provides visibility into silent background task failures.
+    spawn_monitored("http_bridge", async move {
         let app = create_router(http_bridge);
 
         // Try to bind to configured port, with graceful fallback on failure

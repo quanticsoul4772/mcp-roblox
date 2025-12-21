@@ -11,6 +11,7 @@ use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use crate::bridge::http::{create_router, PluginBridge};
+use crate::tasks::spawn_monitored;
 
 /// Initialize the tracing subscriber with stderr output
 ///
@@ -105,10 +106,11 @@ pub async fn run_http_bridge(bridge: PluginBridge, bind_addr: &str) {
     }
 }
 
-/// Spawn the HTTP bridge as a background task
+/// Spawn the HTTP bridge as a background task with panic monitoring
 ///
-/// This spawns `run_http_bridge` as a tokio task, allowing the main
-/// server to continue running even if the HTTP bridge fails.
+/// This spawns `run_http_bridge` as a monitored tokio task, allowing the main
+/// server to continue running even if the HTTP bridge fails. Unlike raw
+/// `tokio::spawn`, panics and unexpected terminations are logged.
 ///
 /// # Arguments
 /// * `bridge` - The plugin bridge for handling commands
@@ -117,7 +119,7 @@ pub async fn run_http_bridge(bridge: PluginBridge, bind_addr: &str) {
 /// # Returns
 /// A JoinHandle for the spawned task
 pub fn spawn_http_bridge(bridge: PluginBridge, bind_addr: String) -> JoinHandle<()> {
-    tokio::spawn(async move {
+    spawn_monitored("http_bridge", async move {
         run_http_bridge(bridge, &bind_addr).await
     })
 }
