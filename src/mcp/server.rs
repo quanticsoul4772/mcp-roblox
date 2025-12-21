@@ -2489,4 +2489,536 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.message.contains("Open Cloud not configured"));
     }
+
+    // === FS_WATCH_CHANGES TESTS ===
+
+    #[tokio::test]
+    async fn test_fs_watch_changes_watcher_unavailable() {
+        let temp_dir = TempDir::new().unwrap();
+        // Mock server has file_watcher: None by default
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = FsWatchChangesParams { limit: Some(10) };
+        let result = server.fs_watch_changes(Parameters(params)).await;
+
+        assert!(result.is_err(), "fs_watch_changes should fail when watcher is unavailable");
+        let err = result.unwrap_err();
+        assert!(err.message.contains("File watcher not available"));
+    }
+
+    #[tokio::test]
+    async fn test_fs_watch_changes_watcher_unavailable_default_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = FsWatchChangesParams { limit: None };
+        let result = server.fs_watch_changes(Parameters(params)).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("File watcher not available"));
+    }
+
+    // === FS_LINT_SCRIPT EDGE CASE TESTS ===
+
+    #[tokio::test]
+    async fn test_fs_lint_script_non_luau_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let txt_file = project_root.join("script.txt");
+        std::fs::write(&txt_file, "-- not a luau file").unwrap();
+
+        let server = create_test_server(project_root);
+
+        let params = FsLintScriptParams {
+            file_path: txt_file.display().to_string(),
+            config_path: None,
+        };
+
+        let result = server.fs_lint_script(Parameters(params)).await;
+        assert!(result.is_err(), "fs_lint_script should reject non-.luau files");
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Only .luau files can be linted"));
+    }
+
+    #[tokio::test]
+    async fn test_fs_lint_script_lua_extension_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let lua_file = project_root.join("script.lua");
+        std::fs::write(&lua_file, "-- lua file not luau").unwrap();
+
+        let server = create_test_server(project_root);
+
+        let params = FsLintScriptParams {
+            file_path: lua_file.display().to_string(),
+            config_path: None,
+        };
+
+        let result = server.fs_lint_script(Parameters(params)).await;
+        assert!(result.is_err(), "fs_lint_script should reject .lua files");
+    }
+
+    // === FS_WRITE_SCRIPT PATH TRAVERSAL TESTS ===
+
+    #[tokio::test]
+    async fn test_fs_write_script_path_traversal_with_create_dirs() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+        let server = create_test_server(project_root.clone());
+
+        // Create another temp dir that is definitely outside project root
+        let other_dir = TempDir::new().unwrap();
+        let outside_path = other_dir.path().join("nested/script.luau");
+
+        let params = FsWriteScriptParams {
+            file_path: outside_path.display().to_string(),
+            content: "-- should not be created".to_string(),
+            create_directories: Some(true),
+        };
+
+        let result = server.fs_write_script(Parameters(params)).await;
+        assert!(result.is_err(), "fs_write_script should detect path traversal with create_dirs");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("Path traversal") || err.message.contains("outside") || err.message.contains("not exist"),
+            "Error should mention path issue: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fs_write_script_absolute_path_outside_project() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root);
+
+        // Create another temp dir to simulate an absolute path outside project
+        let other_dir = TempDir::new().unwrap();
+        let outside_path = other_dir.path().join("script.luau");
+
+        let params = FsWriteScriptParams {
+            file_path: outside_path.display().to_string(),
+            content: "-- should not be created".to_string(),
+            create_directories: Some(true),
+        };
+
+        let result = server.fs_write_script(Parameters(params)).await;
+        assert!(result.is_err(), "fs_write_script should reject absolute paths outside project");
+    }
+
+    // === STUDIO_GET_DATAMODEL_PAGINATED EDGE CASE TESTS ===
+
+    #[tokio::test]
+    async fn test_studio_get_datamodel_paginated_all_defaults() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "getDataModelPaginated",
+                json!({
+                    "instances": [],
+                    "cursor": null,
+                    "hasMore": false
+                }),
+            )],
+        );
+
+        // All params are None - should use defaults
+        let params = StudioGetDataModelPaginatedParams {
+            start_path: None,
+            max_depth: None,
+            limit: None,
+            cursor: None,
+        };
+        let result = server.studio_get_datamodel_paginated(Parameters(params)).await;
+        assert!(result.is_ok(), "Should succeed with all default params");
+
+        // Verify defaults were applied
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.action, "getDataModelPaginated");
+        assert_eq!(last_call.params["startPath"], "game"); // default
+        assert_eq!(last_call.params["maxDepth"], 3); // default
+        assert_eq!(last_call.params["limit"], 500); // default
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_datamodel_paginated_limit_capped_at_1000() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "getDataModelPaginated",
+                json!({
+                    "instances": [],
+                    "cursor": null,
+                    "hasMore": false
+                }),
+            )],
+        );
+
+        // Request a limit higher than 1000
+        let params = StudioGetDataModelPaginatedParams {
+            start_path: Some("game.Workspace".to_string()),
+            max_depth: Some(5),
+            limit: Some(5000), // Should be capped to 1000
+            cursor: None,
+        };
+        let result = server.studio_get_datamodel_paginated(Parameters(params)).await;
+        assert!(result.is_ok(), "Should succeed with capped limit");
+
+        // Verify limit was capped
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.params["limit"], 1000, "Limit should be capped at 1000");
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_datamodel_paginated_with_cursor() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "getDataModelPaginated",
+                json!({
+                    "instances": [{"Name": "Part", "ClassName": "Part"}],
+                    "cursor": "next_cursor",
+                    "hasMore": true
+                }),
+            )],
+        );
+
+        let params = StudioGetDataModelPaginatedParams {
+            start_path: None,
+            max_depth: None,
+            limit: None,
+            cursor: Some("previous_cursor".to_string()),
+        };
+        let result = server.studio_get_datamodel_paginated(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.params["cursor"], "previous_cursor");
+    }
+
+    // === FS_SEARCH_CONTENT HIDDEN FILE TESTS ===
+
+    #[tokio::test]
+    async fn test_fs_search_content_reports_hidden_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        // Create a regular file and a hidden file
+        std::fs::write(project_root.join("visible.luau"), "function test() end").unwrap();
+        std::fs::write(project_root.join(".hidden.luau"), "function hidden() end").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsSearchContentParams {
+            path: project_root.display().to_string(),
+            pattern: "function".to_string(),
+            extension: "luau".to_string(),
+        };
+
+        let result = server.fs_search_content(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            // Should find match in visible file
+            assert!(
+                text_content.text.contains("visible.luau"),
+                "Should find visible file: {}",
+                text_content.text
+            );
+            // Should report hidden file was skipped
+            assert!(
+                text_content.text.contains("skipped_hidden"),
+                "Should report hidden files were skipped: {}",
+                text_content.text
+            );
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_search_content_no_matches() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        std::fs::write(project_root.join("script.luau"), "local x = 1").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsSearchContentParams {
+            path: project_root.display().to_string(),
+            pattern: "nonexistent_pattern_xyz".to_string(),
+            extension: "luau".to_string(),
+        };
+
+        let result = server.fs_search_content(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            assert!(
+                text_content.text.contains("\"matches\":0"),
+                "Should show zero matches: {}",
+                text_content.text
+            );
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    // === FS_GET_CHANGES HIDDEN FILE TESTS ===
+
+    #[tokio::test]
+    async fn test_fs_get_changes_reports_hidden_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        // Create a regular file and a hidden file
+        std::fs::write(project_root.join("visible.luau"), "-- visible").unwrap();
+        std::fs::write(project_root.join(".hidden.luau"), "-- hidden").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsGetChangesParams {
+            path: project_root.display().to_string(),
+        };
+
+        let result = server.fs_get_changes(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            // Should include the visible file in the files map
+            assert!(
+                text_content.text.contains("visible.luau"),
+                "Should track visible files: {}",
+                text_content.text
+            );
+            // Should report hidden file was skipped
+            assert!(
+                text_content.text.contains("skipped_hidden") || text_content.text.contains(".hidden"),
+                "Should report hidden files: {}",
+                text_content.text
+            );
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_get_changes_empty_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        // No .luau files in directory
+        std::fs::write(project_root.join("readme.txt"), "not a luau file").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsGetChangesParams {
+            path: project_root.display().to_string(),
+        };
+
+        let result = server.fs_get_changes(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            assert!(
+                text_content.text.contains("\"file_count\":0"),
+                "Should show zero file count: {}",
+                text_content.text
+            );
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    // === ADDITIONAL EDGE CASE TESTS ===
+
+    #[tokio::test]
+    async fn test_fs_get_tree_with_nested_directories() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        // Create nested structure
+        std::fs::create_dir_all(project_root.join("src/game/modules")).unwrap();
+        std::fs::write(project_root.join("src/main.luau"), "-- main").unwrap();
+        std::fs::write(project_root.join("src/game/init.luau"), "-- game").unwrap();
+        std::fs::write(project_root.join("src/game/modules/utils.luau"), "-- utils").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsGetTreeParams {
+            path: project_root.display().to_string(),
+            max_depth: Some(10),
+        };
+
+        let result = server.fs_get_tree(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            assert!(text_content.text.contains("src"));
+            assert!(text_content.text.contains("tree"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_get_tree_default_max_depth() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        std::fs::write(project_root.join("test.luau"), "-- test").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        // max_depth is None, should use default of 5
+        let params = FsGetTreeParams {
+            path: project_root.display().to_string(),
+            max_depth: None,
+        };
+
+        let result = server.fs_get_tree(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_studio_modify_script_default_record_undo() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "modifyScript",
+                json!({"success": true}),
+            )],
+        );
+
+        let params = StudioModifyScriptParams {
+            path: "game.ServerScriptService.Main".to_string(),
+            new_source: "-- updated".to_string(),
+            record_undo: None, // Should default to true
+        };
+        server.studio_modify_script(Parameters(params)).await.unwrap();
+
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.params["recordUndo"], true, "record_undo should default to true");
+    }
+
+    #[tokio::test]
+    async fn test_studio_create_instance_default_record_undo() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "createInstance",
+                json!({"success": true, "instance": {"Name": "Part"}}),
+            )],
+        );
+
+        let params = StudioCreateInstanceParams {
+            class_name: "Part".to_string(),
+            parent: "game.Workspace".to_string(),
+            name: "TestPart".to_string(),
+            properties: None,
+            record_undo: None, // Should default to true
+        };
+        server.studio_create_instance(Parameters(params)).await.unwrap();
+
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.params["recordUndo"], true);
+    }
+
+    #[tokio::test]
+    async fn test_studio_set_property_default_record_undo() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "setProperty",
+                json!({"success": true}),
+            )],
+        );
+
+        let params = StudioSetPropertyParams {
+            path: "game.Workspace.Part".to_string(),
+            property: "Name".to_string(),
+            value: json!("NewName"),
+            record_undo: None, // Should default to true
+        };
+        server.studio_set_property(Parameters(params)).await.unwrap();
+
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.params["recordUndo"], true);
+    }
+
+    #[tokio::test]
+    async fn test_studio_delete_instance_default_record_undo() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "deleteInstance",
+                json!({"success": true}),
+            )],
+        );
+
+        let params = StudioDeleteInstanceParams {
+            path: "game.Workspace.Part".to_string(),
+            record_undo: None, // Should default to true
+        };
+        server.studio_delete_instance(Parameters(params)).await.unwrap();
+
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.params["recordUndo"], true);
+    }
+
+    #[tokio::test]
+    async fn test_studio_find_instances_default_root() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "findInstances",
+                json!({"instances": [], "count": 0}),
+            )],
+        );
+
+        let params = StudioFindInstancesParams {
+            class_name: "Part".to_string(),
+            root: None, // No root specified
+        };
+        server.studio_find_instances(Parameters(params)).await.unwrap();
+
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.params["className"], "Part");
+        // root should be null/None when not specified
+        assert!(last_call.params["root"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_datamodel_default_max_depth() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "getDataModel",
+                json!({"Name": "DataModel", "Children": []}),
+            )],
+        );
+
+        let params = StudioGetDataModelParams {
+            max_depth: None, // Should default to 3
+        };
+        server.studio_get_datamodel(Parameters(params)).await.unwrap();
+
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.params["maxDepth"], 3);
+    }
 }

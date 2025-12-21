@@ -111,4 +111,71 @@ mod tests {
         // Duration should be at least 10ms
         assert!(snapshot.tools["test_tool"].avg_duration_ms >= 10.0);
     }
+
+    #[tokio::test]
+    async fn test_instrumented_call_dropped_without_finish() {
+        let metrics = Arc::new(ServerMetrics::new());
+
+        // Create and immediately drop without calling finish()
+        {
+            let _call = InstrumentedCall::start(metrics.clone(), "dropped_tool");
+            // Drop happens here without finish() - triggers warning in debug builds
+        }
+
+        // Metrics should NOT be recorded since finish() was never called
+        let snapshot = metrics.snapshot().await;
+        // The tool should not appear in metrics (or have 0 calls if it does)
+        assert!(
+            !snapshot.tools.contains_key("dropped_tool")
+                || snapshot.tools["dropped_tool"].calls == 0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_instrumented_call_finish_with_ok() {
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let call = InstrumentedCall::start(metrics.clone(), "ok_tool");
+        let result: Result<String, ErrorData> = Ok("success".to_string());
+        let returned = call.finish_with(result).await;
+
+        assert!(returned.is_ok());
+        assert_eq!(returned.unwrap(), "success");
+
+        let snapshot = metrics.snapshot().await;
+        assert_eq!(snapshot.tools["ok_tool"].calls, 1);
+        assert_eq!(snapshot.tools["ok_tool"].errors, 0);
+    }
+
+    #[tokio::test]
+    async fn test_instrumented_call_finish_with_err() {
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let call = InstrumentedCall::start(metrics.clone(), "err_tool");
+        let result: Result<String, ErrorData> = Err(ErrorData::internal_error("test error", None));
+        let returned = call.finish_with(result).await;
+
+        assert!(returned.is_err());
+
+        let snapshot = metrics.snapshot().await;
+        assert_eq!(snapshot.tools["err_tool"].calls, 1);
+        assert_eq!(snapshot.tools["err_tool"].errors, 1);
+    }
+
+    #[tokio::test]
+    async fn test_instrumented_call_multiple_calls_same_tool() {
+        let metrics = Arc::new(ServerMetrics::new());
+
+        // Make multiple calls to the same tool
+        for i in 0..5 {
+            let call = InstrumentedCall::start(metrics.clone(), "multi_tool");
+            // Alternate success/failure
+            call.finish(i % 2 == 0).await;
+        }
+
+        let snapshot = metrics.snapshot().await;
+        assert_eq!(snapshot.tools["multi_tool"].calls, 5);
+        // 3 successes (0, 2, 4), 2 failures (1, 3)
+        assert_eq!(snapshot.tools["multi_tool"].errors, 2);
+    }
 }

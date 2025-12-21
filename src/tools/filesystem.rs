@@ -525,4 +525,207 @@ mod tests {
         assert_eq!(deserialized.path, result.path);
         assert_eq!(deserialized.bytes_written, result.bytes_written);
     }
+
+    // ========================================
+    // Additional Edge Case Tests
+    // ========================================
+
+    #[test]
+    fn test_validate_path_project_root_cannot_canonicalize() {
+        // Use a path that definitely doesn't exist as project root
+        let nonexistent_root = PathBuf::from("/this/path/definitely/does/not/exist/anywhere");
+        let file_path = nonexistent_root.join("script.luau");
+
+        let result = validate_path(&file_path, &nonexistent_root);
+        assert!(result.is_err());
+
+        if let Err(e) = result {
+            match e {
+                RobloxMcpError::InvalidPath(msg) => {
+                    assert!(
+                        msg.contains("canonicalize") || msg.contains("Cannot"),
+                        "Error should mention canonicalization: {}",
+                        msg
+                    );
+                }
+                _ => panic!("Expected InvalidPath error for bad project root"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_validate_path_relative_within_project() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Create nested structure
+        let nested = project_root.join("src").join("game");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("main.luau");
+        std::fs::write(&file, "-- test").unwrap();
+
+        let result = validate_path(&file, &project_root);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_read_script_with_unicode_content() {
+        let temp_dir = TempDir::new().unwrap();
+        let luau_file = temp_dir.path().join("unicode.luau");
+        let content = "-- 你好世界\nlocal greeting = \"Привет мир\"\nprint(greeting) -- 🎮";
+        std::fs::write(&luau_file, content).unwrap();
+
+        let result = read_script(&luau_file).await;
+        assert!(result.is_ok());
+
+        let script = result.unwrap();
+        assert!(script.content.contains("你好世界"));
+        assert!(script.content.contains("Привет мир"));
+        assert!(script.content.contains("🎮"));
+    }
+
+    #[tokio::test]
+    async fn test_write_script_overwrites_existing() {
+        let temp_dir = TempDir::new().unwrap();
+        let luau_file = temp_dir.path().join("overwrite.luau");
+
+        // Write initial content
+        let result1 = write_script(&luau_file, "-- original", false).await;
+        assert!(result1.is_ok());
+
+        // Overwrite with new content
+        let result2 = write_script(&luau_file, "-- overwritten", false).await;
+        assert!(result2.is_ok());
+
+        // Verify new content
+        let content = std::fs::read_to_string(&luau_file).unwrap();
+        assert_eq!(content, "-- overwritten");
+    }
+
+    #[tokio::test]
+    async fn test_build_tree_reports_skipped_target_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src.luau");
+        let target = temp_dir.path().join("target");
+
+        std::fs::write(&src, "-- src").unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("debug.luau"), "-- debug").unwrap();
+
+        let result = build_tree(temp_dir.path(), 0, 5).await.unwrap();
+
+        let children = result.tree.children.unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "src.luau");
+
+        // MUST report the skipped target directory
+        assert!(
+            !result.skipped.is_empty(),
+            "target should be reported as skipped"
+        );
+        let skipped_target = result.skipped.iter().find(|s| s.path.contains("target"));
+        assert!(skipped_target.is_some(), "Should report target as skipped");
+        assert!(
+            skipped_target.unwrap().reason.contains("target"),
+            "Should explain why it was skipped"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_tree_sorts_directories_before_files() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create files and directories in random order
+        std::fs::write(temp_dir.path().join("zebra.luau"), "-- z").unwrap();
+        std::fs::create_dir(temp_dir.path().join("alpha")).unwrap();
+        std::fs::write(temp_dir.path().join("beta.luau"), "-- b").unwrap();
+        std::fs::create_dir(temp_dir.path().join("gamma")).unwrap();
+
+        let result = build_tree(temp_dir.path(), 0, 5).await.unwrap();
+        let children = result.tree.children.unwrap();
+
+        // Directories should come first, then files
+        // Directories: alpha, gamma
+        // Files: beta.luau, zebra.luau
+        assert!(!children[0].is_file); // alpha (dir)
+        assert!(!children[1].is_file); // gamma (dir)
+        assert!(children[2].is_file); // beta.luau (file)
+        assert!(children[3].is_file); // zebra.luau (file)
+    }
+
+    #[test]
+    fn test_tree_build_result_serialization() {
+        let result = TreeBuildResult {
+            tree: FileTree {
+                path: "/project".to_string(),
+                name: "project".to_string(),
+                is_file: false,
+                children: Some(vec![]),
+            },
+            skipped: vec![SkippedEntry {
+                path: "/project/.git".to_string(),
+                reason: "hidden directory".to_string(),
+            }],
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("skipped"));
+        assert!(json.contains("hidden directory"));
+    }
+
+    #[test]
+    fn test_skipped_entry_serialization() {
+        let entry = SkippedEntry {
+            path: "/test/.hidden".to_string(),
+            reason: "starts with dot".to_string(),
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: SkippedEntry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.path, entry.path);
+        assert_eq!(deserialized.reason, entry.reason);
+    }
+
+    #[test]
+    fn test_filetree_debug() {
+        let tree = FileTree {
+            path: "/project/src".to_string(),
+            name: "src".to_string(),
+            is_file: false,
+            children: None,
+        };
+
+        let debug = format!("{:?}", tree);
+        assert!(debug.contains("FileTree"));
+        assert!(debug.contains("src"));
+    }
+
+    #[tokio::test]
+    async fn test_build_tree_empty_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        // Directory is empty
+
+        let result = build_tree(temp_dir.path(), 0, 5).await.unwrap();
+
+        assert!(!result.tree.is_file);
+        assert!(result.tree.children.is_some());
+        assert!(result.tree.children.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_write_script_empty_content() {
+        let temp_dir = TempDir::new().unwrap();
+        let luau_file = temp_dir.path().join("empty.luau");
+
+        let result = write_script(&luau_file, "", false).await;
+        assert!(result.is_ok());
+
+        let write_result = result.unwrap();
+        assert_eq!(write_result.bytes_written, 0);
+
+        // Verify file exists and is empty
+        let content = std::fs::read_to_string(&luau_file).unwrap();
+        assert!(content.is_empty());
+    }
 }

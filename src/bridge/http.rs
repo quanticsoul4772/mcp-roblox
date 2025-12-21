@@ -811,4 +811,216 @@ mod tests {
         assert_eq!(cloned.id, "clone-resp");
         assert!(cloned.result.is_some());
     }
+
+    // ========================================
+    // Execute Command Error Path Tests
+    // ========================================
+
+    #[tokio::test]
+    async fn test_execute_command_plugin_error_response() {
+        let bridge = PluginBridge::new();
+
+        // Start command execution in background
+        let bridge_clone = bridge.clone();
+        let handle = tokio::spawn(async move {
+            bridge_clone
+                .execute_command("testAction", serde_json::json!({}))
+                .await
+        });
+
+        // Wait for command to be queued
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Get the command ID from the queue
+        let command_id = {
+            let commands = bridge.pending_commands.read().await;
+            commands[0].id.clone()
+        };
+
+        // Simulate plugin sending error response
+        let sender = bridge.pending_results.write().await.remove(&command_id);
+        if let Some(tx) = sender {
+            tx.send(PluginResponse {
+                id: command_id,
+                result: None,
+                error: Some("Script execution failed".to_string()),
+            })
+            .unwrap();
+        }
+
+        // The command should return an error
+        let result = handle.await.unwrap();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::PluginExecutionError(msg) => {
+                assert!(msg.contains("Script execution failed"));
+            }
+            e => panic!("Expected PluginExecutionError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_command_missing_result() {
+        let bridge = PluginBridge::new();
+
+        // Start command execution in background
+        let bridge_clone = bridge.clone();
+        let handle = tokio::spawn(async move {
+            bridge_clone
+                .execute_command("testAction", serde_json::json!({}))
+                .await
+        });
+
+        // Wait for command to be queued
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Get the command ID from the queue
+        let command_id = {
+            let commands = bridge.pending_commands.read().await;
+            commands[0].id.clone()
+        };
+
+        // Simulate plugin sending response with no result and no error
+        let sender = bridge.pending_results.write().await.remove(&command_id);
+        if let Some(tx) = sender {
+            tx.send(PluginResponse {
+                id: command_id,
+                result: None,
+                error: None,
+            })
+            .unwrap();
+        }
+
+        // The command should return InvalidStudioData error
+        let result = handle.await.unwrap();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::InvalidStudioData(msg) => {
+                assert!(msg.contains("no result"));
+            }
+            e => panic!("Expected InvalidStudioData, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_command_successful_response() {
+        let bridge = PluginBridge::new();
+
+        // Start command execution in background
+        let bridge_clone = bridge.clone();
+        let handle = tokio::spawn(async move {
+            bridge_clone
+                .execute_command("getSelection", serde_json::json!({}))
+                .await
+        });
+
+        // Wait for command to be queued
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Get the command ID from the queue
+        let command_id = {
+            let commands = bridge.pending_commands.read().await;
+            commands[0].id.clone()
+        };
+
+        // Simulate plugin sending successful response
+        let sender = bridge.pending_results.write().await.remove(&command_id);
+        if let Some(tx) = sender {
+            tx.send(PluginResponse {
+                id: command_id,
+                result: Some(serde_json::json!({"selection": ["Part1", "Part2"]})),
+                error: None,
+            })
+            .unwrap();
+        }
+
+        // The command should succeed
+        let result = handle.await.unwrap();
+        assert!(result.is_ok());
+        let value = result.unwrap();
+        assert!(value["selection"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_execute_command_channel_closed() {
+        // Test the channel closed error path by directly testing with a pre-closed channel
+        // The execute_command function handles Ok(Err(_)) from the oneshot receiver
+        // which happens when the sender is dropped without sending
+        
+        // Create a channel and immediately drop the sender
+        let (_tx, rx): (oneshot::Sender<PluginResponse>, _) = oneshot::channel();
+        drop(_tx);
+        
+        // Verify that receiving on a closed channel returns RecvError
+        let result = rx.await;
+        assert!(result.is_err(), "Channel should be closed when sender is dropped");
+    }
+
+    #[tokio::test]
+    async fn test_result_handler_sender_dropped_before_result() {
+        let bridge = PluginBridge::new();
+
+        // Register a result receiver, then drop it immediately
+        let (tx, rx) = oneshot::channel();
+        bridge
+            .pending_results
+            .write()
+            .await
+            .insert("orphan-cmd-id".to_string(), tx);
+
+        // Drop the receiver to simulate caller timeout
+        drop(rx);
+
+        // Now send result via HTTP handler - should log warning but not panic
+        let router = create_router(bridge);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "orphan-cmd-id".to_string(),
+                            result: Some(serde_json::json!({"late": "result"})),
+                            error: None,
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Should still return OK even though send failed (logs warning)
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_plugin_bridge_clone() {
+        let bridge1 = PluginBridge::new();
+        let bridge2 = bridge1.clone();
+
+        // Modifications via one clone should be visible via the other
+        bridge1.pending_commands.write().await.push(Command {
+            id: "shared-cmd".to_string(),
+            action: "test".to_string(),
+            params: serde_json::json!({}),
+        });
+
+        assert_eq!(bridge2.pending_commands.read().await.len(), 1);
+    }
+
+    #[test]
+    fn test_plugin_heartbeat_timeout_constant() {
+        assert!(PLUGIN_HEARTBEAT_TIMEOUT_SECS > 0);
+        assert!(PLUGIN_HEARTBEAT_TIMEOUT_SECS < 60); // Reasonable timeout
+    }
+
+    #[test]
+    fn test_plugin_command_timeout_constant() {
+        assert!(PLUGIN_COMMAND_TIMEOUT_SECS > 0);
+        assert!(PLUGIN_COMMAND_TIMEOUT_SECS <= 120); // Reasonable max
+    }
 }

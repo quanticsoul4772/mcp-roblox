@@ -394,4 +394,311 @@ mod tests {
         let client2 = OpenCloudClient::with_http(mock2, String::from("owned-string"));
         assert_eq!(client2.api_key(), "owned-string");
     }
+
+    // ========================================
+    // Additional coverage tests
+    // ========================================
+
+    #[test]
+    fn test_new_with_api_key_set() {
+        // Set the env var for this test
+        std::env::set_var("ROBLOX_OPEN_CLOUD_API_KEY", "test-key-for-coverage");
+
+        let result = OpenCloudClient::new();
+        
+        // Clean up env var
+        std::env::remove_var("ROBLOX_OPEN_CLOUD_API_KEY");
+
+        // The result should be Ok since we set the env var
+        // Note: This may still fail if ReqwestHttpClient::new() fails,
+        // but that's a different error path
+        assert!(result.is_ok() || matches!(result.unwrap_err(), RobloxMcpError::HttpConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_forbidden_error() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(403, b"Forbidden: insufficient permissions"));
+
+        let client = OpenCloudClient::with_http(mock, "limited-api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"fake rbxl content").unwrap();
+
+        let result = client.publish_place(123, 456, &file_path).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, message } => {
+                assert_eq!(status, 403);
+                assert!(message.contains("Forbidden"));
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_not_found_error() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(404, b"Place not found"));
+
+        let client = OpenCloudClient::with_http(mock, "api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"content").unwrap();
+
+        let result = client.publish_place(999999, 888888, &file_path).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, message } => {
+                assert_eq!(status, 404);
+                assert!(message.contains("not found"));
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_server_error() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(500, b"Internal Server Error"));
+
+        let client = OpenCloudClient::with_http(mock, "api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"content").unwrap();
+
+        let result = client.publish_place(123, 456, &file_path).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, .. } => {
+                assert_eq!(status, 500);
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_rate_limited() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(429, b"Rate limit exceeded"));
+
+        let client = OpenCloudClient::with_http(mock, "api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"content").unwrap();
+
+        let result = client.publish_place(123, 456, &file_path).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, message } => {
+                assert_eq!(status, 429);
+                assert!(message.contains("Rate limit"));
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_empty_error_body() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(400, b""));
+
+        let client = OpenCloudClient::with_http(mock, "api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"content").unwrap();
+
+        let result = client.publish_place(123, 456, &file_path).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, message } => {
+                assert_eq!(status, 400);
+                // Empty body should still be handled
+                assert!(message.is_empty() || message == "");
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_json_error_body() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(
+            400,
+            serde_json::json!({
+                "error": "InvalidRequest",
+                "message": "Invalid place file format"
+            }),
+        ));
+
+        let client = OpenCloudClient::with_http(mock, "api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"invalid content").unwrap();
+
+        let result = client.publish_place(123, 456, &file_path).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, message } => {
+                assert_eq!(status, 400);
+                assert!(message.contains("InvalidRequest") || message.contains("Invalid place"));
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_malformed_success_response() {
+        let mock = MockHttpClient::new();
+        // Return success status but with invalid JSON
+        mock.queue_response(MockResponse::success(200, b"not valid json"));
+
+        let client = OpenCloudClient::with_http(mock, "api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"content").unwrap();
+
+        let result = client.publish_place(123, 456, &file_path).await;
+
+        // Should fail because the response can't be parsed
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_missing_version_field() {
+        let mock = MockHttpClient::new();
+        // Return success but with wrong JSON structure
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({"otherField": "value"}),
+        ));
+
+        let client = OpenCloudClient::with_http(mock, "api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"content").unwrap();
+
+        let result = client.publish_place(123, 456, &file_path).await;
+
+        // Should fail because versionNumber field is missing
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_large_file() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({"versionNumber": 100}),
+        ));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("large.rbxl");
+        // Create a larger file (1MB)
+        let large_content = vec![0u8; 1024 * 1024];
+        std::fs::write(&file_path, &large_content).unwrap();
+
+        let result = client.publish_place(123, 456, &file_path).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().version_number, 100);
+
+        // Verify the large content was sent
+        let requests = mock.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].body.as_ref().unwrap().len(), 1024 * 1024);
+    }
+
+    #[test]
+    fn test_client_debug_does_not_expose_key() {
+        let mock = MockHttpClient::new();
+        let client = OpenCloudClient::with_http(mock, "super-secret-key-abc123");
+        
+        let debug_str = format!("{:?}", client);
+        
+        // Verify the debug output doesn't contain the actual key
+        assert!(!debug_str.contains("super-secret-key-abc123"));
+        assert!(debug_str.contains("[REDACTED]"));
+        // But it should show the base URL
+        assert!(debug_str.contains("apis.roblox.com"));
+    }
+
+    #[test]
+    fn test_api_key_empty_string() {
+        let mock = MockHttpClient::new();
+        let client = OpenCloudClient::with_http(mock, "");
+        assert_eq!(client.api_key(), "");
+    }
+
+    #[test]
+    fn test_api_key_with_special_characters() {
+        let mock = MockHttpClient::new();
+        let client = OpenCloudClient::with_http(mock, "key-with=special&chars!");
+        assert_eq!(client.api_key(), "key-with=special&chars!");
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_url_formatting() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({"versionNumber": 1}),
+        ));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"content").unwrap();
+
+        client.publish_place(12345678, 87654321, &file_path).await.unwrap();
+
+        let requests = mock.requests();
+        assert_eq!(requests.len(), 1);
+        // Verify the URL is correctly formatted with the IDs
+        assert!(requests[0].url.contains("12345678"));
+        assert!(requests[0].url.contains("87654321"));
+        assert!(requests[0].url.contains("/universes/v1/"));
+        assert!(requests[0].url.contains("/places/"));
+        assert!(requests[0].url.contains("/versions"));
+    }
+
+    #[tokio::test]
+    async fn test_publish_place_service_unavailable() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(503, b"Service Temporarily Unavailable"));
+
+        let client = OpenCloudClient::with_http(mock, "api-key");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rbxl");
+        std::fs::write(&file_path, b"content").unwrap();
+
+        let result = client.publish_place(123, 456, &file_path).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, message } => {
+                assert_eq!(status, 503);
+                assert!(message.contains("Unavailable"));
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
 }

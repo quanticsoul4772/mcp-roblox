@@ -586,4 +586,73 @@ mod tests {
             mock.assert_async().await;
         }
     }
+
+    #[test]
+    fn test_open_cloud_error_boundary_400() {
+        // Test exactly 400 - should be client error
+        let err = RobloxMcpError::OpenCloudError {
+            status: 400,
+            message: "Bad Request".to_string(),
+        };
+        let mcp_err: ErrorData = err.into();
+        assert_eq!(mcp_err.code, ErrorCode(-32600)); // Invalid Request
+    }
+
+    #[test]
+    fn test_open_cloud_error_boundary_499() {
+        // Test exactly 499 - should still be client error
+        let err = RobloxMcpError::OpenCloudError {
+            status: 499,
+            message: "Client Closed Request".to_string(),
+        };
+        let mcp_err: ErrorData = err.into();
+        assert_eq!(mcp_err.code, ErrorCode(-32600)); // Invalid Request
+    }
+
+    #[test]
+    fn test_open_cloud_error_boundary_500() {
+        // Test exactly 500 - should be server error
+        let err = RobloxMcpError::OpenCloudError {
+            status: 500,
+            message: "Internal Server Error".to_string(),
+        };
+        let mcp_err: ErrorData = err.into();
+        assert_eq!(mcp_err.code, ErrorCode(-32603)); // Internal Error
+    }
+
+    #[test]
+    fn test_open_cloud_error_below_400() {
+        // Test 399 - not a 4xx client error, should go to else branch (server error)
+        let err = RobloxMcpError::OpenCloudError {
+            status: 399,
+            message: "Redirect".to_string(),
+        };
+        let mcp_err: ErrorData = err.into();
+        assert_eq!(mcp_err.code, ErrorCode(-32603)); // Internal Error
+    }
+
+    #[test]
+    fn test_watcher_error_display() {
+        let notify_err = notify::Error::path_not_found();
+        let err = RobloxMcpError::WatcherError(notify_err);
+        let msg = format!("{}", err);
+        assert!(msg.contains("watcher") || msg.contains("File"));
+    }
+
+    #[test]
+    fn test_serialization_error_display() {
+        let serde_err: serde_json::Error = serde_json::from_str::<i32>("not a number").unwrap_err();
+        let err: RobloxMcpError = serde_err.into();
+        let msg = format!("{}", err);
+        assert!(msg.contains("JSON") || msg.contains("serialization"));
+    }
+
+    #[test]
+    fn test_serialization_error_to_mcp() {
+        let serde_err: serde_json::Error = serde_json::from_str::<String>("123").unwrap_err();
+        let err: RobloxMcpError = serde_err.into();
+        let mcp_err: ErrorData = err.into();
+        // Serialization errors map to Internal Error (-32603)
+        assert_eq!(mcp_err.code, ErrorCode(-32603));
+    }
 }

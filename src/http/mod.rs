@@ -218,4 +218,137 @@ mod tests {
             matches!(&form.parts[1].content, FormContent::File { filename, .. } if filename == "test.txt")
         );
     }
+
+    #[test]
+    fn test_http_response_text_invalid_utf8() {
+        let response = HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: vec![0xFF, 0xFE, 0x00, 0x01], // Invalid UTF-8 bytes
+        };
+        let result = response.text();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_http_response_text_empty() {
+        let response = HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: vec![],
+        };
+        assert_eq!(response.text().unwrap(), "");
+    }
+
+    #[test]
+    fn test_http_response_json_invalid() {
+        let response = HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: b"not valid json".to_vec(),
+        };
+        let result: Result<serde_json::Value, _> = response.json();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multipart_form_default() {
+        let form = MultipartForm::default();
+        assert!(form.parts.is_empty());
+    }
+
+    #[test]
+    fn test_multipart_form_multiple_files() {
+        let form = MultipartForm::new()
+            .file("file1", "doc1.pdf", "application/pdf", vec![1, 2, 3])
+            .file("file2", "doc2.pdf", "application/pdf", vec![4, 5, 6]);
+
+        assert_eq!(form.parts.len(), 2);
+    }
+
+    #[test]
+    fn test_form_content_debug() {
+        let text_content = FormContent::Text("test".to_string());
+        let debug = format!("{:?}", text_content);
+        assert!(debug.contains("Text"));
+
+        let file_content = FormContent::File {
+            filename: "test.txt".to_string(),
+            content_type: "text/plain".to_string(),
+            data: vec![1, 2, 3],
+        };
+        let debug = format!("{:?}", file_content);
+        assert!(debug.contains("File"));
+        assert!(debug.contains("test.txt"));
+    }
+
+    #[test]
+    fn test_form_part_debug() {
+        let part = FormPart {
+            name: "field".to_string(),
+            content: FormContent::Text("value".to_string()),
+        };
+        let debug = format!("{:?}", part);
+        assert!(debug.contains("FormPart"));
+        assert!(debug.contains("field"));
+    }
+
+    #[test]
+    fn test_http_response_status_boundaries() {
+        // Test 199 (not success)
+        assert!(!HttpResponse {
+            status: 199,
+            headers: Default::default(),
+            body: vec![]
+        }
+        .is_success());
+
+        // Test 200 (success)
+        assert!(HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: vec![]
+        }
+        .is_success());
+
+        // Test 300 (not success - redirect)
+        assert!(!HttpResponse {
+            status: 300,
+            headers: Default::default(),
+            body: vec![]
+        }
+        .is_success());
+    }
+
+    #[test]
+    fn test_http_response_debug() {
+        let response = HttpResponse {
+            status: 404,
+            headers: Default::default(),
+            body: b"not found".to_vec(),
+        };
+        let debug = format!("{:?}", response);
+        assert!(debug.contains("HttpResponse"));
+        assert!(debug.contains("404"));
+    }
+
+    #[test]
+    fn test_http_response_clone() {
+        let original = HttpResponse {
+            status: 200,
+            headers: {
+                let mut h = std::collections::HashMap::new();
+                h.insert("content-type".to_string(), "application/json".to_string());
+                h
+            },
+            body: b"test body".to_vec(),
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.status, 200);
+        assert_eq!(cloned.body, b"test body");
+        assert_eq!(
+            cloned.headers.get("content-type"),
+            Some(&"application/json".to_string())
+        );
+    }
 }
