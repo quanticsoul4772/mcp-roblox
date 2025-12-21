@@ -168,6 +168,16 @@ pub struct HealthStatus {
     pub version: &'static str,
 }
 
+/// Deserializable version for testing
+#[cfg(test)]
+#[derive(Debug, Deserialize)]
+struct HealthStatusTest {
+    status: String,
+    plugin_connected: bool,
+    heartbeat_age_secs: f64,
+    version: String,
+}
+
 /// HTTP endpoint: Health check for monitoring
 async fn health_handler(State(bridge): State<PluginBridge>) -> Json<HealthStatus> {
     let heartbeat_age = bridge.last_heartbeat.read().await.elapsed();
@@ -479,5 +489,326 @@ mod tests {
 
         assert!(deserialized.result.is_none());
         assert_eq!(deserialized.error.unwrap(), "Script not found");
+    }
+
+    // ========================================
+    // HTTP Handler Edge Case Tests
+    // ========================================
+
+    #[tokio::test]
+    async fn test_result_handler_malformed_json() {
+        let bridge = PluginBridge::new();
+        let router = create_router(bridge);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from("{invalid json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Axum returns 400 Bad Request for JSON parse errors
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_result_handler_missing_fields() {
+        let bridge = PluginBridge::new();
+        let router = create_router(bridge);
+
+        // Missing required 'id' field
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"result": null}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_result_handler_empty_body() {
+        let bridge = PluginBridge::new();
+        let router = create_router(bridge);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Empty body returns 400 Bad Request
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_result_handler_unknown_command_id() {
+        let bridge = PluginBridge::new();
+        let router = create_router(bridge);
+
+        // Result for command ID that was never registered
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "unknown-command-id".to_string(),
+                            result: Some(serde_json::json!({"data": "test"})),
+                            error: None,
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Should still return OK (logs warning internally)
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_poll_handler_multiple_commands() {
+        let bridge = PluginBridge::new();
+
+        // Queue multiple commands
+        for i in 0..3 {
+            bridge.pending_commands.write().await.push(Command {
+                id: format!("cmd-{}", i),
+                action: format!("action-{}", i),
+                params: serde_json::json!({}),
+            });
+        }
+
+        let router = create_router(bridge.clone());
+
+        // First poll should return first command (FIFO via pop from back)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/poll")
+                    .method("GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("cmd-2")); // Last pushed = first popped
+
+        // Verify 2 commands remain
+        assert_eq!(bridge.pending_commands.read().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_health_handler_returns_version() {
+        let bridge = PluginBridge::new();
+        let router = create_router(bridge);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .method("GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let health: HealthStatusTest = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(health.status, "healthy");
+        assert!(health.plugin_connected);
+        assert!(!health.version.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_health_handler_degraded_status() {
+        let bridge = PluginBridge::new();
+
+        // Set heartbeat to be stale
+        *bridge.last_heartbeat.write().await =
+            Instant::now().checked_sub(Duration::from_secs(15)).unwrap();
+
+        let router = create_router(bridge);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .method("GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let health: HealthStatusTest = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(health.status, "degraded");
+        assert!(!health.plugin_connected);
+        assert!(health.heartbeat_age_secs > 10.0);
+    }
+
+    #[tokio::test]
+    async fn test_result_handler_with_error_response() {
+        let bridge = PluginBridge::new();
+
+        // Register a result receiver
+        let (tx, rx) = oneshot::channel();
+        bridge
+            .pending_results
+            .write()
+            .await
+            .insert("error-cmd-id".to_string(), tx);
+
+        let router = create_router(bridge);
+
+        // Send error response
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "error-cmd-id".to_string(),
+                            result: None,
+                            error: Some("Instance not found".to_string()),
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Receiver should get the error response
+        let result = rx.await.unwrap();
+        assert!(result.result.is_none());
+        assert_eq!(result.error, Some("Instance not found".to_string()));
+    }
+
+    #[test]
+    fn test_health_status_serialization() {
+        let status = HealthStatus {
+            status: "healthy",
+            plugin_connected: true,
+            heartbeat_age_secs: 1.5,
+            version: "0.1.0",
+        };
+
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("healthy"));
+        assert!(json.contains("true"));
+        assert!(json.contains("1.5"));
+        assert!(json.contains("0.1.0"));
+    }
+
+    #[test]
+    fn test_health_status_clone() {
+        let status = HealthStatus {
+            status: "degraded",
+            plugin_connected: false,
+            heartbeat_age_secs: 15.0,
+            version: "0.1.0",
+        };
+
+        let cloned = status.clone();
+        assert_eq!(cloned.status, "degraded");
+        assert!(!cloned.plugin_connected);
+    }
+
+    #[test]
+    fn test_command_debug() {
+        let cmd = Command {
+            id: "debug-test".to_string(),
+            action: "getSelection".to_string(),
+            params: serde_json::json!({}),
+        };
+
+        let debug = format!("{:?}", cmd);
+        assert!(debug.contains("Command"));
+        assert!(debug.contains("debug-test"));
+        assert!(debug.contains("getSelection"));
+    }
+
+    #[test]
+    fn test_command_clone() {
+        let cmd = Command {
+            id: "clone-test".to_string(),
+            action: "testAction".to_string(),
+            params: serde_json::json!({"key": "value"}),
+        };
+
+        let cloned = cmd.clone();
+        assert_eq!(cloned.id, "clone-test");
+        assert_eq!(cloned.action, "testAction");
+    }
+
+    #[test]
+    fn test_plugin_response_debug() {
+        let resp = PluginResponse {
+            id: "debug-resp".to_string(),
+            result: Some(serde_json::json!({"ok": true})),
+            error: None,
+        };
+
+        let debug = format!("{:?}", resp);
+        assert!(debug.contains("PluginResponse"));
+        assert!(debug.contains("debug-resp"));
+    }
+
+    #[test]
+    fn test_plugin_response_clone() {
+        let resp = PluginResponse {
+            id: "clone-resp".to_string(),
+            result: Some(serde_json::json!({"data": [1, 2, 3]})),
+            error: None,
+        };
+
+        let cloned = resp.clone();
+        assert_eq!(cloned.id, "clone-resp");
+        assert!(cloned.result.is_some());
     }
 }

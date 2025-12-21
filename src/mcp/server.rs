@@ -2348,9 +2348,7 @@ mod tests {
         );
 
         let params = StudioGetOutputParams { limit: Some(50) };
-        let result = server
-            .studio_get_output(Parameters(params))
-            .await;
+        let result = server.studio_get_output(Parameters(params)).await;
         assert!(result.is_ok(), "studio_get_output should succeed");
 
         if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
@@ -2372,10 +2370,11 @@ mod tests {
         );
 
         let params = StudioGetOutputParams { limit: None };
-        let result = server
-            .studio_get_output(Parameters(params))
-            .await;
-        assert!(result.is_ok(), "studio_get_output with default limit should succeed");
+        let result = server.studio_get_output(Parameters(params)).await;
+        assert!(
+            result.is_ok(),
+            "studio_get_output with default limit should succeed"
+        );
 
         // Verify the call was made with default limit of 100
         let last_call = mock.last_call().unwrap();
@@ -2389,12 +2388,105 @@ mod tests {
         let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
 
         let params = StudioGetOutputParams { limit: Some(10) };
-        let result = server
-            .studio_get_output(Parameters(params))
-            .await;
+        let result = server.studio_get_output(Parameters(params)).await;
         assert!(
             result.is_err(),
             "studio_get_output should fail when bridge is stale"
         );
+    }
+
+    // === CLOUD TOOL TESTS ===
+    // Note: Cloud client is not injectable into RobloxMcpServer, so we test
+    // the error path when cloud is not configured. The actual cloud operations
+    // are thoroughly tested in the cloud/ module with MockHttpClient.
+
+    #[tokio::test]
+    async fn test_cloud_publish_place_no_client() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = CloudPublishPlaceParams {
+            universe_id: 123456,
+            place_id: 789,
+            rbxl_path: "/path/to/game.rbxl".to_string(),
+        };
+
+        let result = server.cloud_publish_place(Parameters(params)).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Open Cloud not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_cloud_upload_asset_no_client() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = CloudUploadAssetParams {
+            asset_type: "image".to_string(),
+            file_path: "/path/to/image.png".to_string(),
+            name: "Test Image".to_string(),
+            description: "A test image".to_string(),
+            creator_id: 12345,
+        };
+
+        let result = server.cloud_upload_asset(Parameters(params)).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Open Cloud not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_cloud_datastore_get_no_client() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = CloudDatastoreGetParams {
+            universe_id: 123456,
+            datastore_name: "PlayerData".to_string(),
+            key: "user_123".to_string(),
+            scope: None,
+        };
+
+        let result = server.cloud_datastore_get(Parameters(params)).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Open Cloud not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_cloud_datastore_set_no_client() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = CloudDatastoreSetParams {
+            universe_id: 123456,
+            datastore_name: "PlayerData".to_string(),
+            key: "user_123".to_string(),
+            value: json!({"coins": 100, "level": 5}),
+            scope: None,
+        };
+
+        let result = server.cloud_datastore_set(Parameters(params)).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Open Cloud not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_cloud_messaging_publish_no_client() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = CloudMessagingPublishParams {
+            universe_id: 123456,
+            topic: "game-events".to_string(),
+            message: json!({"event": "player_joined", "player_id": 789}),
+        };
+
+        let result = server.cloud_messaging_publish(Parameters(params)).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Open Cloud not configured"));
     }
 }

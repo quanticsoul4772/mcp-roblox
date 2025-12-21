@@ -337,22 +337,33 @@ pub async fn lint_script(
         ))
     })?;
 
-    // Selene returns non-zero on lint errors, but we still want the output
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    parse_selene_output(&output.stdout, &output.stderr, file_path)
+}
+
+/// Parse Selene command output into a LintResult
+///
+/// This is extracted as a separate function to enable testing without
+/// requiring the actual Selene binary.
+pub fn parse_selene_output(
+    stdout: &[u8],
+    stderr: &[u8],
+    file_path: &Path,
+) -> Result<LintResult, RobloxMcpError> {
+    let stdout_str = String::from_utf8_lossy(stdout);
+    let stderr_str = String::from_utf8_lossy(stderr);
 
     // If stderr has content and stdout is empty, selene failed to run
-    if stdout.is_empty() && !stderr.is_empty() {
+    if stdout_str.is_empty() && !stderr_str.is_empty() {
         return Err(RobloxMcpError::ConfigError(format!(
             "Selene error: {}",
-            stderr.trim()
+            stderr_str.trim()
         )));
     }
 
     // Parse JSON output - each line is a separate JSON object
     let mut diagnostics = Vec::new();
 
-    for line in stdout.lines() {
+    for line in stdout_str.lines() {
         if line.trim().is_empty() {
             continue;
         }
@@ -883,5 +894,143 @@ mod tests {
         let parsed: LintDiagnostic = serde_json::from_str(&json).unwrap();
         assert!(parsed.end_line.is_none());
         assert!(parsed.end_column.is_none());
+    }
+
+    // ========================================
+    // parse_selene_output Tests
+    // ========================================
+    // These tests validate the Selene output parsing logic without
+    // requiring the actual Selene binary to be installed.
+
+    #[test]
+    fn test_parse_selene_output_empty_stdout() {
+        let result = parse_selene_output(b"", b"", Path::new("test.luau"));
+        assert!(result.is_ok());
+        let lint_result = result.unwrap();
+        assert!(lint_result.diagnostics.is_empty());
+        assert_eq!(lint_result.error_count, 0);
+        assert_eq!(lint_result.warning_count, 0);
+    }
+
+    #[test]
+    fn test_parse_selene_output_stderr_only() {
+        let stderr = b"error: could not find file 'nonexistent.luau'";
+        let result = parse_selene_output(b"", stderr, Path::new("test.luau"));
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::ConfigError(msg) => {
+                assert!(msg.contains("could not find file"));
+            }
+            e => panic!("Expected ConfigError, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_selene_output_with_diagnostics() {
+        // Simulated Selene JSON output
+        let stdout = br#"{"diagnostics":[{"severity":"warning","code":"unused_variable","message":"x is never used","primary_label":{"span":{"start_line":5,"start_column":10,"end_line":5,"end_column":11}}}]}"#;
+
+        let result = parse_selene_output(stdout, b"", Path::new("script.luau"));
+        assert!(result.is_ok());
+
+        let lint_result = result.unwrap();
+        assert_eq!(lint_result.diagnostics.len(), 1);
+        assert_eq!(lint_result.error_count, 0);
+        assert_eq!(lint_result.warning_count, 1);
+
+        let diag = &lint_result.diagnostics[0];
+        assert_eq!(diag.severity, "warning");
+        assert_eq!(diag.code, "unused_variable");
+        assert_eq!(diag.message, "x is never used");
+        assert_eq!(diag.line, 5);
+        assert_eq!(diag.column, 10);
+    }
+
+    #[test]
+    fn test_parse_selene_output_multiple_diagnostics() {
+        // Two diagnostics on separate lines
+        let stdout = concat!(
+            r#"{"diagnostics":[{"severity":"error","code":"syntax_error","message":"Unexpected token","primary_label":{"span":{"start_line":1,"start_column":1,"end_line":1,"end_column":5}}}]}"#,
+            "\n",
+            r#"{"diagnostics":[{"severity":"warning","code":"shadowing","message":"Variable shadows outer","primary_label":{"span":{"start_line":10,"start_column":7,"end_line":10,"end_column":8}}}]}"#
+        );
+
+        let result = parse_selene_output(stdout.as_bytes(), b"", Path::new("script.luau"));
+        assert!(result.is_ok());
+
+        let lint_result = result.unwrap();
+        assert_eq!(lint_result.diagnostics.len(), 2);
+        assert_eq!(lint_result.error_count, 1);
+        assert_eq!(lint_result.warning_count, 1);
+    }
+
+    #[test]
+    fn test_parse_selene_output_with_empty_lines() {
+        // Selene output may have empty lines between JSON objects
+        let stdout = concat!(
+            r#"{"diagnostics":[]}"#,
+            "\n\n",
+            r#"{"diagnostics":[]}"#,
+            "\n"
+        );
+
+        let result = parse_selene_output(stdout.as_bytes(), b"", Path::new("clean.luau"));
+        assert!(result.is_ok());
+        assert!(result.unwrap().diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_parse_selene_output_invalid_json_line() {
+        // Invalid JSON lines should be skipped
+        let stdout = concat!("not valid json\n", r#"{"diagnostics":[]}"#);
+
+        let result = parse_selene_output(stdout.as_bytes(), b"", Path::new("test.luau"));
+        assert!(result.is_ok()); // Should succeed, ignoring invalid lines
+    }
+
+    #[test]
+    fn test_parse_selene_output_file_path_preserved() {
+        let result = parse_selene_output(
+            br#"{"diagnostics":[]}"#,
+            b"",
+            Path::new("src/game/main.luau"),
+        );
+        assert!(result.is_ok());
+
+        let lint_result = result.unwrap();
+        assert!(lint_result.file_path.contains("main.luau"));
+    }
+
+    #[test]
+    fn test_parse_selene_output_multiple_errors() {
+        // Multiple errors in the same diagnostics array
+        let stdout = br#"{"diagnostics":[{"severity":"error","code":"E001","message":"First error","primary_label":{"span":{"start_line":1,"start_column":1,"end_line":1,"end_column":5}}},{"severity":"error","code":"E002","message":"Second error","primary_label":{"span":{"start_line":2,"start_column":1,"end_line":2,"end_column":3}}}]}"#;
+
+        let result = parse_selene_output(stdout, b"", Path::new("test.luau"));
+        assert!(result.is_ok());
+
+        let lint_result = result.unwrap();
+        assert_eq!(lint_result.diagnostics.len(), 2);
+        assert_eq!(lint_result.error_count, 2);
+        assert_eq!(lint_result.warning_count, 0);
+    }
+
+    #[test]
+    fn test_parse_selene_output_both_stdout_and_stderr() {
+        // When both stdout and stderr have content, stdout is used
+        let stdout = br#"{"diagnostics":[]}"#;
+        let stderr = b"Some warning message";
+
+        let result = parse_selene_output(stdout, stderr, Path::new("test.luau"));
+        // Should succeed since stdout has content
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_selene_output_whitespace_only_stderr() {
+        let result = parse_selene_output(b"", b"   \n\t  ", Path::new("test.luau"));
+        // Empty stdout with whitespace-only stderr should still error
+        // because we check if stderr is not empty
+        assert!(result.is_err());
     }
 }
