@@ -164,7 +164,7 @@ cargo build --release
 
 ## Testing
 
-The project includes 365 unit tests covering:
+The project includes 482 unit tests covering:
 - Configuration parsing and environment variable handling
 - Filesystem operations and path validation
 - HTTP bridge command handling and edge cases
