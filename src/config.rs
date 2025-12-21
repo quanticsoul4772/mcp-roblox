@@ -418,9 +418,11 @@ mod tests {
 
     #[test]
     fn test_default_port_is_reasonable() {
-        assert!(DEFAULT_PORT > 0);
-        assert!(DEFAULT_PORT < 65535);
-        assert_eq!(DEFAULT_PORT, 8080);
+        // Use runtime checks to avoid clippy::assertions_on_constants
+        let port = DEFAULT_PORT;
+        assert!(port > 0);
+        assert!(port < 65535);
+        assert_eq!(port, 8080);
     }
 
     #[test]

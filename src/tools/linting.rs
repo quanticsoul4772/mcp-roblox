@@ -761,7 +761,7 @@ mod tests {
 
     #[test]
     fn test_selene_linter_default() {
-        let linter = SeleneLinter::default();
+        let linter = SeleneLinter;
         let _ = format!("{:?}", linter);
     }
 
