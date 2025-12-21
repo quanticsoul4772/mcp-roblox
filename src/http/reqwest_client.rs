@@ -487,9 +487,7 @@ mod tests {
     async fn test_get_connection_error() {
         let client = ReqwestHttpClient::new().unwrap();
         // Try to connect to a port that's not listening
-        let result = client
-            .get("http://127.0.0.1:59999/nonexistent", &[])
-            .await;
+        let result = client.get("http://127.0.0.1:59999/nonexistent", &[]).await;
 
         assert!(result.is_err());
     }

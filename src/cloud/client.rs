@@ -466,20 +466,25 @@ mod tests {
         std::env::set_var("ROBLOX_OPEN_CLOUD_API_KEY", "test-key-for-coverage");
 
         let result = OpenCloudClient::new();
-        
+
         // Clean up env var
         std::env::remove_var("ROBLOX_OPEN_CLOUD_API_KEY");
 
         // The result should be Ok since we set the env var
         // Note: This may still fail if ReqwestHttpClient::new() fails,
         // but that's a different error path
-        assert!(result.is_ok() || matches!(result.unwrap_err(), RobloxMcpError::HttpConnectionError(_)));
+        assert!(
+            result.is_ok() || matches!(result.unwrap_err(), RobloxMcpError::HttpConnectionError(_))
+        );
     }
 
     #[tokio::test]
     async fn test_publish_place_forbidden_error() {
         let mock = MockHttpClient::new();
-        mock.queue_response(MockResponse::success(403, b"Forbidden: insufficient permissions"));
+        mock.queue_response(MockResponse::success(
+            403,
+            b"Forbidden: insufficient permissions",
+        ));
 
         let client = OpenCloudClient::with_http(mock, "limited-api-key");
 
@@ -585,7 +590,7 @@ mod tests {
             RobloxMcpError::OpenCloudError { status, message } => {
                 assert_eq!(status, 400);
                 // Empty body should still be handled
-                assert!(message.is_empty() || message == "");
+                assert!(message.is_empty());
             }
             e => panic!("Expected OpenCloudError, got {e:?}"),
         }
@@ -690,9 +695,9 @@ mod tests {
     fn test_client_debug_does_not_expose_key() {
         let mock = MockHttpClient::new();
         let client = OpenCloudClient::with_http(mock, "super-secret-key-abc123");
-        
+
         let debug_str = format!("{:?}", client);
-        
+
         // Verify the debug output doesn't contain the actual key
         assert!(!debug_str.contains("super-secret-key-abc123"));
         assert!(debug_str.contains("[REDACTED]"));
@@ -728,7 +733,10 @@ mod tests {
         let file_path = temp_dir.path().join("test.rbxl");
         std::fs::write(&file_path, b"content").unwrap();
 
-        client.publish_place(12345678, 87654321, &file_path).await.unwrap();
+        client
+            .publish_place(12345678, 87654321, &file_path)
+            .await
+            .unwrap();
 
         let requests = mock.requests();
         assert_eq!(requests.len(), 1);
@@ -743,7 +751,10 @@ mod tests {
     #[tokio::test]
     async fn test_publish_place_service_unavailable() {
         let mock = MockHttpClient::new();
-        mock.queue_response(MockResponse::success(503, b"Service Temporarily Unavailable"));
+        mock.queue_response(MockResponse::success(
+            503,
+            b"Service Temporarily Unavailable",
+        ));
 
         let client = OpenCloudClient::with_http(mock, "api-key");
 

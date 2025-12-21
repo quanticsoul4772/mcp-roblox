@@ -2514,7 +2514,10 @@ mod tests {
         let params = FsWatchChangesParams { limit: Some(10) };
         let result = server.fs_watch_changes(Parameters(params)).await;
 
-        assert!(result.is_err(), "fs_watch_changes should fail when watcher is unavailable");
+        assert!(
+            result.is_err(),
+            "fs_watch_changes should fail when watcher is unavailable"
+        );
         let err = result.unwrap_err();
         assert!(err.message.contains("File watcher not available"));
     }
@@ -2549,7 +2552,10 @@ mod tests {
         };
 
         let result = server.fs_lint_script(Parameters(params)).await;
-        assert!(result.is_err(), "fs_lint_script should reject non-.luau files");
+        assert!(
+            result.is_err(),
+            "fs_lint_script should reject non-.luau files"
+        );
         let err = result.unwrap_err();
         assert!(err.message.contains("Only .luau files can be linted"));
     }
@@ -2591,10 +2597,15 @@ mod tests {
         };
 
         let result = server.fs_write_script(Parameters(params)).await;
-        assert!(result.is_err(), "fs_write_script should detect path traversal with create_dirs");
+        assert!(
+            result.is_err(),
+            "fs_write_script should detect path traversal with create_dirs"
+        );
         let err = result.unwrap_err();
         assert!(
-            err.message.contains("Path traversal") || err.message.contains("outside") || err.message.contains("not exist"),
+            err.message.contains("Path traversal")
+                || err.message.contains("outside")
+                || err.message.contains("not exist"),
             "Error should mention path issue: {}",
             err.message
         );
@@ -2617,7 +2628,10 @@ mod tests {
         };
 
         let result = server.fs_write_script(Parameters(params)).await;
-        assert!(result.is_err(), "fs_write_script should reject absolute paths outside project");
+        assert!(
+            result.is_err(),
+            "fs_write_script should reject absolute paths outside project"
+        );
     }
 
     // === STUDIO_GET_DATAMODEL_PAGINATED EDGE CASE TESTS ===
@@ -2644,7 +2658,9 @@ mod tests {
             limit: None,
             cursor: None,
         };
-        let result = server.studio_get_datamodel_paginated(Parameters(params)).await;
+        let result = server
+            .studio_get_datamodel_paginated(Parameters(params))
+            .await;
         assert!(result.is_ok(), "Should succeed with all default params");
 
         // Verify defaults were applied
@@ -2677,12 +2693,17 @@ mod tests {
             limit: Some(5000), // Should be capped to 1000
             cursor: None,
         };
-        let result = server.studio_get_datamodel_paginated(Parameters(params)).await;
+        let result = server
+            .studio_get_datamodel_paginated(Parameters(params))
+            .await;
         assert!(result.is_ok(), "Should succeed with capped limit");
 
         // Verify limit was capped
         let last_call = mock.last_call().unwrap();
-        assert_eq!(last_call.params["limit"], 1000, "Limit should be capped at 1000");
+        assert_eq!(
+            last_call.params["limit"], 1000,
+            "Limit should be capped at 1000"
+        );
     }
 
     #[tokio::test]
@@ -2706,7 +2727,9 @@ mod tests {
             limit: None,
             cursor: Some("previous_cursor".to_string()),
         };
-        let result = server.studio_get_datamodel_paginated(Parameters(params)).await;
+        let result = server
+            .studio_get_datamodel_paginated(Parameters(params))
+            .await;
         assert!(result.is_ok());
 
         let last_call = mock.last_call().unwrap();
@@ -2814,7 +2837,8 @@ mod tests {
             );
             // Should report hidden file was skipped
             assert!(
-                text_content.text.contains("skipped_hidden") || text_content.text.contains(".hidden"),
+                text_content.text.contains("skipped_hidden")
+                    || text_content.text.contains(".hidden"),
                 "Should report hidden files: {}",
                 text_content.text
             );
@@ -2907,10 +2931,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [(
-                "modifyScript",
-                json!({"success": true}),
-            )],
+            [("modifyScript", json!({"success": true}))],
         );
 
         let params = StudioModifyScriptParams {
@@ -2918,10 +2939,16 @@ mod tests {
             new_source: "-- updated".to_string(),
             record_undo: None, // Should default to true
         };
-        server.studio_modify_script(Parameters(params)).await.unwrap();
+        server
+            .studio_modify_script(Parameters(params))
+            .await
+            .unwrap();
 
         let last_call = mock.last_call().unwrap();
-        assert_eq!(last_call.params["recordUndo"], true, "record_undo should default to true");
+        assert_eq!(
+            last_call.params["recordUndo"], true,
+            "record_undo should default to true"
+        );
     }
 
     #[tokio::test]
@@ -2942,7 +2969,10 @@ mod tests {
             properties: None,
             record_undo: None, // Should default to true
         };
-        server.studio_create_instance(Parameters(params)).await.unwrap();
+        server
+            .studio_create_instance(Parameters(params))
+            .await
+            .unwrap();
 
         let last_call = mock.last_call().unwrap();
         assert_eq!(last_call.params["recordUndo"], true);
@@ -2953,10 +2983,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [(
-                "setProperty",
-                json!({"success": true}),
-            )],
+            [("setProperty", json!({"success": true}))],
         );
 
         let params = StudioSetPropertyParams {
@@ -2965,7 +2992,10 @@ mod tests {
             value: json!("NewName"),
             record_undo: None, // Should default to true
         };
-        server.studio_set_property(Parameters(params)).await.unwrap();
+        server
+            .studio_set_property(Parameters(params))
+            .await
+            .unwrap();
 
         let last_call = mock.last_call().unwrap();
         assert_eq!(last_call.params["recordUndo"], true);
@@ -2976,17 +3006,17 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [(
-                "deleteInstance",
-                json!({"success": true}),
-            )],
+            [("deleteInstance", json!({"success": true}))],
         );
 
         let params = StudioDeleteInstanceParams {
             path: "game.Workspace.Part".to_string(),
             record_undo: None, // Should default to true
         };
-        server.studio_delete_instance(Parameters(params)).await.unwrap();
+        server
+            .studio_delete_instance(Parameters(params))
+            .await
+            .unwrap();
 
         let last_call = mock.last_call().unwrap();
         assert_eq!(last_call.params["recordUndo"], true);
@@ -2997,17 +3027,17 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [(
-                "findInstances",
-                json!({"instances": [], "count": 0}),
-            )],
+            [("findInstances", json!({"instances": [], "count": 0}))],
         );
 
         let params = StudioFindInstancesParams {
             class_name: "Part".to_string(),
             root: None, // No root specified
         };
-        server.studio_find_instances(Parameters(params)).await.unwrap();
+        server
+            .studio_find_instances(Parameters(params))
+            .await
+            .unwrap();
 
         let last_call = mock.last_call().unwrap();
         assert_eq!(last_call.params["className"], "Part");
@@ -3020,16 +3050,16 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (server, mock) = create_mock_server_with_responses(
             temp_dir.path().to_path_buf(),
-            [(
-                "getDataModel",
-                json!({"Name": "DataModel", "Children": []}),
-            )],
+            [("getDataModel", json!({"Name": "DataModel", "Children": []}))],
         );
 
         let params = StudioGetDataModelParams {
             max_depth: None, // Should default to 3
         };
-        server.studio_get_datamodel(Parameters(params)).await.unwrap();
+        server
+            .studio_get_datamodel(Parameters(params))
+            .await
+            .unwrap();
 
         let last_call = mock.last_call().unwrap();
         assert_eq!(last_call.params["maxDepth"], 3);
@@ -3052,8 +3082,8 @@ mod tests {
             updated_time: "2024-01-02T00:00:00Z".to_string(),
         }));
 
-        let server = create_test_server(temp_dir.path().to_path_buf())
-            .with_cloud_client(mock_cloud);
+        let server =
+            create_test_server(temp_dir.path().to_path_buf()).with_cloud_client(mock_cloud);
 
         let params = CloudDatastoreGetParams {
             universe_id: 123,
@@ -3063,7 +3093,11 @@ mod tests {
         };
 
         let result = server.cloud_datastore_get(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_datastore_get should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_datastore_get should succeed: {:?}",
+            result
+        );
 
         let call_result = result.unwrap();
         if let RawContent::Text(text) = &*call_result.content[0] {
@@ -3088,8 +3122,8 @@ mod tests {
             updated_time: "2024-01-02T00:00:00Z".to_string(),
         }));
 
-        let server = create_test_server(temp_dir.path().to_path_buf())
-            .with_cloud_client(mock_cloud);
+        let server =
+            create_test_server(temp_dir.path().to_path_buf()).with_cloud_client(mock_cloud);
 
         let params = CloudDatastoreSetParams {
             universe_id: 123,
@@ -3100,7 +3134,11 @@ mod tests {
         };
 
         let result = server.cloud_datastore_set(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_datastore_set should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_datastore_set should succeed: {:?}",
+            result
+        );
 
         let call_result = result.unwrap();
         if let RawContent::Text(text) = &*call_result.content[0] {
@@ -3118,8 +3156,8 @@ mod tests {
         let mock_cloud = Arc::new(MockCloudClient::new());
         mock_cloud.queue_messaging_publish(Ok(()));
 
-        let server = create_test_server(temp_dir.path().to_path_buf())
-            .with_cloud_client(mock_cloud);
+        let server =
+            create_test_server(temp_dir.path().to_path_buf()).with_cloud_client(mock_cloud);
 
         let params = CloudMessagingPublishParams {
             universe_id: 123,
@@ -3128,7 +3166,11 @@ mod tests {
         };
 
         let result = server.cloud_messaging_publish(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_messaging_publish should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_messaging_publish should succeed: {:?}",
+            result
+        );
 
         let call_result = result.unwrap();
         if let RawContent::Text(text) = &*call_result.content[0] {
@@ -3151,8 +3193,8 @@ mod tests {
         let mock_cloud = Arc::new(MockCloudClient::new());
         mock_cloud.queue_publish_place(Ok(PublishResult { version_number: 42 }));
 
-        let server = create_test_server(temp_dir.path().to_path_buf())
-            .with_cloud_client(mock_cloud);
+        let server =
+            create_test_server(temp_dir.path().to_path_buf()).with_cloud_client(mock_cloud);
 
         let params = CloudPublishPlaceParams {
             universe_id: 123,
@@ -3161,11 +3203,15 @@ mod tests {
         };
 
         let result = server.cloud_publish_place(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_publish_place should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_publish_place should succeed: {:?}",
+            result
+        );
 
         let call_result = result.unwrap();
         if let RawContent::Text(text) = &*call_result.content[0] {
-            assert!(text.text.contains("42"));  // version number
+            assert!(text.text.contains("42")); // version number
             assert!(text.text.contains("success"));
         } else {
             panic!("Expected text content");
@@ -3187,8 +3233,8 @@ mod tests {
             done: true,
         }));
 
-        let server = create_test_server(temp_dir.path().to_path_buf())
-            .with_cloud_client(mock_cloud);
+        let server =
+            create_test_server(temp_dir.path().to_path_buf()).with_cloud_client(mock_cloud);
 
         let params = CloudUploadAssetParams {
             asset_type: "image".to_string(),
@@ -3199,7 +3245,11 @@ mod tests {
         };
 
         let result = server.cloud_upload_asset(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_upload_asset should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_upload_asset should succeed: {:?}",
+            result
+        );
 
         let call_result = result.unwrap();
         if let RawContent::Text(text) = &*call_result.content[0] {
@@ -3223,8 +3273,8 @@ mod tests {
             updated_time: "2024-01-03T00:00:00Z".to_string(),
         }));
 
-        let server = create_test_server(temp_dir.path().to_path_buf())
-            .with_cloud_client(mock_cloud);
+        let server =
+            create_test_server(temp_dir.path().to_path_buf()).with_cloud_client(mock_cloud);
 
         let params = CloudDatastoreGetParams {
             universe_id: 123,
@@ -3254,6 +3304,9 @@ mod tests {
 
         let result = server.cloud_datastore_get(Parameters(params)).await;
         // Should fail because cloud client is not configured
-        assert!(result.is_err(), "Should fail when cloud client not configured");
+        assert!(
+            result.is_err(),
+            "Should fail when cloud client not configured"
+        );
     }
 }

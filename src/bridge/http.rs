@@ -946,14 +946,17 @@ mod tests {
         // Test the channel closed error path by directly testing with a pre-closed channel
         // The execute_command function handles Ok(Err(_)) from the oneshot receiver
         // which happens when the sender is dropped without sending
-        
+
         // Create a channel and immediately drop the sender
         let (_tx, rx): (oneshot::Sender<PluginResponse>, _) = oneshot::channel();
         drop(_tx);
-        
+
         // Verify that receiving on a closed channel returns RecvError
         let result = rx.await;
-        assert!(result.is_err(), "Channel should be closed when sender is dropped");
+        assert!(
+            result.is_err(),
+            "Channel should be closed when sender is dropped"
+        );
     }
 
     #[tokio::test]
@@ -1012,15 +1015,18 @@ mod tests {
         assert_eq!(bridge2.pending_commands.read().await.len(), 1);
     }
 
-    #[test]
-    fn test_plugin_heartbeat_timeout_constant() {
+    // Compile-time validation of timeout constants
+    const _: () = {
         assert!(PLUGIN_HEARTBEAT_TIMEOUT_SECS > 0);
         assert!(PLUGIN_HEARTBEAT_TIMEOUT_SECS < 60); // Reasonable timeout
-    }
-
-    #[test]
-    fn test_plugin_command_timeout_constant() {
         assert!(PLUGIN_COMMAND_TIMEOUT_SECS > 0);
         assert!(PLUGIN_COMMAND_TIMEOUT_SECS <= 120); // Reasonable max
+    };
+
+    #[test]
+    fn test_timeout_constants_are_valid() {
+        // Compile-time assertions above validate these, runtime test for documentation
+        assert_eq!(PLUGIN_HEARTBEAT_TIMEOUT_SECS, 10);
+        assert_eq!(PLUGIN_COMMAND_TIMEOUT_SECS, 30);
     }
 }

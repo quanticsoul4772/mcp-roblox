@@ -189,9 +189,7 @@ mod tests {
         let mock = MockCloudClient::new();
         mock.queue_publish_place(Ok(PublishResult { version_number: 42 }));
 
-        let result = mock
-            .publish_place(123, 456, Path::new("test.rbxl"))
-            .await;
+        let result = mock.publish_place(123, 456, Path::new("test.rbxl")).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().version_number, 42);
@@ -201,9 +199,7 @@ mod tests {
     async fn test_mock_publish_place_no_response() {
         let mock = MockCloudClient::new();
 
-        let result = mock
-            .publish_place(123, 456, Path::new("test.rbxl"))
-            .await;
+        let result = mock.publish_place(123, 456, Path::new("test.rbxl")).await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -218,14 +214,8 @@ mod tests {
         mock.queue_publish_place(Ok(PublishResult { version_number: 1 }));
         mock.queue_publish_place(Ok(PublishResult { version_number: 2 }));
 
-        let r1 = mock
-            .publish_place(1, 1, Path::new("a.rbxl"))
-            .await
-            .unwrap();
-        let r2 = mock
-            .publish_place(1, 1, Path::new("b.rbxl"))
-            .await
-            .unwrap();
+        let r1 = mock.publish_place(1, 1, Path::new("a.rbxl")).await.unwrap();
+        let r2 = mock.publish_place(1, 1, Path::new("b.rbxl")).await.unwrap();
 
         assert_eq!(r1.version_number, 1);
         assert_eq!(r2.version_number, 2);
