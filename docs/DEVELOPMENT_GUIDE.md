@@ -376,6 +376,13 @@ File modification detection.
 
 Set `ROBLOX_OPEN_CLOUD_API_KEY` environment variable.
 
+**API Key Setup:**
+1. Go to https://create.roblox.com/dashboard/credentials
+2. Click "Create API Key"
+3. Add "Data Stores" under Access Permissions
+4. Select your experience and enable Read/Write operations
+5. Set IP restrictions (0.0.0.0/0 for testing)
+
 ```
 cloud_publish_place(universe_id, place_id, rbxl_path)
 ```
@@ -390,7 +397,9 @@ Upload image/model/audio asset.
 cloud_datastore_get(universe_id, datastore_name, key, scope?)
 cloud_datastore_set(universe_id, datastore_name, key, value, scope?)
 ```
-Read/write DataStore entries.
+Read/write DataStore entries. Uses v1 API endpoint format internally.
+
+**Note:** Find your Universe ID at https://create.roblox.com/dashboard/creations - click on your experience and the ID is in the URL.
 
 ```
 cloud_messaging_publish(universe_id, topic, message)
@@ -421,12 +430,15 @@ studio_get_script_source("ServerScriptService.Main")
 ### 2. Creating Game Objects
 
 ```python
-# Create a part
+# Create a part with properties
 studio_create_instance("Part", "Workspace", "Platform", {
     "Anchored": True,
-    "Size": [10, 1, 10],
+    "Size": [10, 1, 10],        # Vector3 as array [x, y, z]
     "Position": [0, 5, 0],
-    "BrickColor": "Bright blue"
+    "BrickColor": "Bright blue", # Use BrickColor name strings
+    "Material": "Neon",          # Material enum as string
+    "Shape": "Ball",             # PartType: "Block", "Ball", "Cylinder"
+    "Transparency": 0.5          # 0 = opaque, 1 = invisible
 })
 
 # Add a script to it
@@ -440,8 +452,19 @@ part.Touched:Connect(function(hit)
         print(player.Name .. " touched the platform!")
     end
 end)
-""")
+""", record_undo=False)  # Use record_undo=False for script modifications
 ```
+
+**Supported Property Types:**
+- `Vector3`: `[x, y, z]` array
+- `Color3`: `[r, g, b]` array (0-1 range)
+- `BrickColor`: String name like "Bright red", "Cyan", "Neon orange"
+- `Material`: String like "Neon", "Concrete", "SmoothPlastic", "Grass"
+- `Enum`: String values like "Ball" for Shape, "Bottom" for Face
+
+**Known Limitations:**
+- `UDim2` properties (GUI sizing) not supported via JSON
+- Complex properties may need script-based modification
 
 ### 3. Debugging Issues
 
@@ -494,6 +517,111 @@ data = cloud_datastore_get(
 )
 ```
 
+### 6. Creating Interactive Objects
+
+```python
+# Create a clickable button with ClickDetector
+studio_create_instance("Part", "Workspace", "Button", {
+    "Anchored": True,
+    "Size": [4, 3, 4],
+    "Position": [0, 2, 0],
+    "BrickColor": "Bright green"
+})
+studio_create_instance("ClickDetector", "Workspace.Button", "ClickDetector", {
+    "MaxActivationDistance": 20
+})
+studio_create_instance("Script", "Workspace.Button", "ClickHandler")
+studio_modify_script("Workspace.Button.ClickHandler", """
+local button = script.Parent
+local clickDetector = button:WaitForChild("ClickDetector")
+
+clickDetector.MouseClick:Connect(function(player)
+    print(player.Name .. " clicked the button!")
+    -- Flash effect
+    button.BrickColor = BrickColor.new("White")
+    task.wait(0.1)
+    button.BrickColor = BrickColor.new("Bright green")
+end)
+""", record_undo=False)
+```
+
+### 7. Creating Lights
+
+```python
+# PointLight inside a neon part
+studio_create_instance("Part", "Workspace", "GlowOrb", {
+    "Anchored": True,
+    "Size": [3, 3, 3],
+    "Position": [0, 5, 0],
+    "BrickColor": "Cyan",
+    "Material": "Neon",
+    "Shape": "Ball"
+})
+studio_create_instance("PointLight", "Workspace.GlowOrb", "Light", {
+    "Range": 20,
+    "Brightness": 2,
+    "Color": [0, 1, 1]  # RGB 0-1 range
+})
+
+# SpotLight on ceiling
+studio_create_instance("SpotLight", "Workspace.Ceiling", "Spotlight", {
+    "Range": 30,
+    "Brightness": 2,
+    "Angle": 45,
+    "Face": "Bottom"  # Which face light points from
+})
+```
+
+### 8. Animation with TweenService
+
+```lua
+-- In a Luau script, animate parts smoothly
+local TweenService = game:GetService("TweenService")
+local part = script.Parent
+
+local tweenInfo = TweenInfo.new(
+    2,                          -- Duration in seconds
+    Enum.EasingStyle.Linear,    -- Easing style
+    Enum.EasingDirection.InOut, -- Easing direction
+    -1,                         -- RepeatCount (-1 = infinite)
+    true                        -- Reverses
+)
+
+local tween = TweenService:Create(part, tweenInfo, {
+    Position = Vector3.new(10, 5, 0)  -- Target position
+})
+tween:Play()
+```
+
+### 9. Game State Management
+
+```lua
+-- Track per-player state
+local Players = game:GetService("Players")
+local playerData = {}
+
+Players.PlayerAdded:Connect(function(player)
+    playerData[player] = {
+        score = 0,
+        hasWon = false
+    }
+
+    -- Create leaderstats
+    local leaderstats = Instance.new("Folder")
+    leaderstats.Name = "leaderstats"
+    leaderstats.Parent = player
+
+    local score = Instance.new("IntValue")
+    score.Name = "Score"
+    score.Value = 0
+    score.Parent = leaderstats
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    playerData[player] = nil  -- Cleanup
+end)
+```
+
 ---
 
 ## Best Practices
@@ -527,6 +655,258 @@ data = cloud_datastore_get(
 - Never commit `ROBLOX_OPEN_CLOUD_API_KEY`
 - Cloud API keys should have minimal required permissions
 - DataStore operations affect live player data - use caution
+
+---
+
+## Production-Quality Game Development
+
+This section covers professional practices for building scalable, secure Roblox games.
+
+### Service/Controller Architecture
+
+Professional Roblox games use a **Service/Controller pattern** that separates server and client code:
+
+| Location | Purpose | Access |
+|----------|---------|--------|
+| **ServerScriptService** | Server services + bootstrap script | Server only |
+| **ServerStorage** | Server-only assets, prefabs | Server only |
+| **ReplicatedStorage** | Shared modules, RemoteEvents, constants | Client + Server |
+| **StarterPlayerScripts** | Client controllers + bootstrap script | Client only |
+| **ReplicatedFirst** | Loading screens, critical first-load assets | Client + Server |
+
+```lua
+-- Example Service (ServerScriptService/Services/CoinService.lua)
+local CoinService = {}
+
+function CoinService:Init()
+    -- Setup dependencies (runs first across all modules)
+    self.coins = {}
+end
+
+function CoinService:Start()
+    -- Connect events (runs after all Init calls complete)
+    game.Workspace.ChildAdded:Connect(function(child)
+        if child:IsA("Part") and child.Name == "Coin" then
+            self:RegisterCoin(child)
+        end
+    end)
+end
+
+function CoinService:RegisterCoin(coin)
+    self.coins[coin] = true
+end
+
+return CoinService
+```
+
+**Key principle:** Use `Init()` for setup, `Start()` for event connections. This two-phase initialization prevents race conditions.
+
+### RemoteEvents vs RemoteFunctions
+
+**Always prefer RemoteEvents over RemoteFunctions.** RemoteFunctions can hang the server if a client doesn't respond—a vulnerability exploiters abuse.
+
+```lua
+-- WRONG: RemoteFunction can hang
+local result = remoteFunction:InvokeClient(player, data)  -- Dangerous!
+
+-- CORRECT: RemoteEvent with callback pattern
+local requestId = HttpService:GenerateGUID()
+requestEvent:FireClient(player, requestId, data)
+responseEvent.OnServerEvent:Connect(function(player, responseId, result)
+    if responseId == requestId then
+        -- Handle response
+    end
+end)
+```
+
+### Performance Budgets
+
+Professional games target these thresholds (from Roblox staff engineers):
+
+| Metric | Budget | Notes |
+|--------|--------|-------|
+| Triangle count | ~500,000 | Total in scene |
+| Drawcalls | ~500 | Batch similar materials |
+| Client memory | < 1.3GB | Support 2GB mobile devices |
+| Network receive | < 50KB/s | Throttling starts at 40KB/s |
+| Moving physics assemblies | 40-60 max | Each uses 0.4-0.9 KB/s |
+
+Use **MicroProfiler** (Ctrl+F6) to identify bottlenecks:
+- CPU >> GPU → Scripts or physics are the problem
+- GPU >> CPU → Reduce triangles and drawcalls
+
+### Memory Leak Prevention
+
+Event connections hold strong references, preventing garbage collection:
+
+```lua
+-- WRONG: Connection leaks memory
+part.Touched:Connect(function(hit)
+    -- This connection lives forever, even if part is destroyed
+end)
+
+-- CORRECT: Track and disconnect
+local connection
+connection = part.Touched:Connect(function(hit)
+    -- Handle touch
+end)
+
+-- Later, when done:
+connection:Disconnect()
+
+-- BEST: Use cleanup patterns (Maid/Trove)
+local Trove = require(ReplicatedStorage.Packages.Trove)
+local trove = Trove.new()
+
+trove:Connect(part.Touched, function(hit)
+    -- Handle touch
+end)
+
+-- Cleanup all connections at once
+trove:Destroy()
+```
+
+### Network Optimization
+
+Reduce bandwidth through data structure choices:
+
+```lua
+-- WRONG: String keys cost bytes
+remoteEvent:FireClient(player, {
+    Name = "Sword",      -- 4 bytes for "Name"
+    Damage = 50,         -- 6 bytes for "Damage"
+    Level = 5            -- 5 bytes for "Level"
+})  -- ~15 extra bytes just for keys!
+
+-- CORRECT: Arrays eliminate key overhead
+remoteEvent:FireClient(player, {"Sword", 50, 5})
+
+-- BEST: Instance references cost only 4 bytes
+remoteEvent:FireClient(player, swordInstance)  -- 4 bytes total
+```
+
+For position data, use `Vector3int16` (6 bytes) instead of `Vector3` (12 bytes) when integer precision is acceptable.
+
+### Security Validation
+
+**Never trust the client.** Every RemoteEvent handler must validate:
+
+```lua
+-- Example: Secure purchase handler
+local function onPurchaseRequest(player, itemId, quantity)
+    -- Type checking
+    if typeof(itemId) ~= "string" then return end
+    if typeof(quantity) ~= "number" then return end
+
+    -- NaN checking (NaN ~= NaN)
+    if quantity ~= quantity then return end
+
+    -- Sanity limits
+    if quantity < 1 or quantity > 100 then return end
+    if string.len(itemId) > 50 then return end
+
+    -- Cooldown enforcement
+    local lastPurchase = purchaseCooldowns[player]
+    if lastPurchase and tick() - lastPurchase < 1 then return end
+    purchaseCooldowns[player] = tick()
+
+    -- Logical validation
+    local item = Items[itemId]
+    if not item then return end
+
+    local cost = item.Price * quantity
+    if getPlayerMoney(player) < cost then return end
+
+    -- Only now process the purchase
+    processPurchase(player, itemId, quantity)
+end
+```
+
+**Prefer passive anti-cheat:** Teleport speed hackers back rather than kicking them—handles latency gracefully and avoids false positives.
+
+### DataStore Best Practices
+
+```lua
+local DataStoreService = game:GetService("DataStoreService")
+local playerStore = DataStoreService:GetDataStore("PlayerData")
+
+-- Use UpdateAsync for atomic updates (prevents race conditions)
+local success, result = pcall(function()
+    return playerStore:UpdateAsync("player_" .. player.UserId, function(oldData)
+        oldData = oldData or { coins = 0, level = 1 }
+        oldData.coins = oldData.coins + coinsToAdd
+        return oldData
+    end)
+end)
+
+-- Always wrap in pcall with retry
+local MAX_RETRIES = 3
+for attempt = 1, MAX_RETRIES do
+    local success, result = pcall(function()
+        return playerStore:GetAsync(key)
+    end)
+    if success then
+        return result
+    end
+    task.wait(attempt)  -- Exponential backoff
+end
+
+-- Save on server shutdown
+game:BindToClose(function()
+    for _, player in Players:GetPlayers() do
+        savePlayerData(player)
+    end
+end)
+
+-- Never save NaN (check with value == value)
+if coins == coins then  -- false for NaN
+    data.coins = coins
+end
+```
+
+For production games, use **ProfileService** or **ProfileStore** for session locking—prevents data duplication when players switch servers quickly.
+
+### Professional Toolchain
+
+Beyond Rojo, the modern Roblox stack includes:
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| **Wally** | Package manager | `rokit add wally` |
+| **Selene** | Luau linter | `rokit add selene` |
+| **StyLua** | Code formatter | `rokit add stylua` |
+| **Luau LSP** | VS Code autocomplete | VS Code extension |
+| **TestEZ** | Testing framework | `wally add testez` |
+
+```bash
+# Install toolchain manager
+cargo install rokit
+
+# Initialize project tools
+rokit init
+
+# Add tools
+rokit add rojo selene stylua wally
+
+# Lint code
+selene src/
+
+# Format code
+stylua src/
+
+# Run tests
+rojo build -o test.rbxl && run-in-roblox --place test.rbxl --script tests/run.lua
+```
+
+### Recommended Libraries
+
+| Library | Purpose | Wally |
+|---------|---------|-------|
+| **Knit** | Service/Controller framework | `sleitnick/knit` |
+| **ProfileService** | Data persistence with session locking | `madstudioroblox/profileservice` |
+| **React-lua** | Declarative UI framework | `jsdotlua/react` |
+| **Trove** | Cleanup/connection management | `sleitnick/trove` |
+| **Promise** | Async/await patterns | `evaera/promise` |
 
 ---
 

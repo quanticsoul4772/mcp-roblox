@@ -68,6 +68,41 @@ async fn tool_name(
 - `ROBLOX_MCP_PORT` - HTTP bridge port (default: 8080)
 - `RUST_LOG` - Log level (default: roblox_studio_mcp=info)
 
+## Open Cloud API Details
+
+### DataStore API
+
+Uses v1 API endpoint format with query parameters:
+```
+GET/POST https://apis.roblox.com/datastores/v1/universes/{universe_id}/standard-datastores/datastore/entries/entry
+  ?datastoreName={datastore_name}
+  &entryKey={key}
+  &scope={scope}
+```
+
+**Required headers for datastore_set:**
+- `x-api-key`: API key from environment
+- `content-type`: `application/json`
+- `content-md5`: Base64-encoded MD5 hash of request body
+
+### Property Types in Studio Tools
+
+When using `studio_create_instance` or `studio_set_property`:
+- `Vector3`: `[x, y, z]` array
+- `Color3`: `[r, g, b]` array (0-1 range)
+- `BrickColor`: String name like "Bright red", "Cyan"
+- `Material`: String like "Neon", "Concrete", "SmoothPlastic"
+- `Enum`: String values like "Ball" for Shape
+
+**Known Limitation:** UDim2 properties not supported via JSON
+
+### Script Modification
+
+Use `record_undo: false` when modifying scripts to avoid "script document not available" errors:
+```rust
+studio_modify_script(path, source, record_undo: false)
+```
+
 ## Testing
 
 499 unit tests (86.7% coverage) cover:
@@ -90,6 +125,19 @@ cargo test --test mcp_integration -- --ignored
 
 ## Documentation
 
-- `docs/DEVELOPMENT_GUIDE.md` - Workflows, Luau reference, tool usage
+- `docs/DEVELOPMENT_GUIDE.md` - Workflows, Luau reference, tool usage, **production-quality patterns**
 - `docs/API_REFERENCE.md` - Public traits, types, and MCP tools
 - `docs/TESTING_PATTERNS.md` - Mock infrastructure and testing patterns
+- `Building production-quality Roblox games.md` - Reference guide for professional Roblox development
+
+## Production Game Patterns (Quick Reference)
+
+Key patterns from the production guide:
+
+- **Service/Controller Architecture**: Server logic in Services (ServerScriptService), client in Controllers (StarterPlayerScripts)
+- **RemoteEvents > RemoteFunctions**: RemoteFunctions can hang; use RemoteEvents with callback patterns
+- **Performance Budgets**: 500K triangles, 500 drawcalls, <1.3GB memory, <50KB/s network
+- **Memory Leaks**: Always `:Disconnect()` event connections; use Trove/Maid patterns
+- **Security**: Never trust client; validate types, NaN, sanity limits, cooldowns on every RemoteEvent
+- **DataStore**: Use `UpdateAsync()` not `SetAsync()`; wrap in `pcall()`; implement `BindToClose()`
+- **Toolchain**: Rojo + Wally + Selene + StyLua + Luau LSP

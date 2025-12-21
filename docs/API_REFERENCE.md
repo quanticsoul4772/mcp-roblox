@@ -190,6 +190,23 @@ pub struct DataStoreEntry {
 }
 ```
 
+#### DataStore API Endpoint Details
+
+The DataStore tools use Roblox Open Cloud **v1 API** with query parameters:
+
+```
+GET  https://apis.roblox.com/datastores/v1/universes/{id}/standard-datastores/datastore/entries/entry
+     ?datastoreName={name}&entryKey={key}&scope={scope}
+
+POST https://apis.roblox.com/datastores/v1/universes/{id}/standard-datastores/datastore/entries/entry
+     ?datastoreName={name}&entryKey={key}&scope={scope}
+```
+
+**Required headers for POST (datastore_set):**
+- `x-api-key`: From `ROBLOX_OPEN_CLOUD_API_KEY` environment variable
+- `content-type`: `application/json`
+- `content-md5`: Base64-encoded MD5 hash of the JSON body (required by Roblox v1 API)
+
 ---
 
 ### AssetType
@@ -347,6 +364,29 @@ The server exposes 25 MCP tools across four categories:
 | `studio_delete_instance` | Delete instance |
 | `studio_find_instances` | Find by class name |
 | `studio_get_output` | Get Output logs |
+
+#### Property Type Mappings
+
+When using `studio_create_instance` or `studio_set_property`, properties are serialized as JSON:
+
+| Roblox Type | JSON Format | Example |
+|-------------|-------------|---------|
+| `Vector3` | `[x, y, z]` array | `[0, 5, 0]` |
+| `Color3` | `[r, g, b]` array (0-1) | `[1, 0, 0]` for red |
+| `BrickColor` | String name | `"Bright red"`, `"Cyan"` |
+| `Material` | String name | `"Neon"`, `"Concrete"` |
+| `Enum` | String value | `"Ball"` for Shape, `"Bottom"` for Face |
+| `boolean` | Boolean | `true`, `false` |
+| `number` | Number | `0.5`, `100` |
+| `string` | String | `"MyName"` |
+
+**Known Limitations:**
+- `UDim2` properties not supported (use script-based modification)
+- Complex Roblox types may require direct Luau script manipulation
+
+#### Script Modification Note
+
+Use `record_undo: false` parameter when calling `studio_modify_script` to avoid "script document not available" errors that can occur when the script editor is not open for that script.
 
 ### Cloud Tools (5)
 
