@@ -4,7 +4,7 @@ A Rust MCP (Model Context Protocol) server for Roblox Studio integration. Provid
 
 ## Features
 
-### Filesystem Tools (7 tools)
+### Filesystem Tools (8 tools)
 - `fs_get_tree` - List project file structure with configurable depth limits
 - `fs_read_script` - Read Luau script files
 - `fs_write_script` - Write or create Luau script files with optional directory creation
@@ -12,8 +12,9 @@ A Rust MCP (Model Context Protocol) server for Roblox Studio integration. Provid
 - `fs_search_content` - Search for patterns in script files using regex
 - `fs_get_changes` - Get file modification times for change detection
 - `fs_lint_script` - Run Selene linter on Luau scripts (requires Selene installed)
+- `fs_watch_changes` - Poll for real-time file changes
 
-### Studio Tools (10 tools)
+### Studio Tools (11 tools)
 Requires the companion Roblox Studio plugin to be running.
 
 - `studio_health_check` - Check plugin connection status
@@ -23,9 +24,10 @@ Requires the companion Roblox Studio plugin to be running.
 - `studio_get_script_source` - Read script source from Studio instances
 - `studio_modify_script` - Modify script source with undo support
 - `studio_create_instance` - Create new instances with initial properties
-- `studio_set_property` - Set properties on instances
+- `studio_set_property` - Set properties on instances (supports BrickColor, Vector3, Color3, UDim2)
 - `studio_delete_instance` - Delete instances with undo support
 - `studio_find_instances` - Find all instances of a specific class
+- `studio_get_output` - Get recent Output window logs from Studio
 
 ### Open Cloud Tools (5 tools)
 Requires `ROBLOX_OPEN_CLOUD_API_KEY` environment variable.
@@ -36,8 +38,7 @@ Requires `ROBLOX_OPEN_CLOUD_API_KEY` environment variable.
 - `cloud_datastore_set` - Write to DataStores
 - `cloud_messaging_publish` - Publish messages to MessagingService topics
 
-### Monitoring Tools (2 tools)
-- `fs_watch_changes` - Poll for real-time file changes
+### Monitoring Tools (1 tool)
 - `server_get_metrics` - Get tool execution counts, durations, and error rates
 
 ## Requirements
@@ -86,13 +87,30 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 
 ## Studio Plugin
 
-The `plugin/init.lua` file contains a Roblox Studio plugin that communicates with the MCP server via HTTP. To use Studio tools:
+The `plugin/MCPServer.server.luau` file contains a Roblox Studio plugin that communicates with the MCP server via HTTP. To use Studio tools:
 
-1. Copy `plugin/init.lua` to your Roblox Studio plugins folder
-2. Start the MCP server
+### Option 1: Build with Rojo (Recommended)
+```bash
+cd plugin
+rojo build -o MCPServer.rbxm
+```
+Then copy `MCPServer.rbxm` to your Roblox Studio plugins folder:
+- Windows: `%LOCALAPPDATA%\Roblox\Plugins`
+- macOS: `~/Documents/Roblox/Plugins`
+
+### Option 2: Install Plugin Directly
+Copy `plugin/MCPServer.server.luau` directly to your plugins folder (renamed as needed).
+
+### Usage
+1. Start the MCP server
+2. Open Roblox Studio
 3. Click the "Connect" button in the Studio toolbar
 
-The plugin features automatic reconnection with exponential backoff if the connection is lost.
+The plugin features:
+- Automatic reconnection with exponential backoff
+- Dot-notation path resolution (e.g., "Workspace.Part.SubPart")
+- Automatic type conversion for BrickColor, Vector3, Color3, UDim2
+- Output log capture for debugging
 
 ## Architecture
 
@@ -118,7 +136,8 @@ mcp-roblox/
 │   ├── metrics/          # Server metrics
 │   └── error.rs          # Error types
 └── plugin/
-    └── init.lua          # Roblox Studio plugin
+    ├── MCPServer.server.luau  # Roblox Studio plugin source
+    └── default.project.json   # Rojo build configuration
 ```
 
 ## Development
@@ -139,7 +158,7 @@ cargo build --release
 
 ## Testing
 
-The project includes 302 unit tests covering:
+The project includes 308 unit tests covering:
 - Filesystem operations and path validation
 - HTTP bridge command handling
 - Open Cloud API operations (DataStores, Messaging, Assets)
