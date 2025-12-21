@@ -11,7 +11,7 @@ Rust MCP server for Roblox Studio integration. Provides 25 MCP tools for filesys
 ```bash
 cargo build          # Build debug binary
 cargo build --release # Build optimized release binary
-cargo test           # Run 482 unit tests
+cargo test           # Run 499 unit tests
 cargo check          # Check for errors without building
 cargo run            # Run the server
 ```
@@ -38,6 +38,8 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 - `src/bridge/http.rs` - Plugin HTTP communication (poll/result endpoints)
 - `src/bridge/mock.rs` - Mock bridge for testing Studio tools
 - `src/cloud/` - Open Cloud API client for publishing, assets, datastores, messaging
+- `src/cloud/traits.rs` - CloudClient trait for dependency injection
+- `src/cloud/mock.rs` - Mock cloud client for testing cloud tools
 - `src/http/` - HTTP client abstraction with mock for testing
 - `src/tools/filesystem.rs` - File operations with path validation
 - `src/tools/linting.rs` - Selene linter integration with mock
@@ -68,12 +70,13 @@ async fn tool_name(
 
 ## Testing
 
-482 unit tests cover:
+499 unit tests (86.7% coverage) cover:
 - Configuration parsing and validation
 - Filesystem operations and path validation
 - HTTP bridge command handling
 - Open Cloud API operations (with mocked HTTP)
-- Mock infrastructure (bridge, HTTP client, linter)
+- Cloud tool success paths (with MockCloudClient)
+- Mock infrastructure (bridge, HTTP client, linter, cloud)
 - Error type conversions
 - Tool parameter serialization
 - Metrics collection

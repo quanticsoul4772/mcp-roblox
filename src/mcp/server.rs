@@ -20,6 +20,7 @@ use tracing::warn;
 use crate::bridge::http::PluginBridge;
 use crate::bridge::StudioBridge;
 use crate::cloud::AssetType;
+use crate::cloud::CloudClient;
 use crate::cloud::OpenCloudClient;
 use crate::mcp::instrumentation::InstrumentedCall;
 use crate::mcp::params::{
@@ -69,7 +70,8 @@ pub struct RobloxMcpServer<B: StudioBridge + Clone = PluginBridge, L: Linter + C
     bridge: Arc<B>,
     project_root: PathBuf,
     /// Open Cloud client for CI/CD operations (optional - only if API key configured)
-    cloud_client: Option<Arc<OpenCloudClient>>,
+    /// Uses trait object for testability with MockCloudClient
+    cloud_client: Option<Arc<dyn CloudClient>>,
     /// File watcher for real-time change detection (optional - may fail on some platforms)
     file_watcher: Option<Arc<FileWatcher>>,
     /// Server metrics for monitoring
@@ -83,8 +85,9 @@ impl RobloxMcpServer<PluginBridge, SeleneLinter> {
     pub fn new(bridge: Arc<PluginBridge>, project_root: PathBuf) -> Self {
         // Initialize cloud client with explicit logging on failure
         // Cloud tools will check availability and return clear error to users
-        let cloud_client = match OpenCloudClient::new() {
-            Ok(client) => Some(Arc::new(client)),
+        // Cast to trait object for consistency with test injection
+        let cloud_client: Option<Arc<dyn CloudClient>> = match OpenCloudClient::new() {
+            Ok(client) => Some(Arc::new(client) as Arc<dyn CloudClient>),
             Err(e) => {
                 warn!(
                     "Open Cloud client unavailable: {}. Cloud tools (publish, assets, datastores) will be disabled.",
@@ -169,22 +172,32 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
     pub fn with_mocks(
         bridge: Arc<B>,
         project_root: PathBuf,
-        _cloud_client: Option<Arc<OpenCloudClient>>,
+        cloud_client: Option<Arc<dyn CloudClient>>,
         linter: L,
     ) -> RobloxMcpServer<B, L> {
-        // Note: Cloud client is not injectable for testing because OpenCloudClient<H>
-        // would require a third generic parameter or trait object type erasure.
-        // Cloud operations are tested directly via OpenCloudClient unit tests.
-        // Studio tool testing works without cloud client injection.
         Self {
             tool_router: Self::tool_router(),
             bridge,
             project_root,
-            cloud_client: None,
+            cloud_client,
             file_watcher: None,
             metrics: Arc::new(ServerMetrics::new()),
             linter,
         }
+    }
+
+    /// Set a custom cloud client (for testing cloud tool success paths)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mock = Arc::new(MockCloudClient::new());
+    /// mock.queue_datastore_get(Ok(entry));
+    /// let server = create_test_server(root).with_cloud_client(mock);
+    /// ```
+    #[cfg(test)]
+    pub fn with_cloud_client(mut self, client: Arc<dyn CloudClient>) -> Self {
+        self.cloud_client = Some(client);
+        self
     }
 
     /// Start instrumentation for a tool call
@@ -1240,15 +1253,15 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
             )
         })?;
 
-        let result = client
+        client
             .messaging_publish(params.universe_id, &params.topic, params.message.clone())
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&json!({
-                "success": result.success,
-                "topic": result.topic,
+                "success": true,
+                "topic": params.topic,
                 "universe_id": params.universe_id,
                 "message_preview": if params.message.to_string().len() > 100 {
                     format!("{}...", &params.message.to_string()[..100])
@@ -3020,5 +3033,227 @@ mod tests {
 
         let last_call = mock.last_call().unwrap();
         assert_eq!(last_call.params["maxDepth"], 3);
+    }
+
+    // === CLOUD TOOL SUCCESS PATH TESTS ===
+    // These tests verify cloud tool success paths using MockCloudClient
+
+    #[tokio::test]
+    async fn test_cloud_datastore_get_success() {
+        use crate::cloud::mock::MockCloudClient;
+        use crate::cloud::DataStoreEntry;
+
+        let temp_dir = TempDir::new().unwrap();
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_datastore_get(Ok(DataStoreEntry {
+            value: serde_json::json!({"coins": 100, "level": 5}),
+            version: "v1".to_string(),
+            created_time: "2024-01-01T00:00:00Z".to_string(),
+            updated_time: "2024-01-02T00:00:00Z".to_string(),
+        }));
+
+        let server = create_test_server(temp_dir.path().to_path_buf())
+            .with_cloud_client(mock_cloud);
+
+        let params = CloudDatastoreGetParams {
+            universe_id: 123,
+            datastore_name: "PlayerData".to_string(),
+            key: "user_123".to_string(),
+            scope: None,
+        };
+
+        let result = server.cloud_datastore_get(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_datastore_get should succeed: {:?}", result);
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text) = &*call_result.content[0] {
+            assert!(text.text.contains("coins"));
+            assert!(text.text.contains("100"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cloud_datastore_set_success() {
+        use crate::cloud::mock::MockCloudClient;
+        use crate::cloud::DataStoreEntry;
+
+        let temp_dir = TempDir::new().unwrap();
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_datastore_set(Ok(DataStoreEntry {
+            value: serde_json::json!({"coins": 500}),
+            version: "v2".to_string(),
+            created_time: "2024-01-01T00:00:00Z".to_string(),
+            updated_time: "2024-01-02T00:00:00Z".to_string(),
+        }));
+
+        let server = create_test_server(temp_dir.path().to_path_buf())
+            .with_cloud_client(mock_cloud);
+
+        let params = CloudDatastoreSetParams {
+            universe_id: 123,
+            datastore_name: "PlayerData".to_string(),
+            key: "user_456".to_string(),
+            value: serde_json::json!({"coins": 500}),
+            scope: None,
+        };
+
+        let result = server.cloud_datastore_set(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_datastore_set should succeed: {:?}", result);
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text) = &*call_result.content[0] {
+            assert!(text.text.contains("success"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cloud_messaging_publish_success() {
+        use crate::cloud::mock::MockCloudClient;
+
+        let temp_dir = TempDir::new().unwrap();
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_messaging_publish(Ok(()));
+
+        let server = create_test_server(temp_dir.path().to_path_buf())
+            .with_cloud_client(mock_cloud);
+
+        let params = CloudMessagingPublishParams {
+            universe_id: 123,
+            topic: "game-events".to_string(),
+            message: serde_json::json!({"event": "player_joined", "player_id": 789}),
+        };
+
+        let result = server.cloud_messaging_publish(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_messaging_publish should succeed: {:?}", result);
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text) = &*call_result.content[0] {
+            assert!(text.text.contains("success"));
+            assert!(text.text.contains("game-events"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cloud_publish_place_success() {
+        use crate::cloud::mock::MockCloudClient;
+        use crate::cloud::PublishResult;
+
+        let temp_dir = TempDir::new().unwrap();
+        let rbxl_path = temp_dir.path().join("game.rbxl");
+        std::fs::write(&rbxl_path, b"fake rbxl content").unwrap();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_publish_place(Ok(PublishResult { version_number: 42 }));
+
+        let server = create_test_server(temp_dir.path().to_path_buf())
+            .with_cloud_client(mock_cloud);
+
+        let params = CloudPublishPlaceParams {
+            universe_id: 123,
+            place_id: 456,
+            rbxl_path: rbxl_path.display().to_string(),
+        };
+
+        let result = server.cloud_publish_place(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_publish_place should succeed: {:?}", result);
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text) = &*call_result.content[0] {
+            assert!(text.text.contains("42"));  // version number
+            assert!(text.text.contains("success"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cloud_upload_asset_success() {
+        use crate::cloud::mock::MockCloudClient;
+        use crate::cloud::AssetUploadResult;
+
+        let temp_dir = TempDir::new().unwrap();
+        let image_path = temp_dir.path().join("icon.png");
+        std::fs::write(&image_path, b"fake png content").unwrap();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_upload_asset(Ok(AssetUploadResult {
+            path: "assets/v1/operations/12345".to_string(),
+            done: true,
+        }));
+
+        let server = create_test_server(temp_dir.path().to_path_buf())
+            .with_cloud_client(mock_cloud);
+
+        let params = CloudUploadAssetParams {
+            asset_type: "image".to_string(),
+            file_path: image_path.display().to_string(),
+            name: "Test Icon".to_string(),
+            description: "A test icon".to_string(),
+            creator_id: 999,
+        };
+
+        let result = server.cloud_upload_asset(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_upload_asset should succeed: {:?}", result);
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text) = &*call_result.content[0] {
+            assert!(text.text.contains("12345") || text.text.contains("operations"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cloud_datastore_get_with_scope() {
+        use crate::cloud::mock::MockCloudClient;
+        use crate::cloud::DataStoreEntry;
+
+        let temp_dir = TempDir::new().unwrap();
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_datastore_get(Ok(DataStoreEntry {
+            value: serde_json::json!({"settings": {"volume": 75}}),
+            version: "v3".to_string(),
+            created_time: "2024-01-01T00:00:00Z".to_string(),
+            updated_time: "2024-01-03T00:00:00Z".to_string(),
+        }));
+
+        let server = create_test_server(temp_dir.path().to_path_buf())
+            .with_cloud_client(mock_cloud);
+
+        let params = CloudDatastoreGetParams {
+            universe_id: 123,
+            datastore_name: "UserSettings".to_string(),
+            key: "settings_789".to_string(),
+            scope: Some("custom_scope".to_string()),
+        };
+
+        let result = server.cloud_datastore_get(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cloud_no_client_configured() {
+        // Test that cloud tools return appropriate error when no client is configured
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server(temp_dir.path().to_path_buf());
+        // Note: create_test_server uses OpenCloudClient::new() which will fail
+        // if ROBLOX_OPEN_CLOUD_API_KEY is not set, resulting in cloud_client = None
+
+        let params = CloudDatastoreGetParams {
+            universe_id: 123,
+            datastore_name: "Test".to_string(),
+            key: "key".to_string(),
+            scope: None,
+        };
+
+        let result = server.cloud_datastore_get(Parameters(params)).await;
+        // Should fail because cloud client is not configured
+        assert!(result.is_err(), "Should fail when cloud client not configured");
     }
 }

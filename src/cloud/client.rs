@@ -10,6 +10,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::instrument;
 
+use super::{AssetType, AssetUploadResult, CloudClient, DataStoreEntry};
+
 /// Result from publishing a place to Roblox
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,6 +142,65 @@ impl<H: HttpClient> OpenCloudClient<H> {
         }
 
         response.json()
+    }
+}
+
+// ============================================================================
+// CloudClient trait implementation
+// ============================================================================
+
+#[async_trait::async_trait]
+impl<H: HttpClient> CloudClient for OpenCloudClient<H> {
+    async fn publish_place(
+        &self,
+        universe_id: u64,
+        place_id: u64,
+        file_path: &Path,
+    ) -> Result<PublishResult, RobloxMcpError> {
+        OpenCloudClient::publish_place(self, universe_id, place_id, file_path).await
+    }
+
+    async fn datastore_get(
+        &self,
+        universe_id: u64,
+        datastore_name: &str,
+        key: &str,
+        scope: Option<&str>,
+    ) -> Result<DataStoreEntry, RobloxMcpError> {
+        OpenCloudClient::datastore_get(self, universe_id, datastore_name, key, scope).await
+    }
+
+    async fn datastore_set(
+        &self,
+        universe_id: u64,
+        datastore_name: &str,
+        key: &str,
+        value: serde_json::Value,
+        scope: Option<&str>,
+    ) -> Result<DataStoreEntry, RobloxMcpError> {
+        OpenCloudClient::datastore_set(self, universe_id, datastore_name, key, value, scope).await
+    }
+
+    async fn messaging_publish(
+        &self,
+        universe_id: u64,
+        topic: &str,
+        message: serde_json::Value,
+    ) -> Result<(), RobloxMcpError> {
+        OpenCloudClient::messaging_publish(self, universe_id, topic, message).await?;
+        Ok(())
+    }
+
+    async fn upload_asset(
+        &self,
+        asset_type: AssetType,
+        file_path: &Path,
+        name: &str,
+        description: &str,
+        creator_id: u64,
+    ) -> Result<AssetUploadResult, RobloxMcpError> {
+        OpenCloudClient::upload_asset(self, asset_type, file_path, name, description, creator_id)
+            .await
     }
 }
 

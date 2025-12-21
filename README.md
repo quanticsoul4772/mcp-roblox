@@ -164,12 +164,13 @@ cargo build --release
 
 ## Testing
 
-The project includes 482 unit tests covering:
+The project includes 499 unit tests (86.7% coverage) covering:
 - Configuration parsing and environment variable handling
 - Filesystem operations and path validation
 - HTTP bridge command handling and edge cases
 - Open Cloud API operations (DataStores, Messaging, Assets)
-- Mock infrastructure for dependency injection (bridge, HTTP client, linter)
+- Cloud tool success paths (with MockCloudClient)
+- Mock infrastructure for dependency injection (bridge, HTTP client, linter, cloud)
 - Error type conversions and MCP error mapping
 - Tool parameter serialization with JSON Schema
 - Metrics collection and instrumentation
