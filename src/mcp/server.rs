@@ -2330,4 +2330,71 @@ mod tests {
         // Verify custom linter was used (it should have recorded the call)
         assert!(mock_linter.call_count() > 0);
     }
+
+    #[tokio::test]
+    async fn test_studio_get_output_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "getOutput",
+                json!({
+                    "logs": [
+                        {"message": "Hello from Studio", "messageType": "MessageOutput", "timestamp": 1234567890},
+                        {"message": "Warning message", "messageType": "MessageWarning", "timestamp": 1234567891}
+                    ]
+                }),
+            )],
+        );
+
+        let params = StudioGetOutputParams { limit: Some(50) };
+        let result = server
+            .studio_get_output(Parameters(params))
+            .await;
+        assert!(result.is_ok(), "studio_get_output should succeed");
+
+        if let RawContent::Text(text_content) = &*result.unwrap().content[0] {
+            assert!(text_content.text.contains("Hello from Studio"));
+            assert!(text_content.text.contains("Warning message"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        assert!(mock.was_called("getOutput"));
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_output_default_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [("getOutput", json!({"logs": []}))],
+        );
+
+        let params = StudioGetOutputParams { limit: None };
+        let result = server
+            .studio_get_output(Parameters(params))
+            .await;
+        assert!(result.is_ok(), "studio_get_output with default limit should succeed");
+
+        // Verify the call was made with default limit of 100
+        let last_call = mock.last_call().unwrap();
+        assert_eq!(last_call.action, "getOutput");
+        assert_eq!(last_call.params["limit"], 100);
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_output_fails_on_stale_bridge() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server_with_stale_bridge(temp_dir.path().to_path_buf());
+
+        let params = StudioGetOutputParams { limit: Some(10) };
+        let result = server
+            .studio_get_output(Parameters(params))
+            .await;
+        assert!(
+            result.is_err(),
+            "studio_get_output should fail when bridge is stale"
+        );
+    }
 }
