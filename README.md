@@ -129,6 +129,8 @@ mcp-roblox/
 │   │   └── mock.rs       # Mock bridge for testing
 │   ├── cloud/
 │   │   ├── client.rs     # Open Cloud API client
+│   │   ├── traits.rs     # CloudClient trait for DI
+│   │   ├── mock.rs       # Mock cloud client for testing
 │   │   ├── assets.rs     # Asset upload operations
 │   │   ├── datastores.rs # DataStore get/set operations
 │   │   └── messaging.rs  # MessagingService publish
@@ -186,6 +188,12 @@ Integration tests require the compiled binary (they spawn the actual server proc
 ```bash
 cargo build && cargo test --test mcp_integration -- --ignored
 ```
+
+## Documentation
+
+- [Development Guide](docs/DEVELOPMENT_GUIDE.md) - Workflows, Luau reference, and tool usage
+- [API Reference](docs/API_REFERENCE.md) - Public traits, types, and MCP tools
+- [Testing Patterns](docs/TESTING_PATTERNS.md) - Mock infrastructure and testing best practices
 
 ## License
 

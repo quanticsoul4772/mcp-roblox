@@ -87,3 +87,9 @@ Integration tests require the compiled binary:
 ```bash
 cargo test --test mcp_integration -- --ignored
 ```
+
+## Documentation
+
+- `docs/DEVELOPMENT_GUIDE.md` - Workflows, Luau reference, tool usage
+- `docs/API_REFERENCE.md` - Public traits, types, and MCP tools
+- `docs/TESTING_PATTERNS.md` - Mock infrastructure and testing patterns
