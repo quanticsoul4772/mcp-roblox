@@ -6,8 +6,6 @@ use crate::metrics::ServerMetrics;
 use rmcp::ErrorData;
 use std::sync::Arc;
 use std::time::Instant;
-
-#[cfg(debug_assertions)]
 use tracing::warn;
 
 /// RAII guard for instrumenting tool calls
@@ -61,11 +59,11 @@ impl Drop for InstrumentedCall {
         // If finish() wasn't called, we can't record async metrics
         // This is a design tradeoff - we rely on explicit finish() calls
         if !self.finished {
-            // Log warning in debug builds using tracing (appears in structured logs)
-            #[cfg(debug_assertions)]
+            // Log warning in all builds so operators are alerted to missing metrics
+            // This indicates a bug - all tool calls should call finish() or finish_with()
             warn!(
                 tool_name = %self.tool_name,
-                "InstrumentedCall dropped without finish() - metrics not recorded"
+                "InstrumentedCall dropped without finish() - metrics not recorded for this call"
             );
         }
     }

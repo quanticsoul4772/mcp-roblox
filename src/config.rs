@@ -145,8 +145,16 @@ pub fn parse_port(port_str: &str) -> Result<u16, ConfigError> {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    // Global mutex to serialize tests that modify environment variables.
+    // Environment variables are global process state, so parallel tests
+    // can interfere with each other. Tests that modify RUST_LOG or
+    // ROBLOX_MCP_PORT must acquire this lock first.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     // Helper to safely manage env vars in tests
+    // MUST be used within a test that holds ENV_MUTEX
     struct EnvGuard {
         key: &'static str,
         original: Option<String>,
@@ -219,10 +227,12 @@ mod tests {
 
     // ========================================
     // parse_log_filter_from_env tests
+    // These tests modify global environment state and must be serialized
     // ========================================
 
     #[test]
     fn test_parse_log_filter_from_env_not_set() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let guard = EnvGuard::new("RUST_LOG");
         guard.remove();
 
@@ -233,6 +243,7 @@ mod tests {
 
     #[test]
     fn test_parse_log_filter_from_env_valid() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let guard = EnvGuard::new("RUST_LOG");
         guard.set("warn");
 
@@ -242,6 +253,7 @@ mod tests {
 
     #[test]
     fn test_parse_log_filter_from_env_invalid() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let guard = EnvGuard::new("RUST_LOG");
         guard.set("invalid[syntax");
 
@@ -293,10 +305,12 @@ mod tests {
 
     // ========================================
     // parse_port_from_env tests
+    // These tests modify global environment state and must be serialized
     // ========================================
 
     #[test]
     fn test_parse_port_from_env_not_set() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let guard = EnvGuard::new("ROBLOX_MCP_PORT");
         guard.remove();
 
@@ -306,6 +320,7 @@ mod tests {
 
     #[test]
     fn test_parse_port_from_env_valid() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let guard = EnvGuard::new("ROBLOX_MCP_PORT");
         guard.set("9000");
 
@@ -315,6 +330,7 @@ mod tests {
 
     #[test]
     fn test_parse_port_from_env_invalid() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let guard = EnvGuard::new("ROBLOX_MCP_PORT");
         guard.set("not_a_port");
 
@@ -328,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_server_config_bind_addr() {
-        // Create a config with known values
+        // Create a config with known values - no env access needed
         let config = ServerConfig {
             port: 9999,
             project_root: PathBuf::from("/test"),
@@ -340,35 +356,36 @@ mod tests {
 
     #[test]
     fn test_server_config_from_env() {
-        // Note: Env var tests can be flaky due to parallel test execution.
-        // We only verify that from_env() succeeds and returns reasonable values.
-        // The individual parse functions are tested separately with exact assertions.
+        // This test reads from environment, so needs the lock
+        let _lock = ENV_MUTEX.lock().unwrap();
+
+        // Ensure clean environment for this test
+        let log_guard = EnvGuard::new("RUST_LOG");
+        let port_guard = EnvGuard::new("ROBLOX_MCP_PORT");
+        log_guard.remove();
+        port_guard.remove();
+
         let result = ServerConfig::from_env();
 
-        // Should succeed regardless of current env vars
-        // (unless someone set an invalid RUST_LOG, which is unlikely)
-        if let Ok(config) = result {
-            // Port should be a valid port number
-            assert!(config.port > 0);
-            // Project root should not be empty
-            assert!(!config.project_root.as_os_str().is_empty());
-        }
-        // If it fails, it's likely due to invalid RUST_LOG in the environment,
-        // which is an acceptable test skip scenario
+        // Should succeed with clean environment
+        assert!(result.is_ok(), "from_env should succeed with clean env");
+        let config = result.unwrap();
+        // Port should be default
+        assert_eq!(config.port, DEFAULT_PORT);
+        // Project root should not be empty
+        assert!(!config.project_root.as_os_str().is_empty());
     }
 
     #[test]
     fn test_server_config_from_env_with_valid_port() {
-        // Test that a valid port env var is parsed correctly
-        // Use a unique guard per test to minimize race conditions
+        // This test modifies environment, so needs the lock
+        let _lock = ENV_MUTEX.lock().unwrap();
         let guard = EnvGuard::new("ROBLOX_MCP_PORT");
         guard.set("9999");
 
         let result = parse_port_from_env();
-        // Due to race conditions, we check if it's either our value or the default
         assert!(result.is_ok());
-        let port = result.unwrap();
-        assert!(port == 9999 || port == DEFAULT_PORT);
+        assert_eq!(result.unwrap(), 9999);
     }
 
     // ========================================
