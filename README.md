@@ -118,23 +118,29 @@ The plugin features:
 mcp-roblox/
 ├── src/
 │   ├── main.rs           # Entry point, STDIO transport, HTTP bridge
+│   ├── config.rs         # Environment configuration parsing
+│   ├── error.rs          # Error types and MCP error conversion
 │   ├── mcp/
-│   │   ├── server.rs     # MCP tool implementations
-│   │   ├── params.rs     # Tool parameter definitions
-│   │   └── instrumentation.rs  # Metrics collection
+│   │   ├── server.rs     # MCP tool implementations (25 tools)
+│   │   ├── params.rs     # Tool parameter definitions with JSON Schema
+│   │   └── instrumentation.rs  # Metrics collection wrapper
 │   ├── bridge/
-│   │   └── http.rs       # Plugin HTTP communication
+│   │   ├── http.rs       # Plugin HTTP communication (poll/result endpoints)
+│   │   └── mock.rs       # Mock bridge for testing
 │   ├── cloud/
 │   │   ├── client.rs     # Open Cloud API client
-│   │   ├── assets.rs     # Asset upload
-│   │   ├── datastores.rs # DataStore operations
-│   │   └── messaging.rs  # MessagingService operations
+│   │   ├── assets.rs     # Asset upload operations
+│   │   ├── datastores.rs # DataStore get/set operations
+│   │   └── messaging.rs  # MessagingService publish
+│   ├── http/
+│   │   ├── mod.rs        # HTTP client trait abstraction
+│   │   ├── reqwest_client.rs  # Production HTTP client
+│   │   └── mock.rs       # Mock HTTP client for testing
 │   ├── tools/
-│   │   ├── filesystem.rs # File operations
-│   │   └── linting.rs    # Selene integration
+│   │   ├── filesystem.rs # File operations with path validation
+│   │   └── linting.rs    # Selene linter integration
 │   ├── watcher/          # File change detection
-│   ├── metrics/          # Server metrics
-│   └── error.rs          # Error types
+│   └── metrics/          # Tool execution metrics
 └── plugin/
     ├── MCPServer.server.luau  # Roblox Studio plugin source
     └── default.project.json   # Rojo build configuration
@@ -158,15 +164,17 @@ cargo build --release
 
 ## Testing
 
-The project includes 308 unit tests covering:
+The project includes 365 unit tests covering:
+- Configuration parsing and environment variable handling
 - Filesystem operations and path validation
-- HTTP bridge command handling
+- HTTP bridge command handling and edge cases
 - Open Cloud API operations (DataStores, Messaging, Assets)
-- Mock infrastructure for dependency injection
-- Error type conversions
-- Tool parameter serialization
-- Metrics collection
+- Mock infrastructure for dependency injection (bridge, HTTP client, linter)
+- Error type conversions and MCP error mapping
+- Tool parameter serialization with JSON Schema
+- Metrics collection and instrumentation
 - File watcher change detection
+- Selene output parsing
 
 ```bash
 cargo test
