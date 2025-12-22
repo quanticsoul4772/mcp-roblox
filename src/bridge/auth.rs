@@ -161,6 +161,6 @@ mod tests {
         let token = AuthToken::generate();
         // Base64 of 32 bytes is approximately 43 characters
         let len = token.as_str().len();
-        assert!(len >= 40 && len <= 50, "Token length {} is unexpected", len);
+        assert!((40..=50).contains(&len), "Token length {} is unexpected", len);
     }
 }

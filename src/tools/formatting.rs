@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_stylua_formatter_default() {
-        let formatter = StyLuaFormatter::default();
+        let formatter = StyLuaFormatter;
         assert!(format!("{:?}", formatter).contains("StyLuaFormatter"));
     }
 }

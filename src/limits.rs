@@ -25,18 +25,15 @@ pub const MAX_TREE_ENTRIES: usize = 10000;
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_limits_are_reasonable() {
-        // Ensure limits are positive and reasonable
+    // Compile-time assertions for limit validity
+    const _: () = {
         assert!(MAX_SEARCH_RESULTS > 0);
         assert!(MAX_SEARCH_RESULTS <= 10000);
-
         assert!(MAX_FILE_ENTRIES > 0);
         assert!(MAX_FILE_ENTRIES <= 100000);
-
         assert!(MAX_TREE_ENTRIES > 0);
         assert!(MAX_TREE_ENTRIES <= 100000);
-    }
+    };
 
     #[test]
     fn test_search_results_limit() {
