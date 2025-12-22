@@ -4,15 +4,16 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Rust MCP server for Roblox Studio integration. Provides 27 MCP tools for filesystem operations, live Studio manipulation, and Open Cloud API access.
+Rust MCP server for Roblox Studio integration. Provides **39 MCP tools** for filesystem operations, live Studio manipulation, Open Cloud API access, and toolchain integration.
 
 ## Build and Test Commands
 
 ```bash
 cargo build          # Build debug binary
 cargo build --release # Build optimized release binary
-cargo test           # Run 607 unit tests
+cargo test           # Run 770 unit tests
 cargo check          # Check for errors without building
+cargo clippy         # Run linter
 cargo run            # Run the server
 ```
 
@@ -33,19 +34,39 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 
 - `src/main.rs` - Entry point, STDIO transport, HTTP bridge spawning
 - `src/config.rs` - Environment configuration parsing (testable)
-- `src/mcp/server.rs` - All 27 MCP tool implementations
+- `src/limits.rs` - Resource limits (MAX_SEARCH_RESULTS, MAX_TREE_ENTRIES)
+- `src/regex_safety.rs` - Regex DoS protection with pattern validation
+- `src/mcp/server.rs` - All 39 MCP tool implementations
 - `src/mcp/params.rs` - Tool parameter structs with JSON Schema
 - `src/bridge/http.rs` - Plugin HTTP communication (poll/result endpoints)
+- `src/bridge/auth.rs` - Bearer token authentication for plugin
 - `src/bridge/mock.rs` - Mock bridge for testing Studio tools
-- `src/cloud/` - Open Cloud API client for publishing, assets, datastores, messaging
+- `src/cloud/client.rs` - Open Cloud API client (API key protected with secrecy)
 - `src/cloud/traits.rs` - CloudClient trait for dependency injection
 - `src/cloud/mock.rs` - Mock cloud client for testing cloud tools
+- `src/cloud/ordered_datastores.rs` - OrderedDataStore operations (leaderboards)
+- `src/cloud/universes.rs` - Universe info and server restart
 - `src/http/` - HTTP client abstraction with mock for testing
 - `src/tools/filesystem.rs` - File operations with path validation
 - `src/tools/linting.rs` - Selene linter integration with mock
+- `src/tools/formatting.rs` - StyLua formatter integration
+- `src/tools/rojo.rs` - Rojo build and sourcemap operations
+- `src/tools/wally.rs` - Wally package management
+- `src/tools/moonwave.rs` - Moonwave documentation builds
+- `src/tools/timeout.rs` - External tool timeout protection (30s default)
 - `src/watcher/mod.rs` - File change detection
 - `src/metrics/mod.rs` - Tool execution metrics
 - `plugin/MCPServer.server.luau` - Roblox Studio plugin
+
+## Tool Categories (39 total)
+
+| Category | Count | Tools |
+|----------|-------|-------|
+| Filesystem | 8 | fs_get_tree, fs_read_script, fs_write_script, fs_delete_script, fs_search_content, fs_get_changes, fs_lint_script, fs_watch_changes |
+| Studio | 13 | studio_health_check, studio_get_selection, studio_get_datamodel, studio_get_datamodel_paginated, studio_get_script_source, studio_get_properties, studio_get_bounds, studio_modify_script, studio_create_instance, studio_set_property, studio_delete_instance, studio_find_instances, studio_get_output |
+| Cloud | 11 | cloud_publish_place, cloud_upload_asset, cloud_datastore_get, cloud_datastore_set, cloud_ordered_datastore_list, cloud_ordered_datastore_set, cloud_ordered_datastore_increment, cloud_ordered_datastore_delete, cloud_get_universe, cloud_restart_servers, cloud_messaging_publish |
+| Toolchain | 6 | stylua_format, rojo_build, rojo_sourcemap, wally_install, wally_update, moonwave_build |
+| Monitoring | 1 | server_get_metrics |
 
 ## Tool Implementation Pattern
 
@@ -64,9 +85,18 @@ async fn tool_name(
 
 ## Environment Variables
 
-- `ROBLOX_OPEN_CLOUD_API_KEY` - Required for cloud tools
+- `ROBLOX_OPEN_CLOUD_API_KEY` - Required for cloud tools (protected with secrecy crate)
 - `ROBLOX_MCP_PORT` - HTTP bridge port (default: 8080)
 - `RUST_LOG` - Log level (default: roblox_studio_mcp=info)
+
+## Security Features
+
+- **Regex DoS Protection**: `validate_regex_safety()` in `src/regex_safety.rs` rejects dangerous patterns
+- **API Key Protection**: Uses `secrecy::Secret<String>` for automatic redaction in logs
+- **Path Traversal Prevention**: `validate_path()` in `src/tools/filesystem.rs` blocks `..` sequences
+- **Symlink Protection**: `reject_if_symlink()` prevents path escape attacks
+- **Tool Timeouts**: `execute_with_timeout()` in `src/tools/timeout.rs` (30s default)
+- **HTTP Authentication**: Bearer token auth in `src/bridge/auth.rs`
 
 ## Open Cloud API Details
 
@@ -84,6 +114,16 @@ GET/POST https://apis.roblox.com/datastores/v1/universes/{universe_id}/standard-
 - `x-api-key`: API key from environment
 - `content-type`: `application/json`
 - `content-md5`: Base64-encoded MD5 hash of request body
+
+### OrderedDataStore API
+
+For leaderboards and ranked data:
+```
+GET https://apis.roblox.com/ordered-data-stores/v1/universes/{id}/orderedDataStores/{name}/scopes/{scope}/entries
+  ?max_page_size={limit}
+  &order_by={desc|asc}
+  &filter={filter_expression}
+```
 
 ### Property Types in Studio Tools
 
@@ -115,7 +155,7 @@ studio_modify_script(path, source, record_undo: false)
 
 ## Testing
 
-607 unit tests (78% coverage) cover:
+770 unit tests cover:
 - Configuration parsing and validation
 - Filesystem operations and path validation
 - HTTP bridge command handling
@@ -126,12 +166,21 @@ studio_modify_script(path, source, record_undo: false)
 - Tool parameter serialization
 - Metrics collection
 - File watcher
+- Security features (regex safety, path traversal, symlinks)
+- External tool timeouts
 
 Integration tests require the compiled binary:
 
 ```bash
 cargo test --test mcp_integration -- --ignored
 ```
+
+## Resource Limits
+
+Defined in `src/limits.rs`:
+- `MAX_SEARCH_RESULTS`: 1000 - Max lines returned by fs_search_content
+- `MAX_FILE_ENTRIES`: 10000 - Max files tracked by fs_get_changes
+- `MAX_TREE_ENTRIES`: 10000 - Max entries in build_tree output
 
 ## Documentation
 

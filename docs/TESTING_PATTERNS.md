@@ -4,9 +4,9 @@ This document describes the mock infrastructure and testing patterns used in the
 
 ## Overview
 
-The server uses dependency injection via Rust traits to enable comprehensive testing without requiring external dependencies (Roblox Studio, Open Cloud API).
+The server uses dependency injection via Rust traits to enable comprehensive testing without requiring external dependencies (Roblox Studio, Open Cloud API, external tools).
 
-**Coverage:** 499 tests, 86.7% line coverage
+**Coverage:** 770 tests
 
 ## Mock Infrastructure
 
@@ -41,6 +41,10 @@ The server uses dependency injection via Rust traits to enable comprehensive tes
 | `MockCloudClient` | `src/cloud/mock.rs` | Mock Open Cloud API |
 | `MockHttpClient` | `src/http/mock.rs` | Mock HTTP responses |
 | `MockLinter` | `src/tools/linting.rs` | Mock Selene linter |
+| `MockFormatter` | `src/tools/formatting.rs` | Mock StyLua formatter |
+| `MockRojoRunner` | `src/tools/rojo.rs` | Mock Rojo operations |
+| `MockWallyRunner` | `src/tools/wally.rs` | Mock Wally operations |
+| `MockMoonwaveRunner` | `src/tools/moonwave.rs` | Mock Moonwave operations |
 
 ---
 
@@ -149,6 +153,12 @@ impl MockCloudClient {
     pub fn queue_datastore_set(&self, response: Result<DataStoreEntry, RobloxMcpError>);
     pub fn queue_messaging_publish(&self, response: Result<(), RobloxMcpError>);
     pub fn queue_upload_asset(&self, response: Result<AssetUploadResult, RobloxMcpError>);
+    pub fn queue_ordered_datastore_list(&self, response: Result<OrderedDataStoreListResult, RobloxMcpError>);
+    pub fn queue_ordered_datastore_set(&self, response: Result<OrderedDataStoreEntry, RobloxMcpError>);
+    pub fn queue_ordered_datastore_increment(&self, response: Result<OrderedDataStoreEntry, RobloxMcpError>);
+    pub fn queue_ordered_datastore_delete(&self, response: Result<(), RobloxMcpError>);
+    pub fn queue_get_universe(&self, response: Result<UniverseInfo, RobloxMcpError>);
+    pub fn queue_restart_servers(&self, response: Result<(), RobloxMcpError>);
 }
 ```
 
@@ -257,6 +267,47 @@ async fn test_datastore_get_with_mock_http() {
 
 ---
 
+## Toolchain Mocks
+
+### MockLinter
+
+**Location:** `src/tools/linting.rs`
+
+```rust
+use crate::tools::linting::{MockLinter, Linter};
+
+let mock = MockLinter::new();
+mock.set_result(Ok(LintResult {
+    diagnostics: vec![],
+    error_count: 0,
+    warning_count: 0,
+}));
+
+let result = mock.lint_script(path, None).await;
+```
+
+### MockFormatter
+
+**Location:** `src/tools/formatting.rs`
+
+```rust
+use crate::tools::formatting::{MockFormatter, Formatter};
+
+let mock = MockFormatter::new();
+mock.set_format_result(Ok(FormatResult {
+    formatted: true,
+    diff: None,
+}));
+
+let result = mock.format_script(path, false, None).await;
+```
+
+### MockRojoRunner, MockWallyRunner, MockMoonwaveRunner
+
+Similar patterns for build tool mocks - set expected results and verify calls.
+
+---
+
 ## Testing Patterns
 
 ### 1. Unit Tests with Mocks
@@ -348,6 +399,52 @@ async fn test_filesystem_operations() {
 }
 ```
 
+### 5. Security Tests
+
+Test security features like regex DoS protection and path traversal.
+
+```rust
+#[test]
+fn test_regex_dos_protection() {
+    // Verify dangerous patterns are rejected
+    let result = validate_regex_safety("(.*)*");
+    assert!(result.is_err());
+
+    // Verify safe patterns work
+    let result = validate_regex_safety("hello.*world");
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_path_traversal_rejected() {
+    let result = validate_path("/project/../etc/passwd");
+    assert!(result.is_err());
+}
+```
+
+### 6. Timeout Tests
+
+Test external tool timeout handling.
+
+```rust
+#[tokio::test]
+async fn test_tool_timeout() {
+    // Create a command that would hang
+    let mut cmd = Command::new("sleep");
+    cmd.arg("60");
+
+    // Execute with short timeout
+    let result = execute_with_timeout(
+        cmd,
+        "test",
+        Some(Duration::from_millis(100))
+    ).await;
+
+    // Verify timeout error
+    assert!(matches!(result, Err(RobloxMcpError::ToolExecutionError { .. })));
+}
+```
+
 ---
 
 ## Test Utilities
@@ -387,12 +484,13 @@ assert!(content[0].as_text().unwrap().contains("expected text"));
 
 ## Coverage Goals
 
-| Area | Target | Current |
-|------|--------|---------|
-| Overall | 85% | 86.7% |
-| Error paths | 100% | ~95% |
-| MCP tools | 90% | ~90% |
-| Mock infrastructure | 100% | 100% |
+| Area | Target |
+|------|--------|
+| Overall | 85%+ |
+| Error paths | 95%+ |
+| MCP tools | 90%+ |
+| Mock infrastructure | 100% |
+| Security features | 100% |
 
 ### Running Coverage
 
@@ -449,6 +547,9 @@ async fn test_error_404() { ... }
 
 #[tokio::test]
 async fn test_error_500() { ... }
+
+#[tokio::test]
+async fn test_timeout() { ... }
 ```
 
 ### 4. Use Descriptive Test Names
@@ -459,4 +560,23 @@ async fn test_datastore_get_returns_entry_when_key_exists() { ... }
 
 #[tokio::test]
 async fn test_datastore_get_returns_404_when_key_not_found() { ... }
+
+#[tokio::test]
+async fn test_regex_search_rejects_catastrophic_backtracking_pattern() { ... }
+```
+
+### 5. Test Security Features Thoroughly
+
+```rust
+#[test]
+fn test_validate_path_rejects_dot_dot_traversal() { ... }
+
+#[test]
+fn test_validate_path_rejects_embedded_null_byte() { ... }
+
+#[test]
+fn test_validate_path_rejects_symlinks() { ... }
+
+#[test]
+fn test_regex_safety_rejects_nested_quantifiers() { ... }
 ```

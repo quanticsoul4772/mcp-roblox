@@ -89,18 +89,49 @@ pub trait CloudClient: Send + Sync {
         description: &str,
         creator_id: u64,
     ) -> Result<AssetUploadResult, RobloxMcpError>;
+
+    async fn ordered_datastore_list(
+        &self,
+        params: OrderedDataStoreListParams,
+    ) -> Result<OrderedDataStoreListResult, RobloxMcpError>;
+
+    async fn ordered_datastore_set(
+        &self,
+        universe_id: u64,
+        datastore_name: &str,
+        scope: Option<&str>,
+        entry_id: &str,
+        value: i64,
+    ) -> Result<OrderedDataStoreEntry, RobloxMcpError>;
+
+    async fn ordered_datastore_increment(
+        &self,
+        universe_id: u64,
+        datastore_name: &str,
+        scope: Option<&str>,
+        entry_id: &str,
+        increment: i64,
+    ) -> Result<OrderedDataStoreEntry, RobloxMcpError>;
+
+    async fn ordered_datastore_delete(
+        &self,
+        universe_id: u64,
+        datastore_name: &str,
+        scope: Option<&str>,
+        entry_id: &str,
+    ) -> Result<(), RobloxMcpError>;
+
+    async fn get_universe(
+        &self,
+        universe_id: u64,
+    ) -> Result<UniverseInfo, RobloxMcpError>;
+
+    async fn restart_servers(
+        &self,
+        universe_id: u64,
+    ) -> Result<(), RobloxMcpError>;
 }
 ```
-
-#### Methods
-
-| Method | Description | Returns |
-|--------|-------------|---------|
-| `publish_place(universe_id, place_id, file_path)` | Publish .rbxl to Roblox | `Result<PublishResult, RobloxMcpError>` |
-| `datastore_get(universe_id, name, key, scope)` | Read from DataStore | `Result<DataStoreEntry, RobloxMcpError>` |
-| `datastore_set(universe_id, name, key, value, scope)` | Write to DataStore | `Result<DataStoreEntry, RobloxMcpError>` |
-| `messaging_publish(universe_id, topic, message)` | Publish to MessagingService | `Result<(), RobloxMcpError>` |
-| `upload_asset(type, path, name, desc, creator_id)` | Upload asset to Roblox | `Result<AssetUploadResult, RobloxMcpError>` |
 
 #### Implementations
 
@@ -147,6 +178,12 @@ pub trait HttpClient: Send + Sync + 'static {
         headers: &[(&str, &str)],
         form: MultipartForm,
     ) -> Result<HttpResponse, RobloxMcpError>;
+
+    async fn delete(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<HttpResponse, RobloxMcpError>;
 }
 ```
 
@@ -190,22 +227,56 @@ pub struct DataStoreEntry {
 }
 ```
 
-#### DataStore API Endpoint Details
+---
 
-The DataStore tools use Roblox Open Cloud **v1 API** with query parameters:
+### OrderedDataStoreEntry
 
+**Location:** `src/cloud/ordered_datastores.rs`
+
+Entry from a Roblox OrderedDataStore (used for leaderboards).
+
+```rust
+pub struct OrderedDataStoreEntry {
+    pub id: String,
+    pub value: i64,
+}
 ```
-GET  https://apis.roblox.com/datastores/v1/universes/{id}/standard-datastores/datastore/entries/entry
-     ?datastoreName={name}&entryKey={key}&scope={scope}
 
-POST https://apis.roblox.com/datastores/v1/universes/{id}/standard-datastores/datastore/entries/entry
-     ?datastoreName={name}&entryKey={key}&scope={scope}
+---
+
+### OrderedDataStoreListResult
+
+**Location:** `src/cloud/ordered_datastores.rs`
+
+Result of listing OrderedDataStore entries.
+
+```rust
+pub struct OrderedDataStoreListResult {
+    pub entries: Vec<OrderedDataStoreEntry>,
+    pub next_page_token: Option<String>,
+}
 ```
 
-**Required headers for POST (datastore_set):**
-- `x-api-key`: From `ROBLOX_OPEN_CLOUD_API_KEY` environment variable
-- `content-type`: `application/json`
-- `content-md5`: Base64-encoded MD5 hash of the JSON body (required by Roblox v1 API)
+---
+
+### UniverseInfo
+
+**Location:** `src/cloud/universes.rs`
+
+Information about a Roblox universe (game).
+
+```rust
+pub struct UniverseInfo {
+    pub path: String,
+    pub create_time: String,
+    pub update_time: String,
+    pub display_name: String,
+    pub description: String,
+    pub user: Option<String>,
+    pub group: Option<String>,
+    pub visibility: Option<String>,
+}
+```
 
 ---
 
@@ -309,6 +380,8 @@ All error types used by the server.
 | `WatcherError(notify::Error)` | -32603 | File watcher error |
 | `OpenCloudError { status, message }` | -32600/-32603 | Open Cloud API error |
 | `ConfigError(String)` | -32600 | Configuration error |
+| `ToolNotInstalled { tool, install_hint }` | -32002 | External tool not found |
+| `ToolExecutionError { tool, message }` | -32603 | External tool failed |
 
 #### MCP Error Code Mapping
 
@@ -316,7 +389,7 @@ All error types used by the server.
 |------|---------|-------------|
 | -32600 | Invalid Request | Client errors, bad input, path issues |
 | -32603 | Internal Error | Server errors, infrastructure failures |
-| -32002 | Resource Unavailable | Connection/timeout errors |
+| -32002 | Resource Unavailable | Connection/timeout errors, missing tools |
 
 ---
 
@@ -326,15 +399,65 @@ All error types used by the server.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ROBLOX_OPEN_CLOUD_API_KEY` | No | - | API key for cloud tools |
+| `ROBLOX_OPEN_CLOUD_API_KEY` | No | - | API key for cloud tools (protected with secrecy) |
 | `ROBLOX_MCP_PORT` | No | 8080 | HTTP bridge port |
 | `RUST_LOG` | No | `roblox_studio_mcp=info` | Log level |
 
 ---
 
+## Resource Limits
+
+**Location:** `src/limits.rs`
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MAX_SEARCH_RESULTS` | 1000 | Max lines returned by fs_search_content |
+| `MAX_FILE_ENTRIES` | 10000 | Max files tracked by fs_get_changes |
+| `MAX_TREE_ENTRIES` | 10000 | Max entries in build_tree output |
+
+---
+
+## Security Functions
+
+### validate_regex_safety
+
+**Location:** `src/regex_safety.rs`
+
+Validates regex patterns before compilation to prevent DoS attacks.
+
+```rust
+pub fn validate_regex_safety(pattern: &str) -> Result<regex::Regex, RobloxMcpError>
+```
+
+Rejects patterns containing:
+- `(.*)*`, `(.+)+` - Nested quantifiers
+- `(a+)+`, `(a*)*` - Catastrophic backtracking patterns
+- `(a|aa)+`, `(a|a?)+` - Alternation with overlap
+- `(.*)\1`, `(.+)\1+` - Backreferences with quantifiers
+
+Also enforces a 1MB size limit via `RegexBuilder::size_limit()`.
+
+### execute_with_timeout
+
+**Location:** `src/tools/timeout.rs`
+
+Executes external tools with timeout protection.
+
+```rust
+pub async fn execute_with_timeout(
+    cmd: Command,
+    tool_name: &str,
+    timeout_duration: Option<Duration>,
+) -> Result<Output, RobloxMcpError>
+```
+
+Default timeout: 30 seconds. Used for StyLua, Selene, Rojo, Wally, and Moonwave.
+
+---
+
 ## MCP Tools
 
-The server exposes 25 MCP tools across four categories:
+The server exposes 39 MCP tools across five categories:
 
 ### Filesystem Tools (8)
 
@@ -344,7 +467,7 @@ The server exposes 25 MCP tools across four categories:
 | `fs_read_script` | Read .luau file |
 | `fs_write_script` | Write .luau file |
 | `fs_delete_script` | Delete .luau file |
-| `fs_search_content` | Regex search in scripts |
+| `fs_search_content` | Regex search in scripts (with DoS protection) |
 | `fs_get_changes` | Get file modification times |
 | `fs_lint_script` | Run Selene linter |
 | `fs_watch_changes` | Poll for file changes |
@@ -358,11 +481,11 @@ The server exposes 25 MCP tools across four categories:
 | `studio_get_datamodel` | Get DataModel hierarchy |
 | `studio_get_datamodel_paginated` | Paginated DataModel |
 | `studio_get_script_source` | Read script source |
+| `studio_get_properties` | Read instance properties |
+| `studio_get_bounds` | Get bounding box of Part/Model |
 | `studio_modify_script` | Update script source |
 | `studio_create_instance` | Create new instance |
 | `studio_set_property` | Set instance property |
-| `studio_get_properties` | Read instance properties |
-| `studio_get_bounds` | Get bounding box of Part/Model |
 | `studio_delete_instance` | Delete instance |
 | `studio_find_instances` | Find by class name |
 | `studio_get_output` | Get Output logs |
@@ -442,7 +565,7 @@ Useful for calculating furniture placement, collision detection, and verifying b
 
 Use `record_undo: false` parameter when calling `studio_modify_script` to avoid "script document not available" errors that can occur when the script editor is not open for that script.
 
-### Cloud Tools (5)
+### Cloud Tools (11)
 
 | Tool | Description |
 |------|-------------|
@@ -450,7 +573,52 @@ Use `record_undo: false` parameter when calling `studio_modify_script` to avoid 
 | `cloud_upload_asset` | Upload asset |
 | `cloud_datastore_get` | Read DataStore |
 | `cloud_datastore_set` | Write DataStore |
+| `cloud_ordered_datastore_list` | List OrderedDataStore entries (leaderboards) |
+| `cloud_ordered_datastore_set` | Set OrderedDataStore entry |
+| `cloud_ordered_datastore_increment` | Atomically increment entry |
+| `cloud_ordered_datastore_delete` | Delete OrderedDataStore entry |
+| `cloud_get_universe` | Get universe metadata |
+| `cloud_restart_servers` | Restart all game servers |
 | `cloud_messaging_publish` | Publish message |
+
+#### DataStore API Endpoint Details
+
+Uses Roblox Open Cloud **v1 API** with query parameters:
+
+```
+GET  https://apis.roblox.com/datastores/v1/universes/{id}/standard-datastores/datastore/entries/entry
+     ?datastoreName={name}&entryKey={key}&scope={scope}
+
+POST https://apis.roblox.com/datastores/v1/universes/{id}/standard-datastores/datastore/entries/entry
+     ?datastoreName={name}&entryKey={key}&scope={scope}
+```
+
+**Required headers for POST (datastore_set):**
+- `x-api-key`: From `ROBLOX_OPEN_CLOUD_API_KEY` environment variable
+- `content-type`: `application/json`
+- `content-md5`: Base64-encoded MD5 hash of the JSON body (required by Roblox v1 API)
+
+#### OrderedDataStore API
+
+For leaderboards and ranked data:
+
+```
+GET https://apis.roblox.com/ordered-data-stores/v1/universes/{id}/orderedDataStores/{name}/scopes/{scope}/entries
+    ?max_page_size={limit}&order_by={desc|asc}&filter={expression}
+```
+
+### Toolchain Tools (6)
+
+| Tool | Description |
+|------|-------------|
+| `stylua_format` | Format Luau with StyLua |
+| `rojo_build` | Build Roblox project |
+| `rojo_sourcemap` | Generate sourcemap |
+| `wally_install` | Install packages |
+| `wally_update` | Update packages |
+| `moonwave_build` | Build documentation |
+
+All toolchain tools have 30-second timeout protection via `execute_with_timeout()`.
 
 ### Monitoring Tools (1)
 
