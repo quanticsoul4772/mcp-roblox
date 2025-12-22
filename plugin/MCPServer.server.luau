@@ -92,6 +92,20 @@ local function convertValue(value, propertyName)
         return value
     end
 
+    -- Handle string-encoded JSON (MCP parameter workaround)
+    if type(value) == "string" then
+        -- Try to parse as JSON first
+        if value:match("^%s*[%[{]") then
+            local success, parsed = pcall(function()
+                return HttpService:JSONDecode(value)
+            end)
+            if success and type(parsed) == "table" then
+                -- Recursively convert the parsed value
+                return convertValue(parsed, propertyName)
+            end
+        end
+    end
+
     -- Handle string values that might need conversion
     if type(value) == "string" then
         -- Check if it looks like a BrickColor name

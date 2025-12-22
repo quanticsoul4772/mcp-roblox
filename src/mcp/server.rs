@@ -3325,4 +3325,275 @@ mod tests {
             "Should fail when cloud client not configured"
         );
     }
+
+    // === ADDITIONAL FS_LINT_SCRIPT TESTS ===
+
+    #[tokio::test]
+    async fn test_fs_lint_script_success_clean_file() {
+        use crate::tools::linting::mock::MockLinter;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("clean.luau");
+        std::fs::write(&script_path, "-- Clean script\nreturn {}").unwrap();
+
+        let mock_linter = MockLinter::clean();
+        let server = RobloxMcpServer::with_mock_bridge_and_linter(
+            Arc::new(MockBridge::new()),
+            project_root,
+            mock_linter.clone(),
+        );
+
+        let params = FsLintScriptParams {
+            file_path: script_path.display().to_string(),
+            config_path: None,
+        };
+
+        let result = server.fs_lint_script(Parameters(params)).await;
+        assert!(result.is_ok(), "Clean file should lint successfully");
+
+        let call_result = result.unwrap();
+        assert!(!call_result.content.is_empty());
+
+        // Verify linter was called
+        assert_eq!(mock_linter.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_fs_lint_script_with_errors() {
+        use crate::tools::linting::mock::MockLinter;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("error.luau");
+        std::fs::write(&script_path, "local x = y").unwrap();
+
+        let mock_linter = MockLinter::with_errors(vec![
+            ("undefined_variable", "y is not defined", 1),
+        ]);
+        let server = RobloxMcpServer::with_mock_bridge_and_linter(
+            Arc::new(MockBridge::new()),
+            project_root,
+            mock_linter,
+        );
+
+        let params = FsLintScriptParams {
+            file_path: script_path.display().to_string(),
+            config_path: None,
+        };
+
+        let result = server.fs_lint_script(Parameters(params)).await;
+        assert!(result.is_ok(), "Lint should succeed even with errors in file");
+
+        // Verify the result contains error diagnostics
+        let call_result = result.unwrap();
+        if let RawContent::Text(text) = &*call_result.content[0] {
+            assert!(text.text.contains("error"));
+            assert!(text.text.contains("undefined_variable"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fs_lint_script_with_config_path() {
+        use crate::tools::linting::mock::MockLinter;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("script.luau");
+        std::fs::write(&script_path, "local x = 1").unwrap();
+
+        let mock_linter = MockLinter::clean();
+        let server = RobloxMcpServer::with_mock_bridge_and_linter(
+            Arc::new(MockBridge::new()),
+            project_root.clone(),
+            mock_linter.clone(),
+        );
+
+        let config_path = project_root.join("selene.toml");
+
+        let params = FsLintScriptParams {
+            file_path: script_path.display().to_string(),
+            config_path: Some(config_path.display().to_string()),
+        };
+
+        let result = server.fs_lint_script(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        // Verify config path was passed to linter
+        let calls = mock_linter.calls();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].config_path.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_fs_lint_script_linter_error() {
+        use crate::tools::linting::mock::MockLinter;
+        use crate::error::RobloxMcpError;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("script.luau");
+        std::fs::write(&script_path, "local x = 1").unwrap();
+
+        let mock_linter = MockLinter::new();
+        mock_linter.queue_error(RobloxMcpError::ConfigError(
+            "Selene not installed".to_string()
+        ));
+
+        let server = RobloxMcpServer::with_mock_bridge_and_linter(
+            Arc::new(MockBridge::new()),
+            project_root,
+            mock_linter,
+        );
+
+        let params = FsLintScriptParams {
+            file_path: script_path.display().to_string(),
+            config_path: None,
+        };
+
+        let result = server.fs_lint_script(Parameters(params)).await;
+        assert!(result.is_err(), "Linter error should propagate");
+
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Selene"));
+    }
+
+    #[tokio::test]
+    async fn test_fs_lint_script_path_traversal() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root);
+
+        let params = FsLintScriptParams {
+            file_path: "../../../etc/passwd.luau".to_string(),
+            config_path: None,
+        };
+
+        let result = server.fs_lint_script(Parameters(params)).await;
+        assert!(result.is_err(), "Path traversal should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_fs_lint_script_nonexistent_file() {
+        use crate::tools::linting::mock::MockLinter;
+        use crate::error::RobloxMcpError;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        // Don't create the file - it should fail during path validation
+        let mock_linter = MockLinter::new();
+        // Queue an error in case we get to the linter (we shouldn't)
+        mock_linter.queue_error(RobloxMcpError::ConfigError(
+            "File not found".to_string()
+        ));
+
+        let server = RobloxMcpServer::with_mock_bridge_and_linter(
+            Arc::new(MockBridge::new()),
+            project_root.clone(),
+            mock_linter,
+        );
+
+        let params = FsLintScriptParams {
+            file_path: project_root.join("nonexistent.luau").display().to_string(),
+            config_path: None,
+        };
+
+        let result = server.fs_lint_script(Parameters(params)).await;
+        // Should fail because file doesn't exist (path validation succeeds for .luau but file is missing)
+        // Note: The actual behavior depends on whether validate_path checks file existence
+        // or if the linter checks it. Either way, it should error.
+        assert!(result.is_err(), "Nonexistent file should fail");
+    }
+
+    // === ADDITIONAL EDGE CASE TESTS ===
+
+    #[tokio::test]
+    async fn test_fs_get_tree_with_max_depth_zero() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        std::fs::create_dir(project_root.join("subdir")).unwrap();
+        std::fs::write(project_root.join("subdir/file.luau"), "-- file").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsGetTreeParams {
+            path: project_root.display().to_string(),
+            max_depth: Some(0),
+        };
+
+        let result = server.fs_get_tree(Parameters(params)).await;
+        assert!(result.is_ok(), "max_depth 0 should work");
+    }
+
+    #[tokio::test]
+    async fn test_fs_write_script_overwrite_existing() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("existing.luau");
+
+        // Create initial file
+        std::fs::write(&script_path, "-- original content").unwrap();
+
+        let server = create_test_server(project_root);
+
+        // Overwrite with new content
+        let params = FsWriteScriptParams {
+            file_path: script_path.display().to_string(),
+            content: "-- new content".to_string(),
+            create_directories: None,
+        };
+
+        let result = server.fs_write_script(Parameters(params)).await;
+        assert!(result.is_ok(), "Should overwrite existing file");
+
+        let content = std::fs::read_to_string(&script_path).unwrap();
+        assert_eq!(content, "-- new content");
+    }
+
+    #[tokio::test]
+    async fn test_fs_search_content_zero_matches_returned() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        std::fs::write(project_root.join("script.luau"), "-- nothing here").unwrap();
+
+        let server = create_test_server(project_root.clone());
+
+        let params = FsSearchContentParams {
+            path: project_root.display().to_string(),
+            pattern: "NONEXISTENT_PATTERN_12345".to_string(),
+            extension: "luau".to_string(),
+        };
+
+        let result = server.fs_search_content(Parameters(params)).await;
+        assert!(result.is_ok(), "Search with no matches should succeed");
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text) = &*call_result.content[0] {
+            // Should have 0 matches
+            assert!(text.text.contains("\"matches\":0") || text.text.contains("\"matches\": 0"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_server_get_metrics_returns_snapshot() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server(temp_dir.path().to_path_buf());
+
+        let result = server.server_get_metrics().await;
+        assert!(result.is_ok(), "server_get_metrics should succeed");
+
+        let call_result = result.unwrap();
+        assert!(!call_result.content.is_empty());
+
+        // Verify response is valid JSON with expected fields
+        if let RawContent::Text(text) = &*call_result.content[0] {
+            let metrics: serde_json::Value = serde_json::from_str(&text.text)
+                .expect("Metrics should be valid JSON");
+            assert!(metrics.get("tools").is_some(), "Should have tools field");
+            assert!(metrics.get("connection").is_some(), "Should have connection field");
+        }
+    }
 }
