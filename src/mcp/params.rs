@@ -136,6 +136,24 @@ pub struct StudioGetOutputParams {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StudioGetPropertiesParams {
+    #[schemars(description = "Instance path (e.g., 'game.Workspace.Part')")]
+    pub path: String,
+    #[schemars(
+        description = "List of property names to read. If omitted, returns common properties for the class."
+    )]
+    pub properties: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StudioGetBoundsParams {
+    #[schemars(
+        description = "Instance path to a BasePart or Model (e.g., 'game.Workspace.MyPart')"
+    )]
+    pub path: String,
+}
+
 // === CLOUD PARAMS ===
 // These parameter structs define the JSON schema for Open Cloud MCP tools
 // All Cloud tools require ROBLOX_OPEN_CLOUD_API_KEY environment variable

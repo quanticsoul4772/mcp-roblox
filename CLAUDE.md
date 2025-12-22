@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Rust MCP server for Roblox Studio integration. Provides 25 MCP tools for filesystem operations, live Studio manipulation, and Open Cloud API access.
+Rust MCP server for Roblox Studio integration. Provides 27 MCP tools for filesystem operations, live Studio manipulation, and Open Cloud API access.
 
 ## Build and Test Commands
 
@@ -33,7 +33,7 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 
 - `src/main.rs` - Entry point, STDIO transport, HTTP bridge spawning
 - `src/config.rs` - Environment configuration parsing (testable)
-- `src/mcp/server.rs` - All 25 MCP tool implementations
+- `src/mcp/server.rs` - All 27 MCP tool implementations
 - `src/mcp/params.rs` - Tool parameter structs with JSON Schema
 - `src/bridge/http.rs` - Plugin HTTP communication (poll/result endpoints)
 - `src/bridge/mock.rs` - Mock bridge for testing Studio tools
@@ -95,6 +95,16 @@ When using `studio_create_instance` or `studio_set_property`:
 - `Enum`: String values like "Ball" for Shape
 
 **Known Limitation:** UDim2 properties not supported via JSON
+
+### Reading Properties and Bounds
+
+Use `studio_get_properties(path, properties?)` to read instance properties:
+- Returns common properties for the class if `properties` array omitted
+- Response includes typed values: `{"Position": {"type": "Vector3", "value": [x, y, z]}}`
+
+Use `studio_get_bounds(path)` to get bounding box of Parts/Models:
+- Returns `center`, `size`, `min`, `max` coordinates and `orientation`
+- Useful for verifying placement and calculating furniture positions
 
 ### Script Modification
 

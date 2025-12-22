@@ -1,11 +1,11 @@
 # Project knowledge
 
-Rust MCP server for Roblox Studio integration. Provides 25 MCP tools for filesystem operations, live Studio manipulation, and Open Cloud API access.
+Rust MCP server for Roblox Studio integration. Provides 27 MCP tools for filesystem operations, live Studio manipulation, and Open Cloud API access.
 
 ## Quickstart
 - Setup: `cargo build`
 - Dev: `cargo run` (uses STDIO transport)
-- Test: `cargo test` (365 unit tests)
+- Test: `cargo test` (499 unit tests, 86.7% coverage)
 - Release: `cargo build --release`
 
 ## Architecture

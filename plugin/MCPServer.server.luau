@@ -24,6 +24,90 @@ local consecutiveFailures = 0
 -- Output buffer for getOutput action
 local outputBuffer = {}
 
+-- Serialize Roblox types to JSON-compatible values
+local function serializeValue(value)
+    local t = typeof(value)
+
+    if t == "nil" then
+        return nil
+    elseif t == "boolean" or t == "number" or t == "string" then
+        return value
+    elseif t == "Vector3" then
+        return { type = "Vector3", value = {value.X, value.Y, value.Z} }
+    elseif t == "Vector2" then
+        return { type = "Vector2", value = {value.X, value.Y} }
+    elseif t == "CFrame" then
+        local components = {value:GetComponents()}
+        return {
+            type = "CFrame",
+            position = {components[1], components[2], components[3]},
+            value = components
+        }
+    elseif t == "Color3" then
+        return { type = "Color3", value = {value.R, value.G, value.B} }
+    elseif t == "BrickColor" then
+        return { type = "BrickColor", value = value.Name, number = value.Number }
+    elseif t == "UDim" then
+        return { type = "UDim", value = {value.Scale, value.Offset} }
+    elseif t == "UDim2" then
+        return {
+            type = "UDim2",
+            value = {value.X.Scale, value.X.Offset, value.Y.Scale, value.Y.Offset}
+        }
+    elseif t == "Rect" then
+        return {
+            type = "Rect",
+            min = {value.Min.X, value.Min.Y},
+            max = {value.Max.X, value.Max.Y}
+        }
+    elseif t == "EnumItem" then
+        return { type = "Enum", enum = tostring(value.EnumType), value = value.Name }
+    elseif t == "Instance" then
+        return { type = "Instance", path = value:GetFullName(), className = value.ClassName }
+    elseif t == "NumberRange" then
+        return { type = "NumberRange", min = value.Min, max = value.Max }
+    elseif t == "NumberSequence" then
+        local keypoints = {}
+        for _, kp in ipairs(value.Keypoints) do
+            table.insert(keypoints, {time = kp.Time, value = kp.Value, envelope = kp.Envelope})
+        end
+        return { type = "NumberSequence", keypoints = keypoints }
+    elseif t == "ColorSequence" then
+        local keypoints = {}
+        for _, kp in ipairs(value.Keypoints) do
+            table.insert(keypoints, {time = kp.Time, color = {kp.Value.R, kp.Value.G, kp.Value.B}})
+        end
+        return { type = "ColorSequence", keypoints = keypoints }
+    else
+        -- Fallback: convert to string
+        return { type = t, value = tostring(value) }
+    end
+end
+
+-- Common properties for different class types
+local COMMON_PROPERTIES = {
+    BasePart = {"Name", "Position", "Size", "CFrame", "Anchored", "CanCollide",
+                "Transparency", "Color", "Material", "BrickColor"},
+    Model = {"Name", "PrimaryPart"},
+    Script = {"Name", "Enabled"},
+    GuiObject = {"Name", "Position", "Size", "Visible", "BackgroundColor3",
+                 "BackgroundTransparency", "BorderSizePixel"},
+}
+
+local function getDefaultPropertiesForClass(instance)
+    if instance:IsA("BasePart") then
+        return COMMON_PROPERTIES.BasePart
+    elseif instance:IsA("Model") then
+        return COMMON_PROPERTIES.Model
+    elseif instance:IsA("LuaSourceContainer") then
+        return COMMON_PROPERTIES.Script
+    elseif instance:IsA("GuiObject") then
+        return COMMON_PROPERTIES.GuiObject
+    else
+        return {"Name", "ClassName"}
+    end
+end
+
 -- Capture log messages
 LogService.MessageOut:Connect(function(message, messageType)
     local entry = {
@@ -491,6 +575,80 @@ local function executeCommand(action, params)
         end
 
         return { entries = entries, count = #entries }
+
+    elseif action == "getProperties" then
+        local instance = resolveInstancePath(params.path) or game:FindFirstChild(params.path, true)
+        if not instance then
+            error("Instance not found: " .. params.path)
+        end
+
+        -- Determine which properties to read
+        local propertyNames = params.properties
+        if not propertyNames or #propertyNames == 0 then
+            propertyNames = getDefaultPropertiesForClass(instance)
+        end
+
+        local result = {
+            path = instance:GetFullName(),
+            className = instance.ClassName,
+            properties = {}
+        }
+
+        for _, propName in ipairs(propertyNames) do
+            local success, value = pcall(function()
+                return instance[propName]
+            end)
+
+            if success then
+                result.properties[propName] = serializeValue(value)
+            else
+                result.properties[propName] = { error = "Could not read property" }
+            end
+        end
+
+        return result
+
+    elseif action == "getBounds" then
+        local instance = resolveInstancePath(params.path) or game:FindFirstChild(params.path, true)
+        if not instance then
+            error("Instance not found: " .. params.path)
+        end
+
+        local result = {
+            path = instance:GetFullName(),
+            className = instance.ClassName
+        }
+
+        if instance:IsA("BasePart") then
+            -- For BaseParts, calculate bounds from Position and Size
+            local pos = instance.Position
+            local size = instance.Size
+            local halfSize = size / 2
+
+            -- Note: This assumes axis-aligned. For rotated parts, would need CFrame math
+            result.center = {pos.X, pos.Y, pos.Z}
+            result.size = {size.X, size.Y, size.Z}
+            result.min = {pos.X - halfSize.X, pos.Y - halfSize.Y, pos.Z - halfSize.Z}
+            result.max = {pos.X + halfSize.X, pos.Y + halfSize.Y, pos.Z + halfSize.Z}
+            result.orientation = serializeValue(instance.CFrame)
+
+        elseif instance:IsA("Model") then
+            -- For Models, use GetBoundingBox()
+            local cf, size = instance:GetBoundingBox()
+            local pos = cf.Position
+            local halfSize = size / 2
+
+            result.center = {pos.X, pos.Y, pos.Z}
+            result.size = {size.X, size.Y, size.Z}
+            result.min = {pos.X - halfSize.X, pos.Y - halfSize.Y, pos.Z - halfSize.Z}
+            result.max = {pos.X + halfSize.X, pos.Y + halfSize.Y, pos.Z + halfSize.Z}
+            result.orientation = serializeValue(cf)
+
+        else
+            error("Instance must be a BasePart or Model, got: " .. instance.ClassName)
+        end
+
+        return result
     end
 
     error("Unknown action: " .. action)

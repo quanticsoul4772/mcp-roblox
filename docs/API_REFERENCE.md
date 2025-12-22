@@ -349,7 +349,7 @@ The server exposes 25 MCP tools across four categories:
 | `fs_lint_script` | Run Selene linter |
 | `fs_watch_changes` | Poll for file changes |
 
-### Studio Tools (11)
+### Studio Tools (13)
 
 | Tool | Description |
 |------|-------------|
@@ -361,6 +361,8 @@ The server exposes 25 MCP tools across four categories:
 | `studio_modify_script` | Update script source |
 | `studio_create_instance` | Create new instance |
 | `studio_set_property` | Set instance property |
+| `studio_get_properties` | Read instance properties |
+| `studio_get_bounds` | Get bounding box of Part/Model |
 | `studio_delete_instance` | Delete instance |
 | `studio_find_instances` | Find by class name |
 | `studio_get_output` | Get Output logs |
@@ -383,6 +385,58 @@ When using `studio_create_instance` or `studio_set_property`, properties are ser
 **Known Limitations:**
 - `UDim2` properties not supported (use script-based modification)
 - Complex Roblox types may require direct Luau script manipulation
+
+#### studio_get_properties
+
+Read properties from any instance in Studio.
+
+```
+studio_get_properties(path, properties?)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | string | Instance path (e.g., `"Workspace.MyPart"`) |
+| `properties` | string[] | Optional list of property names. If omitted, returns common properties for the class |
+
+**Response:**
+```json
+{
+  "className": "Part",
+  "path": "Workspace.MyPart",
+  "properties": {
+    "Position": {"type": "Vector3", "value": [0, 5, 0]},
+    "Size": {"type": "Vector3", "value": [4, 1, 2]},
+    "Anchored": true,
+    "Material": "Plastic"
+  }
+}
+```
+
+#### studio_get_bounds
+
+Get the bounding box of a BasePart or Model.
+
+```
+studio_get_bounds(path)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | string | Instance path to a BasePart or Model |
+
+**Response:**
+```json
+{
+  "center": {"X": 100, "Y": 5, "Z": -20},
+  "size": {"X": 10, "Y": 8, "Z": 12},
+  "min": {"X": 95, "Y": 1, "Z": -26},
+  "max": {"X": 105, "Y": 9, "Z": -14},
+  "orientation": {"X": 0, "Y": 0, "Z": 0}
+}
+```
+
+Useful for calculating furniture placement, collision detection, and verifying build dimensions.
 
 #### Script Modification Note
 

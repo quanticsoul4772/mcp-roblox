@@ -43,9 +43,11 @@ use crate::mcp::params::{
     StudioCreateInstanceParams,
     StudioDeleteInstanceParams,
     StudioFindInstancesParams,
+    StudioGetBoundsParams,
     StudioGetDataModelPaginatedParams,
     StudioGetDataModelParams,
     StudioGetOutputParams,
+    StudioGetPropertiesParams,
     StudioGetScriptSourceParams,
     StudioModifyScriptParams,
     StudioSetPropertyParams,
@@ -840,6 +842,68 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         let result = self
             .bridge
             .execute_command("getScriptSource", json!({ "path": params.path }))
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Read properties from any instance in Studio. Returns the specified properties or common properties for the class if none specified."
+    )]
+    async fn studio_get_properties(
+        &self,
+        Parameters(params): Parameters<StudioGetPropertiesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_get_properties");
+        let result = self.studio_get_properties_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_get_properties_impl(
+        &self,
+        params: StudioGetPropertiesParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command(
+                "getProperties",
+                json!({
+                    "path": params.path,
+                    "properties": params.properties
+                }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Get the bounding box of a BasePart or Model in Studio. Returns center, size, min, max coordinates, and orientation."
+    )]
+    async fn studio_get_bounds(
+        &self,
+        Parameters(params): Parameters<StudioGetBoundsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_get_bounds");
+        let result = self.studio_get_bounds_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_get_bounds_impl(
+        &self,
+        params: StudioGetBoundsParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command("getBounds", json!({ "path": params.path }))
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 

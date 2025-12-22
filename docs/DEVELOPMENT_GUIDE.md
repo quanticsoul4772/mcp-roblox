@@ -326,6 +326,27 @@ studio_set_property(path, property, value, record_undo?)
 Set instance property. Path uses dots: `"Workspace.MyPart"`.
 
 ```
+studio_get_properties(path, properties?)
+```
+Read properties from an instance. Returns common properties for the class if none specified.
+
+```json
+// Response example
+{
+  "className": "Part",
+  "properties": {
+    "Position": {"type": "Vector3", "value": [0, 5, 0]},
+    "Size": {"type": "Vector3", "value": [4, 1, 2]}
+  }
+}
+```
+
+```
+studio_get_bounds(path)
+```
+Get bounding box of a Part or Model. Returns center, size, min, max coordinates, and orientation.
+
+```
 studio_delete_instance(path, record_undo?)
 ```
 Delete instance. Creates undo waypoint by default.
@@ -425,6 +446,12 @@ studio_find_instances("ModuleScript", root="ReplicatedStorage")
 
 # Read a script
 studio_get_script_source("ServerScriptService.Main")
+
+# Inspect instance properties
+studio_get_properties("Workspace.MyPart", ["Position", "Size", "Anchored"])
+
+# Get bounding box for positioning calculations
+studio_get_bounds("Workspace.MyBuilding")
 ```
 
 ### 2. Creating Game Objects
@@ -593,7 +620,27 @@ local tween = TweenService:Create(part, tweenInfo, {
 tween:Play()
 ```
 
-### 9. Game State Management
+### 9. Verifying and Adjusting Builds
+
+```python
+# Read back properties to verify placement
+props = studio_get_properties("Workspace.MyBuilding.Wall", ["Position", "Size"])
+
+# Get bounds of a model to ensure proper alignment
+bounds = studio_get_bounds("Workspace.MyBuilding")
+# Response: {"center": [100, 6, -28], "size": [40, 12, 56], "min": [...], "max": [...]}
+
+# Calculate where furniture should go
+wall_props = studio_get_properties("Workspace.MyBuilding.BackWall", ["Position"])
+# Position furniture relative to wall
+
+# Verify doorway clearances
+door_bounds = studio_get_bounds("Workspace.MyBuilding.FrontDoor")
+furniture_bounds = studio_get_bounds("Workspace.MyBuilding.ReceptionDesk")
+# Check for overlap and reposition if needed
+```
+
+### 10. Game State Management
 
 ```lua
 -- Track per-player state
