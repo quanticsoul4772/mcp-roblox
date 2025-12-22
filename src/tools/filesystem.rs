@@ -169,6 +169,7 @@ pub async fn read_script(file_path: &Path) -> Result<ScriptContent, RobloxMcpErr
         fs::read_to_string(file_path)
             .await
             .map_err(|e| RobloxMcpError::FileSystemError {
+                operation: "read".to_string(),
                 path: file_path.display().to_string(),
                 source: e,
             })?;
@@ -192,6 +193,7 @@ pub async fn write_script(
             fs::create_dir_all(parent)
                 .await
                 .map_err(|e| RobloxMcpError::FileSystemError {
+                    operation: "create_dir_all".to_string(),
                     path: parent.display().to_string(),
                     source: e,
                 })?;
@@ -201,6 +203,7 @@ pub async fn write_script(
     fs::write(file_path, content)
         .await
         .map_err(|e| RobloxMcpError::FileSystemError {
+            operation: "write".to_string(),
             path: file_path.display().to_string(),
             source: e,
         })?;

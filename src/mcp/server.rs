@@ -45,6 +45,13 @@ use crate::mcp::params::{
     FsSearchContentParams,
     FsWatchChangesParams,
     FsWriteScriptParams,
+    // Toolchain params
+    MoonwaveBuildParams,
+    RojoBuildParams,
+    RojoSourcemapParams,
+    StyluaFormatParams,
+    WallyInstallParams,
+    WallyUpdateParams,
     // Studio params
     StudioCreateInstanceParams,
     StudioDeleteInstanceParams,
@@ -60,7 +67,11 @@ use crate::mcp::params::{
 };
 use crate::metrics::ServerMetrics;
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
+use crate::tools::formatting::{Formatter, StyLuaFormatter};
 use crate::tools::linting::{Linter, SeleneLinter};
+use crate::tools::moonwave::{DefaultMoonwaveRunner, MoonwaveRunner};
+use crate::tools::rojo::{DefaultRojoRunner, RojoRunner};
+use crate::tools::wally::{DefaultWallyRunner, WallyRunner};
 use crate::watcher::FileWatcher;
 
 /// Roblox MCP Server with injectable dependencies
@@ -68,12 +79,22 @@ use crate::watcher::FileWatcher;
 /// Generic over:
 /// - `B`: StudioBridge implementation (default: PluginBridge)
 /// - `L`: Linter implementation (default: SeleneLinter)
+/// - `F`: Formatter implementation (default: StyLuaFormatter)
+/// - `R`: RojoRunner implementation (default: DefaultRojoRunner)
+/// - `W`: WallyRunner implementation (default: DefaultWallyRunner)
+/// - `M`: MoonwaveRunner implementation (default: DefaultMoonwaveRunner)
 ///
 /// This allows injecting mock implementations for testing while keeping
 /// production code unchanged.
 #[derive(Clone)]
-pub struct RobloxMcpServer<B: StudioBridge + Clone = PluginBridge, L: Linter + Clone = SeleneLinter>
-{
+pub struct RobloxMcpServer<
+    B: StudioBridge + Clone = PluginBridge,
+    L: Linter + Clone = SeleneLinter,
+    F: Formatter + Clone = StyLuaFormatter,
+    R: RojoRunner + Clone = DefaultRojoRunner,
+    W: WallyRunner + Clone = DefaultWallyRunner,
+    M: MoonwaveRunner + Clone = DefaultMoonwaveRunner,
+> {
     tool_router: ToolRouter<Self>,
     bridge: Arc<B>,
     project_root: PathBuf,
@@ -86,10 +107,27 @@ pub struct RobloxMcpServer<B: StudioBridge + Clone = PluginBridge, L: Linter + C
     metrics: Arc<ServerMetrics>,
     /// Linter for Luau script analysis
     linter: L,
+    /// Formatter for Luau code formatting
+    formatter: F,
+    /// Rojo runner for project builds
+    rojo: R,
+    /// Wally runner for package management
+    wally: W,
+    /// Moonwave runner for documentation generation
+    moonwave: M,
 }
 
-/// Production constructor for RobloxMcpServer with PluginBridge and SeleneLinter
-impl RobloxMcpServer<PluginBridge, SeleneLinter> {
+/// Production constructor for RobloxMcpServer with all default implementations
+impl
+    RobloxMcpServer<
+        PluginBridge,
+        SeleneLinter,
+        StyLuaFormatter,
+        DefaultRojoRunner,
+        DefaultWallyRunner,
+        DefaultMoonwaveRunner,
+    >
+{
     pub fn new(bridge: Arc<PluginBridge>, project_root: PathBuf) -> Self {
         // Initialize cloud client with explicit logging on failure
         // Cloud tools will check availability and return clear error to users
@@ -121,8 +159,12 @@ impl RobloxMcpServer<PluginBridge, SeleneLinter> {
         // Always create metrics
         let metrics = Arc::new(ServerMetrics::new());
 
-        // Initialize Selene linter
+        // Initialize toolchain components
         let linter = SeleneLinter::new();
+        let formatter = StyLuaFormatter::new();
+        let rojo = DefaultRojoRunner::new();
+        let wally = DefaultWallyRunner::new();
+        let moonwave = DefaultMoonwaveRunner::new();
 
         Self {
             tool_router: Self::tool_router(),
@@ -132,16 +174,29 @@ impl RobloxMcpServer<PluginBridge, SeleneLinter> {
             file_watcher,
             metrics,
             linter,
+            formatter,
+            rojo,
+            wally,
+            moonwave,
         }
     }
 }
 
-/// Generic implementation for any StudioBridge with SeleneLinter default
-impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B, SeleneLinter> {
-    /// Create a test server with a mock bridge (uses SeleneLinter by default)
+/// Generic implementation for any StudioBridge with default toolchain implementations
+impl<B: StudioBridge + Clone + 'static>
+    RobloxMcpServer<
+        B,
+        SeleneLinter,
+        StyLuaFormatter,
+        DefaultRojoRunner,
+        DefaultWallyRunner,
+        DefaultMoonwaveRunner,
+    >
+{
+    /// Create a test server with a mock bridge (uses default toolchain implementations)
     ///
     /// This constructor is used for testing to inject mock bridge dependencies
-    /// while using the production SeleneLinter.
+    /// while using production toolchain implementations.
     #[cfg(test)]
     pub fn with_mock_bridge(bridge: Arc<B>, project_root: PathBuf) -> Self {
         Self {
@@ -152,15 +207,29 @@ impl<B: StudioBridge + Clone + 'static> RobloxMcpServer<B, SeleneLinter> {
             file_watcher: None,
             metrics: Arc::new(ServerMetrics::new()),
             linter: SeleneLinter::new(),
+            formatter: StyLuaFormatter::new(),
+            rojo: DefaultRojoRunner::new(),
+            wally: DefaultWallyRunner::new(),
+            moonwave: DefaultMoonwaveRunner::new(),
         }
     }
 }
 
-/// Generic implementation for any StudioBridge and Linter
-impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpServer<B, L> {
+/// Generic implementation for any StudioBridge and Linter with default toolchain implementations
+impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static>
+    RobloxMcpServer<
+        B,
+        L,
+        StyLuaFormatter,
+        DefaultRojoRunner,
+        DefaultWallyRunner,
+        DefaultMoonwaveRunner,
+    >
+{
     /// Create a test server with a mock bridge and custom linter
     ///
     /// This constructor is used for testing to inject both bridge and linter dependencies.
+    /// Uses default toolchain implementations.
     #[cfg(test)]
     pub fn with_mock_bridge_and_linter(bridge: Arc<B>, project_root: PathBuf, linter: L) -> Self {
         Self {
@@ -171,10 +240,16 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
             file_watcher: None,
             metrics: Arc::new(ServerMetrics::new()),
             linter,
+            formatter: StyLuaFormatter::new(),
+            rojo: DefaultRojoRunner::new(),
+            wally: DefaultWallyRunner::new(),
+            moonwave: DefaultMoonwaveRunner::new(),
         }
     }
 
     /// Create a test server with mock bridge, cloud client, and linter
+    ///
+    /// Uses default toolchain implementations.
     #[cfg(test)]
     #[allow(dead_code)]
     pub fn with_mocks(
@@ -182,7 +257,7 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         project_root: PathBuf,
         cloud_client: Option<Arc<dyn CloudClient>>,
         linter: L,
-    ) -> RobloxMcpServer<B, L> {
+    ) -> Self {
         Self {
             tool_router: Self::tool_router(),
             bridge,
@@ -191,9 +266,24 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
             file_watcher: None,
             metrics: Arc::new(ServerMetrics::new()),
             linter,
+            formatter: StyLuaFormatter::new(),
+            rojo: DefaultRojoRunner::new(),
+            wally: DefaultWallyRunner::new(),
+            moonwave: DefaultMoonwaveRunner::new(),
         }
     }
+}
 
+/// Generic implementation for all variants - shared utility methods
+impl<
+        B: StudioBridge + Clone + 'static,
+        L: Linter + Clone + 'static,
+        F: Formatter + Clone + 'static,
+        R: RojoRunner + Clone + 'static,
+        W: WallyRunner + Clone + 'static,
+        M: MoonwaveRunner + Clone + 'static,
+    > RobloxMcpServer<B, L, F, R, W, M>
+{
     /// Set shared metrics for cross-component tracking (e.g., late plugin results)
     ///
     /// When metrics are shared between RobloxMcpServer and PluginBridge,
@@ -231,7 +321,15 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
 }
 
 #[tool_router]
-impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpServer<B, L> {
+impl<
+        B: StudioBridge + Clone + 'static,
+        L: Linter + Clone + 'static,
+        F: Formatter + Clone + 'static,
+        R: RojoRunner + Clone + 'static,
+        W: WallyRunner + Clone + 'static,
+        M: MoonwaveRunner + Clone + 'static,
+    > RobloxMcpServer<B, L, F, R, W, M>
+{
     // === FILESYSTEM TOOLS (7) ===
 
     #[tool(
@@ -1676,6 +1774,254 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
+    // === TOOLCHAIN TOOLS (6) ===
+    // External toolchain integration for StyLua, Rojo, Wally, Moonwave and other Luau development tools.
+    // These tools require the corresponding binaries to be installed (cargo install stylua, aftman install rojo-rbx/rojo, etc).
+
+    #[tool(
+        description = "Format a Luau script using StyLua. Requires 'stylua' to be installed (cargo install stylua)."
+    )]
+    async fn stylua_format(
+        &self,
+        Parameters(params): Parameters<StyluaFormatParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("stylua_format");
+        let result = self.stylua_format_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn stylua_format_impl(
+        &self,
+        params: StyluaFormatParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        use std::path::Path;
+
+        let file_path = Path::new(&params.file_path);
+
+        // Validate path is within project root
+        let validated_path = validate_path(file_path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Validate .luau extension
+        if validated_path.extension().is_none_or(|ext| ext != "luau") {
+            return Err(ErrorData::invalid_params(
+                "Only .luau files can be formatted",
+                None,
+            ));
+        }
+
+        // Parse config path
+        let config_path = params.config_path.as_ref().map(Path::new);
+
+        // Default check_only to false
+        let check_only = params.check_only.unwrap_or(false);
+
+        // Run the formatter
+        let result = self
+            .formatter
+            .format(&validated_path, config_path, check_only)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Build a Roblox project using Rojo. Requires 'rojo' to be installed. Generates .rbxl/.rbxlx or .rbxm/.rbxmx output files."
+    )]
+    async fn rojo_build(
+        &self,
+        Parameters(params): Parameters<RojoBuildParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("rojo_build");
+        let result = self.rojo_build_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn rojo_build_impl(&self, params: RojoBuildParams) -> Result<CallToolResult, ErrorData> {
+        use std::path::Path;
+
+        let project_path = Path::new(&params.project_path);
+        let output_path = Path::new(&params.output_path);
+
+        // Validate project path is within project root
+        let validated_project = validate_path(project_path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Validate output path is within project root
+        let validated_output = validate_path(output_path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Run rojo build
+        let result = self
+            .rojo
+            .build(&validated_project, &validated_output)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Generate a Rojo sourcemap for a project. Requires 'rojo' to be installed. Returns JSON mapping between Roblox instances and filesystem locations."
+    )]
+    async fn rojo_sourcemap(
+        &self,
+        Parameters(params): Parameters<RojoSourcemapParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("rojo_sourcemap");
+        let result = self.rojo_sourcemap_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn rojo_sourcemap_impl(
+        &self,
+        params: RojoSourcemapParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        use std::path::Path;
+
+        let project_path = Path::new(&params.project_path);
+
+        // Validate project path is within project root
+        let validated_project = validate_path(project_path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Parse optional output path
+        let output_path = params.output_path.as_ref().map(|p| Path::new(p).to_path_buf());
+
+        // Run rojo sourcemap
+        let result = self
+            .rojo
+            .sourcemap(&validated_project, output_path.as_deref())
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Install packages from wally.toml. Requires 'wally' to be installed (aftman install UpliftGames/wally)."
+    )]
+    async fn wally_install(
+        &self,
+        Parameters(params): Parameters<WallyInstallParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("wally_install");
+        let result = self.wally_install_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn wally_install_impl(
+        &self,
+        params: WallyInstallParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        use std::path::Path;
+
+        let project_path = Path::new(&params.project_path);
+
+        // Validate project path is within project root
+        let validated_project = validate_path(project_path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Run wally install
+        let result = self
+            .wally
+            .install(&validated_project)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Update packages to latest compatible versions. Requires 'wally' to be installed (aftman install UpliftGames/wally)."
+    )]
+    async fn wally_update(
+        &self,
+        Parameters(params): Parameters<WallyUpdateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("wally_update");
+        let result = self.wally_update_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn wally_update_impl(
+        &self,
+        params: WallyUpdateParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        use std::path::Path;
+
+        let project_path = Path::new(&params.project_path);
+
+        // Validate project path is within project root
+        let validated_project = validate_path(project_path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Run wally update
+        let result = self
+            .wally
+            .update(&validated_project)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Build Moonwave documentation from source files. Requires 'moonwave' to be installed (npm install -g moonwave)."
+    )]
+    async fn moonwave_build(
+        &self,
+        Parameters(params): Parameters<MoonwaveBuildParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("moonwave_build");
+        let result = self.moonwave_build_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn moonwave_build_impl(
+        &self,
+        params: MoonwaveBuildParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        use std::path::Path;
+
+        let project_path = Path::new(&params.project_path);
+
+        // Validate project path is within project root
+        let validated_project = validate_path(project_path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Parse optional output directory
+        let output_dir = params.output_dir.as_ref().map(Path::new);
+
+        // Run moonwave build
+        let result = self
+            .moonwave
+            .build(&validated_project, output_dir)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
     // === METRICS TOOLS (1) ===
     // These tools provide server monitoring and health information.
 
@@ -1695,8 +2041,14 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
 }
 
 #[tool_handler]
-impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> ServerHandler
-    for RobloxMcpServer<B, L>
+impl<
+        B: StudioBridge + Clone + 'static,
+        L: Linter + Clone + 'static,
+        F: Formatter + Clone + 'static,
+        R: RojoRunner + Clone + 'static,
+        W: WallyRunner + Clone + 'static,
+        M: MoonwaveRunner + Clone + 'static,
+    > ServerHandler for RobloxMcpServer<B, L, F, R, W, M>
 {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {

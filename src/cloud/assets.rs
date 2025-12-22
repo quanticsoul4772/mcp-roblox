@@ -84,6 +84,7 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
             tokio::fs::read(file_path)
                 .await
                 .map_err(|e| RobloxMcpError::FileSystemError {
+                    operation: "read".to_string(),
                     path: file_path.display().to_string(),
                     source: e,
                 })?;

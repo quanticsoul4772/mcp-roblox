@@ -303,6 +303,60 @@ pub struct FsLintScriptParams {
     pub config_path: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StyluaFormatParams {
+    #[schemars(description = "Path to .luau file to format")]
+    pub file_path: String,
+    #[schemars(description = "Path to stylua.toml configuration file (optional)")]
+    pub config_path: Option<String>,
+    #[schemars(
+        description = "Check only mode - don't modify file, just report if changes needed (default: false)"
+    )]
+    pub check_only: Option<bool>,
+}
+
+// === ROJO PARAMS ===
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RojoBuildParams {
+    #[schemars(description = "Path to project directory or *.project.json file")]
+    pub project_path: String,
+    #[schemars(description = "Output path for the built .rbxl/.rbxlx file")]
+    pub output_path: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RojoSourcemapParams {
+    #[schemars(description = "Path to project directory or *.project.json file")]
+    pub project_path: String,
+    #[schemars(description = "Output path for the sourcemap JSON file (optional)")]
+    pub output_path: Option<String>,
+}
+
+// === WALLY PARAMS ===
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WallyInstallParams {
+    #[schemars(description = "Path to project directory containing wally.toml")]
+    pub project_path: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WallyUpdateParams {
+    #[schemars(description = "Path to project directory containing wally.toml")]
+    pub project_path: String,
+}
+
+// === MOONWAVE PARAMS ===
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MoonwaveBuildParams {
+    #[schemars(description = "Path to project directory containing moonwave.toml")]
+    pub project_path: String,
+    #[schemars(description = "Output directory for generated documentation (optional)")]
+    pub output_dir: Option<String>,
+}
+
 // === WATCHER PARAMS ===
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -577,6 +631,84 @@ mod tests {
         let params: FsLintScriptParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.file_path, "test.luau");
         assert!(params.config_path.is_none());
+    }
+
+    #[test]
+    fn test_stylua_format_params_full() {
+        let json = r#"{"file_path": "src/main.luau", "config_path": "stylua.toml", "check_only": true}"#;
+        let params: StyluaFormatParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.file_path, "src/main.luau");
+        assert_eq!(params.config_path, Some("stylua.toml".to_string()));
+        assert_eq!(params.check_only, Some(true));
+    }
+
+    #[test]
+    fn test_stylua_format_params_minimal() {
+        let json = r#"{"file_path": "test.luau"}"#;
+        let params: StyluaFormatParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.file_path, "test.luau");
+        assert!(params.config_path.is_none());
+        assert!(params.check_only.is_none());
+    }
+
+    // === ROJO PARAMS TESTS ===
+
+    #[test]
+    fn test_rojo_build_params() {
+        let json = r#"{"project_path": "default.project.json", "output_path": "build/game.rbxl"}"#;
+        let params: RojoBuildParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.project_path, "default.project.json");
+        assert_eq!(params.output_path, "build/game.rbxl");
+    }
+
+    #[test]
+    fn test_rojo_sourcemap_params_full() {
+        let json = r#"{"project_path": "default.project.json", "output_path": "sourcemap.json"}"#;
+        let params: RojoSourcemapParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.project_path, "default.project.json");
+        assert_eq!(params.output_path, Some("sourcemap.json".to_string()));
+    }
+
+    #[test]
+    fn test_rojo_sourcemap_params_minimal() {
+        let json = r#"{"project_path": "default.project.json"}"#;
+        let params: RojoSourcemapParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.project_path, "default.project.json");
+        assert!(params.output_path.is_none());
+    }
+
+    // === WALLY PARAMS TESTS ===
+
+    #[test]
+    fn test_wally_install_params_deserialize() {
+        let json = r#"{"project_path": "/my/project"}"#;
+        let params: WallyInstallParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.project_path, "/my/project");
+    }
+
+    #[test]
+    fn test_wally_update_params_deserialize() {
+        let json = r#"{"project_path": "/my/project"}"#;
+        let params: WallyUpdateParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.project_path, "/my/project");
+    }
+
+    // === MOONWAVE PARAMS TESTS ===
+
+    #[test]
+    fn test_moonwave_build_params_full() {
+        let json = r#"{"project_path": "/my/project", "output_dir": "/docs/output"}"#;
+        let params: MoonwaveBuildParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.project_path, "/my/project");
+        assert_eq!(params.output_dir, Some("/docs/output".to_string()));
+    }
+
+    #[test]
+    fn test_moonwave_build_params_minimal() {
+        let json = r#"{"project_path": "/my/project"}"#;
+        let params: MoonwaveBuildParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.project_path, "/my/project");
+        assert!(params.output_dir.is_none());
     }
 
     // === WATCHER PARAMS TESTS ===

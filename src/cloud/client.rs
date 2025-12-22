@@ -111,6 +111,7 @@ impl<H: HttpClient> OpenCloudClient<H> {
             tokio::fs::read(rbxl_path)
                 .await
                 .map_err(|e| RobloxMcpError::FileSystemError {
+                    operation: "read".to_string(),
                     path: rbxl_path.display().to_string(),
                     source: e,
                 })?;

@@ -19,12 +19,19 @@ pub enum RobloxMcpError {
     #[error("Invalid Studio response: {0}")]
     InvalidStudioData(String),
 
-    #[error("File operation failed on '{path}': {source}")]
+    #[error("File operation '{operation}' failed on '{path}': {source}")]
     FileSystemError {
+        operation: String,
         path: String,
         #[source]
         source: std::io::Error,
     },
+
+    #[error("Tool '{tool}' not installed. {install_hint}")]
+    ToolNotInstalled { tool: String, install_hint: String },
+
+    #[error("Tool '{tool}' execution failed: {message}")]
+    ToolExecutionError { tool: String, message: String },
 
     // HTTP errors differentiated by category for proper MCP error code mapping
     #[error("Plugin request failed (client error {status}): {message}")]
@@ -77,7 +84,13 @@ impl From<RobloxMcpError> for ErrorData {
             RobloxMcpError::HttpServerError { .. }
             | RobloxMcpError::FileSystemError { .. }
             | RobloxMcpError::SerializationError(_)
-            | RobloxMcpError::WatcherError(_) => Self::internal_error(err.to_string(), None),
+            | RobloxMcpError::WatcherError(_)
+            | RobloxMcpError::ToolExecutionError { .. } => Self::internal_error(err.to_string(), None),
+
+            // Tool not installed → Custom server error (tool dependency issue)
+            RobloxMcpError::ToolNotInstalled { .. } => {
+                ErrorData::new(ErrorCode(-32002), err.to_string(), None)
+            }
 
             // Connection/availability errors → Custom server error (-32002)
             RobloxMcpError::PluginTimeout(_)
@@ -187,12 +200,14 @@ mod tests {
     fn test_filesystem_error_display() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let err = RobloxMcpError::FileSystemError {
+            operation: "read".to_string(),
             path: "/test/script.luau".to_string(),
             source: io_err,
         };
         let msg = format!("{err}");
         assert!(msg.contains("/test/script.luau"));
-        assert!(msg.contains("File operation failed"));
+        assert!(msg.contains("File operation"));
+        assert!(msg.contains("read"));
     }
 
     #[test]
@@ -324,6 +339,7 @@ mod tests {
     fn test_filesystem_error_maps_to_internal_error() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let err = RobloxMcpError::FileSystemError {
+            operation: "read".to_string(),
             path: "/test.luau".to_string(),
             source: io_err,
         };
