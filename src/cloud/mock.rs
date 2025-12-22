@@ -25,7 +25,7 @@ use async_trait::async_trait;
 
 use super::{
     AssetType, AssetUploadResult, CloudClient, DataStoreEntry, OrderedDataStoreEntry,
-    OrderedDataStoreList, PublishResult, UniverseInfo,
+    OrderedDataStoreList, OrderedDataStoreListParams, PublishResult, UniverseInfo,
 };
 use crate::error::RobloxMcpError;
 
@@ -257,13 +257,7 @@ impl CloudClient for MockCloudClient {
 
     async fn ordered_datastore_list(
         &self,
-        _universe_id: u64,
-        _datastore_name: &str,
-        _scope: Option<&str>,
-        _max_page_size: Option<u32>,
-        _page_token: Option<&str>,
-        _order_by: Option<&str>,
-        _filter: Option<&str>,
+        _params: OrderedDataStoreListParams<'_>,
     ) -> Result<OrderedDataStoreList, RobloxMcpError> {
         self.ordered_datastore_list_responses
             .lock()

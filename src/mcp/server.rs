@@ -19,9 +19,11 @@ use tracing::warn;
 
 use crate::bridge::http::PluginBridge;
 use crate::bridge::StudioBridge;
+use crate::limits::{MAX_FILE_ENTRIES, MAX_SEARCH_RESULTS, MAX_TREE_ENTRIES};
 use crate::cloud::AssetType;
 use crate::cloud::CloudClient;
 use crate::cloud::OpenCloudClient;
+use crate::cloud::OrderedDataStoreListParams;
 use crate::mcp::instrumentation::InstrumentedCall;
 use crate::mcp::params::{
     // Cloud params
@@ -378,12 +380,27 @@ impl<
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         // Return both tree AND skipped entries so caller knows what was excluded
-        let json = serde_json::to_string_pretty(&json!({
+        let mut response = json!({
             "tree": result.tree,
             "skipped": result.skipped,
             "skipped_count": result.skipped.len()
-        }))
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        });
+
+        // Add truncation metadata if limit was hit
+        if result.truncated {
+            response["truncated"] = json!(true);
+            response["limit"] = json!(MAX_TREE_ENTRIES);
+            if let Some(total) = result.total_entries {
+                response["total_entries"] = json!(total);
+            }
+            response["message"] = json!(format!(
+                "Tree truncated at {} entries. Use max_depth parameter or more specific path.",
+                MAX_TREE_ENTRIES
+            ));
+        }
+
+        let json = serde_json::to_string_pretty(&response)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
@@ -580,12 +597,13 @@ impl<
         let extension = params.extension.clone();
 
         // Move entire traversal to blocking thread pool to avoid blocking async runtime
-        let (results, errors) = tokio::task::spawn_blocking(move || {
+        let (results, errors, truncated) = tokio::task::spawn_blocking(move || {
             let mut results: Vec<serde_json::Value> = Vec::new();
             let mut errors: Vec<serde_json::Value> = Vec::new();
+            let mut truncated = false;
 
             // Walk directory and search files - REPORT ALL ERRORS
-            for entry in WalkDir::new(&validated_path).into_iter() {
+            'outer: for entry in WalkDir::new(&validated_path).into_iter() {
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
@@ -637,6 +655,11 @@ impl<
 
                 for (line_num, line) in content.lines().enumerate() {
                     if regex.is_match(line) {
+                        // Check limit before adding result
+                        if results.len() >= MAX_SEARCH_RESULTS {
+                            truncated = true;
+                            break 'outer;
+                        }
                         results.push(json!({
                             "file": entry_path.display().to_string(),
                             "line": line_num + 1,
@@ -646,20 +669,30 @@ impl<
                 }
             }
 
-            (results, errors)
+            (results, errors, truncated)
         })
         .await
         .map_err(|e| ErrorData::internal_error(format!("Task join error: {e}"), None))?;
 
-        // Always include errors in response so caller knows what was skipped
+        // Build response with truncation metadata if needed
+        let mut response = json!({
+            "matches": results.len(),
+            "results": results,
+            "errors": errors,
+            "error_count": errors.len()
+        });
+
+        if truncated {
+            response["truncated"] = json!(true);
+            response["limit"] = json!(MAX_SEARCH_RESULTS);
+            response["message"] = json!(format!(
+                "Results truncated at {} matches. Refine your search pattern for more specific results.",
+                MAX_SEARCH_RESULTS
+            ));
+        }
+
         Ok(CallToolResult::success(vec![Content::text(
-            json!({
-                "matches": results.len(),
-                "results": results,
-                "errors": errors,
-                "error_count": errors.len()
-            })
-            .to_string(),
+            response.to_string(),
         )]))
     }
 
@@ -686,12 +719,19 @@ impl<
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         // Move entire traversal to blocking thread pool to avoid blocking async runtime
-        let (mtimes, errors) = tokio::task::spawn_blocking(move || {
+        let (mtimes, errors, truncated) = tokio::task::spawn_blocking(move || {
             let mut mtimes: HashMap<String, u64> = HashMap::new();
             let mut errors: Vec<serde_json::Value> = Vec::new();
+            let mut truncated = false;
 
             // Walk directory and collect mtimes - REPORT ALL ERRORS
             for entry in WalkDir::new(&validated_path).into_iter() {
+                // Check limit before processing
+                if mtimes.len() >= MAX_FILE_ENTRIES {
+                    truncated = true;
+                    break;
+                }
+
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
@@ -768,19 +808,27 @@ impl<
                 mtimes.insert(entry_path.display().to_string(), duration.as_secs());
             }
 
-            (mtimes, errors)
+            (mtimes, errors, truncated)
         })
         .await
         .map_err(|e| ErrorData::internal_error(format!("Task join error: {e}"), None))?;
 
+        // Build response with truncation metadata if needed
+        let mut response = json!({
+            "file_count": mtimes.len(),
+            "files": mtimes,
+            "errors": errors,
+            "error_count": errors.len()
+        });
+
+        if truncated {
+            response["truncated"] = json!(true);
+            response["limit"] = json!(MAX_FILE_ENTRIES);
+            response["message"] = json!(format!("File list truncated at {} entries. Consider using a more specific path.", MAX_FILE_ENTRIES));
+        }
+
         Ok(CallToolResult::success(vec![Content::text(
-            json!({
-                "file_count": mtimes.len(),
-                "files": mtimes,
-                "errors": errors,
-                "error_count": errors.len()
-            })
-            .to_string(),
+            response.to_string(),
         )]))
     }
 
@@ -1483,15 +1531,15 @@ impl<
         let client = self.cloud()?;
 
         let result = client
-            .ordered_datastore_list(
-                params.universe_id,
-                &params.datastore_name,
-                params.scope.as_deref(),
-                params.max_page_size,
-                params.page_token.as_deref(),
-                params.order_by.as_deref(),
-                params.filter.as_deref(),
-            )
+            .ordered_datastore_list(OrderedDataStoreListParams {
+                universe_id: params.universe_id,
+                datastore_name: &params.datastore_name,
+                scope: params.scope.as_deref(),
+                max_page_size: params.max_page_size,
+                page_token: params.page_token.as_deref(),
+                order_by: params.order_by.as_deref(),
+                filter: params.filter.as_deref(),
+            })
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 

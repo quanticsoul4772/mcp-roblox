@@ -31,6 +31,6 @@ pub use client::{OpenCloudClient, PublishResult};
 pub use datastores::DataStoreEntry;
 #[allow(unused_imports)]
 pub use messaging::MessagePublishResult;
-pub use ordered_datastores::{OrderedDataStoreEntry, OrderedDataStoreList};
+pub use ordered_datastores::{OrderedDataStoreEntry, OrderedDataStoreList, OrderedDataStoreListParams};
 pub use traits::CloudClient;
 pub use universes::UniverseInfo;

@@ -3,6 +3,7 @@ mod cloud;
 mod config;
 mod error;
 mod http;
+mod limits;
 mod mcp;
 mod metrics;
 mod startup;

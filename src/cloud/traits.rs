@@ -9,7 +9,7 @@ use async_trait::async_trait;
 
 use super::{
     AssetType, AssetUploadResult, DataStoreEntry, OrderedDataStoreEntry, OrderedDataStoreList,
-    PublishResult, UniverseInfo,
+    OrderedDataStoreListParams, PublishResult, UniverseInfo,
 };
 use crate::error::RobloxMcpError;
 
@@ -114,22 +114,10 @@ pub trait CloudClient: Send + Sync {
     /// List entries from an ordered datastore
     ///
     /// # Arguments
-    /// * `universe_id` - Universe ID containing the datastore
-    /// * `datastore_name` - Name of the ordered datastore
-    /// * `scope` - Scope within the datastore (default: "global")
-    /// * `max_page_size` - Maximum entries to return per page (1-100)
-    /// * `page_token` - Token for pagination
-    /// * `order_by` - Sort order: "desc" (default) or "asc"
-    /// * `filter` - Optional filter expression
+    /// * `params` - Parameters for the list operation
     async fn ordered_datastore_list(
         &self,
-        universe_id: u64,
-        datastore_name: &str,
-        scope: Option<&str>,
-        max_page_size: Option<u32>,
-        page_token: Option<&str>,
-        order_by: Option<&str>,
-        filter: Option<&str>,
+        params: OrderedDataStoreListParams<'_>,
     ) -> Result<OrderedDataStoreList, RobloxMcpError>;
 
     /// Set a value in an ordered datastore

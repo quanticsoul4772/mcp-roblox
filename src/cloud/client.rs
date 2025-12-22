@@ -12,7 +12,7 @@ use tracing::instrument;
 
 use super::{
     AssetType, AssetUploadResult, CloudClient, DataStoreEntry, OrderedDataStoreEntry,
-    OrderedDataStoreList, UniverseInfo,
+    OrderedDataStoreList, OrderedDataStoreListParams, UniverseInfo,
 };
 
 /// Result from publishing a place to Roblox
@@ -213,25 +213,9 @@ impl<H: HttpClient> CloudClient for OpenCloudClient<H> {
 
     async fn ordered_datastore_list(
         &self,
-        universe_id: u64,
-        datastore_name: &str,
-        scope: Option<&str>,
-        max_page_size: Option<u32>,
-        page_token: Option<&str>,
-        order_by: Option<&str>,
-        filter: Option<&str>,
+        params: OrderedDataStoreListParams<'_>,
     ) -> Result<OrderedDataStoreList, RobloxMcpError> {
-        OpenCloudClient::ordered_datastore_list(
-            self,
-            universe_id,
-            datastore_name,
-            scope,
-            max_page_size,
-            page_token,
-            order_by,
-            filter,
-        )
-        .await
+        OpenCloudClient::ordered_datastore_list(self, params).await
     }
 
     async fn ordered_datastore_set(

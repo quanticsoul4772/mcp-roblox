@@ -1,4 +1,5 @@
 use crate::error::RobloxMcpError;
+use crate::limits::MAX_TREE_ENTRIES;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -19,6 +20,15 @@ pub struct FileTree {
 pub struct TreeBuildResult {
     pub tree: FileTree,
     pub skipped: Vec<SkippedEntry>,
+    /// Whether the tree was truncated due to entry limit
+    #[serde(default)]
+    pub truncated: bool,
+    /// The limit that was applied (only present when truncated)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// Total entries counted (only present when truncated)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_entries: Option<usize>,
 }
 
 /// An entry that was skipped during tree building
@@ -143,8 +153,11 @@ pub fn reject_if_symlink(path: &Path) -> Result<(), RobloxMcpError> {
 /// Build a file tree synchronously (for use inside spawn_blocking)
 ///
 /// Uses iterative BFS approach to avoid recursive async overhead and blocking the async runtime.
+/// Enforces MAX_TREE_ENTRIES limit to prevent unbounded memory growth.
 pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult> {
     let mut all_skipped: Vec<SkippedEntry> = vec![];
+    let mut truncated = false;
+    let mut total_entries: usize = 1; // Start with root
 
     let root_name = root
         .file_name()
@@ -163,6 +176,9 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
                 children: None,
             },
             skipped: vec![],
+            truncated: false,
+            limit: None,
+            total_entries: None,
         });
     }
 
@@ -191,7 +207,7 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
     // Map from tree_index to list of child indices
     let mut children_map: HashMap<usize, Vec<usize>> = HashMap::new();
 
-    while let Some(pending) = queue.pop_front() {
+    'outer: while let Some(pending) = queue.pop_front() {
         if pending.depth >= max_depth {
             continue;
         }
@@ -292,6 +308,18 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
         let mut child_indices = vec![];
 
         for (child_path, is_file) in child_entries {
+            // Check entry limit BEFORE adding
+            if total_entries >= MAX_TREE_ENTRIES {
+                truncated = true;
+                all_skipped.push(SkippedEntry {
+                    path: child_path.display().to_string(),
+                    reason: format!("entry limit reached ({})", MAX_TREE_ENTRIES),
+                });
+                // Continue to skip remaining entries in this directory,
+                // then break out of the main loop
+                continue;
+            }
+
             let child_name = child_path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -315,6 +343,7 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
                 children,
             });
 
+            total_entries += 1;
             child_indices.push(child_index);
 
             // Only queue directories that haven't reached max depth
@@ -328,6 +357,11 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
         }
 
         children_map.insert(pending.tree_index, child_indices);
+
+        // If we hit the limit, stop processing the queue
+        if truncated {
+            break 'outer;
+        }
     }
 
     // Reconstruct tree by assigning children (work backwards to handle nested)
@@ -348,6 +382,9 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
     Ok(TreeBuildResult {
         tree: trees.into_iter().next().unwrap(),
         skipped: all_skipped,
+        truncated,
+        limit: if truncated { Some(MAX_TREE_ENTRIES) } else { None },
+        total_entries: if truncated { Some(total_entries) } else { None },
     })
 }
 
@@ -897,11 +934,35 @@ mod tests {
                 path: "/project/.git".to_string(),
                 reason: "hidden directory".to_string(),
             }],
+            truncated: false,
+            limit: None,
+            total_entries: None,
         };
 
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("skipped"));
         assert!(json.contains("hidden directory"));
+    }
+
+    #[test]
+    fn test_tree_build_result_truncation_serialization() {
+        let result = TreeBuildResult {
+            tree: FileTree {
+                path: "/project".to_string(),
+                name: "project".to_string(),
+                is_file: false,
+                children: Some(vec![]),
+            },
+            skipped: vec![],
+            truncated: true,
+            limit: Some(10000),
+            total_entries: Some(10000),
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"truncated\":true"));
+        assert!(json.contains("\"limit\":10000"));
+        assert!(json.contains("\"total_entries\":10000"));
     }
 
     #[test]

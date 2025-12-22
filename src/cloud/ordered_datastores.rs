@@ -8,6 +8,25 @@ use crate::error::RobloxMcpError;
 use crate::http::HttpClient;
 use serde::{Deserialize, Serialize};
 
+/// Parameters for listing ordered datastore entries
+#[derive(Debug, Clone, Default)]
+pub struct OrderedDataStoreListParams<'a> {
+    /// Universe ID containing the datastore
+    pub universe_id: u64,
+    /// Name of the ordered datastore
+    pub datastore_name: &'a str,
+    /// Scope within the datastore (default: "global")
+    pub scope: Option<&'a str>,
+    /// Maximum entries to return per page (1-100)
+    pub max_page_size: Option<u32>,
+    /// Token for pagination (from previous response)
+    pub page_token: Option<&'a str>,
+    /// Sort order: "desc" (default) or "asc"
+    pub order_by: Option<&'a str>,
+    /// Optional filter expression for value ranges
+    pub filter: Option<&'a str>,
+}
+
 /// Entry in an ordered datastore
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderedDataStoreEntry {
@@ -43,53 +62,41 @@ impl<H: HttpClient> super::OpenCloudClient<H> {
     /// commonly used to retrieve leaderboard rankings.
     ///
     /// # Arguments
-    /// * `universe_id` - Universe ID containing the datastore
-    /// * `datastore_name` - Name of the ordered datastore
-    /// * `scope` - Scope within the datastore (default: "global")
-    /// * `max_page_size` - Maximum entries to return per page (1-100)
-    /// * `page_token` - Token for pagination (from previous response)
-    /// * `order_by` - Sort order: "desc" (default) or "asc"
-    /// * `filter` - Optional filter expression for value ranges
+    /// * `params` - Parameters for the list operation
     pub async fn ordered_datastore_list(
         &self,
-        universe_id: u64,
-        datastore_name: &str,
-        scope: Option<&str>,
-        max_page_size: Option<u32>,
-        page_token: Option<&str>,
-        order_by: Option<&str>,
-        filter: Option<&str>,
+        params: OrderedDataStoreListParams<'_>,
     ) -> Result<OrderedDataStoreList, RobloxMcpError> {
-        let scope = scope.unwrap_or("global");
-        let encoded_datastore = urlencoding::encode(datastore_name);
+        let scope = params.scope.unwrap_or("global");
+        let encoded_datastore = urlencoding::encode(params.datastore_name);
         let encoded_scope = urlencoding::encode(scope);
 
         // Build URL with query parameters
         let mut url = format!(
             "{}/ordered-data-stores/v1/universes/{}/orderedDataStores/{}/scopes/{}/entries",
             self.base_url(),
-            universe_id,
+            params.universe_id,
             encoded_datastore,
             encoded_scope
         );
 
         // Add query parameters
-        let mut params = Vec::new();
-        if let Some(size) = max_page_size {
-            params.push(format!("max_page_size={}", size.min(100)));
+        let mut query_params = Vec::new();
+        if let Some(size) = params.max_page_size {
+            query_params.push(format!("max_page_size={}", size.min(100)));
         }
-        if let Some(token) = page_token {
-            params.push(format!("page_token={}", urlencoding::encode(token)));
+        if let Some(token) = params.page_token {
+            query_params.push(format!("page_token={}", urlencoding::encode(token)));
         }
-        if let Some(order) = order_by {
-            params.push(format!("order_by={}", order));
+        if let Some(order) = params.order_by {
+            query_params.push(format!("order_by={}", order));
         }
-        if let Some(f) = filter {
-            params.push(format!("filter={}", urlencoding::encode(f)));
+        if let Some(f) = params.filter {
+            query_params.push(format!("filter={}", urlencoding::encode(f)));
         }
-        if !params.is_empty() {
+        if !query_params.is_empty() {
             url.push('?');
-            url.push_str(&params.join("&"));
+            url.push_str(&query_params.join("&"));
         }
 
         let response = self
@@ -346,7 +353,12 @@ mod tests {
         let client = OpenCloudClient::with_http(mock, "test-key");
 
         let result = client
-            .ordered_datastore_list(123, "Leaderboard", None, Some(10), None, None, None)
+            .ordered_datastore_list(OrderedDataStoreListParams {
+                universe_id: 123,
+                datastore_name: "Leaderboard",
+                max_page_size: Some(10),
+                ..Default::default()
+            })
             .await;
 
         assert!(result.is_ok());
@@ -369,7 +381,13 @@ mod tests {
         let client = OpenCloudClient::with_http(mock.clone(), "test-key");
 
         let result = client
-            .ordered_datastore_list(123, "LB", None, Some(1), Some("prev_token"), None, None)
+            .ordered_datastore_list(OrderedDataStoreListParams {
+                universe_id: 123,
+                datastore_name: "LB",
+                max_page_size: Some(1),
+                page_token: Some("prev_token"),
+                ..Default::default()
+            })
             .await;
 
         assert!(result.is_ok());
@@ -461,15 +479,12 @@ mod tests {
         let client = OpenCloudClient::with_http(mock.clone(), "test-key");
 
         client
-            .ordered_datastore_list(
-                123,
-                "My Leaderboard",
-                Some("custom scope"),
-                None,
-                None,
-                None,
-                None,
-            )
+            .ordered_datastore_list(OrderedDataStoreListParams {
+                universe_id: 123,
+                datastore_name: "My Leaderboard",
+                scope: Some("custom scope"),
+                ..Default::default()
+            })
             .await
             .unwrap();
 
