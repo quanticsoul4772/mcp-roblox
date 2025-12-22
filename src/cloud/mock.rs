@@ -23,7 +23,10 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 
-use super::{AssetType, AssetUploadResult, CloudClient, DataStoreEntry, PublishResult};
+use super::{
+    AssetType, AssetUploadResult, CloudClient, DataStoreEntry, OrderedDataStoreEntry,
+    OrderedDataStoreList, PublishResult, UniverseInfo,
+};
 use crate::error::RobloxMcpError;
 
 /// Mock cloud client with queue-based responses for testing
@@ -38,6 +41,14 @@ pub struct MockCloudClient {
     datastore_set_responses: Mutex<VecDeque<Result<DataStoreEntry, RobloxMcpError>>>,
     messaging_publish_responses: Mutex<VecDeque<Result<(), RobloxMcpError>>>,
     upload_asset_responses: Mutex<VecDeque<Result<AssetUploadResult, RobloxMcpError>>>,
+    // Phase 1: OrderedDataStore and Universe APIs
+    ordered_datastore_list_responses: Mutex<VecDeque<Result<OrderedDataStoreList, RobloxMcpError>>>,
+    ordered_datastore_set_responses: Mutex<VecDeque<Result<OrderedDataStoreEntry, RobloxMcpError>>>,
+    ordered_datastore_increment_responses:
+        Mutex<VecDeque<Result<OrderedDataStoreEntry, RobloxMcpError>>>,
+    ordered_datastore_delete_responses: Mutex<VecDeque<Result<(), RobloxMcpError>>>,
+    get_universe_responses: Mutex<VecDeque<Result<UniverseInfo, RobloxMcpError>>>,
+    restart_universe_servers_responses: Mutex<VecDeque<Result<(), RobloxMcpError>>>,
 }
 
 impl MockCloudClient {
@@ -81,6 +92,67 @@ impl MockCloudClient {
     /// Queue a response for the next `upload_asset` call
     pub fn queue_upload_asset(&self, response: Result<AssetUploadResult, RobloxMcpError>) {
         self.upload_asset_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    // ========================================================================
+    // Phase 1: OrderedDataStore and Universe queue methods
+    // ========================================================================
+
+    /// Queue a response for the next `ordered_datastore_list` call
+    pub fn queue_ordered_datastore_list(
+        &self,
+        response: Result<OrderedDataStoreList, RobloxMcpError>,
+    ) {
+        self.ordered_datastore_list_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    /// Queue a response for the next `ordered_datastore_set` call
+    pub fn queue_ordered_datastore_set(
+        &self,
+        response: Result<OrderedDataStoreEntry, RobloxMcpError>,
+    ) {
+        self.ordered_datastore_set_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    /// Queue a response for the next `ordered_datastore_increment` call
+    pub fn queue_ordered_datastore_increment(
+        &self,
+        response: Result<OrderedDataStoreEntry, RobloxMcpError>,
+    ) {
+        self.ordered_datastore_increment_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    /// Queue a response for the next `ordered_datastore_delete` call
+    pub fn queue_ordered_datastore_delete(&self, response: Result<(), RobloxMcpError>) {
+        self.ordered_datastore_delete_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    /// Queue a response for the next `get_universe` call
+    pub fn queue_get_universe(&self, response: Result<UniverseInfo, RobloxMcpError>) {
+        self.get_universe_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    /// Queue a response for the next `restart_universe_servers` call
+    pub fn queue_restart_universe_servers(&self, response: Result<(), RobloxMcpError>) {
+        self.restart_universe_servers_responses
             .lock()
             .unwrap()
             .push_back(response);
@@ -175,6 +247,111 @@ impl CloudClient for MockCloudClient {
             .unwrap_or_else(|| {
                 Err(RobloxMcpError::InvalidStudioData(
                     "MockCloudClient: No response queued for upload_asset".into(),
+                ))
+            })
+    }
+
+    // ========================================================================
+    // Phase 1: OrderedDataStore and Universe trait implementations
+    // ========================================================================
+
+    async fn ordered_datastore_list(
+        &self,
+        _universe_id: u64,
+        _datastore_name: &str,
+        _scope: Option<&str>,
+        _max_page_size: Option<u32>,
+        _page_token: Option<&str>,
+        _order_by: Option<&str>,
+        _filter: Option<&str>,
+    ) -> Result<OrderedDataStoreList, RobloxMcpError> {
+        self.ordered_datastore_list_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                Err(RobloxMcpError::InvalidStudioData(
+                    "MockCloudClient: No response queued for ordered_datastore_list".into(),
+                ))
+            })
+    }
+
+    async fn ordered_datastore_set(
+        &self,
+        _universe_id: u64,
+        _datastore_name: &str,
+        _scope: Option<&str>,
+        _entry_id: &str,
+        _value: i64,
+    ) -> Result<OrderedDataStoreEntry, RobloxMcpError> {
+        self.ordered_datastore_set_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                Err(RobloxMcpError::InvalidStudioData(
+                    "MockCloudClient: No response queued for ordered_datastore_set".into(),
+                ))
+            })
+    }
+
+    async fn ordered_datastore_increment(
+        &self,
+        _universe_id: u64,
+        _datastore_name: &str,
+        _scope: Option<&str>,
+        _entry_id: &str,
+        _increment: i64,
+    ) -> Result<OrderedDataStoreEntry, RobloxMcpError> {
+        self.ordered_datastore_increment_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                Err(RobloxMcpError::InvalidStudioData(
+                    "MockCloudClient: No response queued for ordered_datastore_increment".into(),
+                ))
+            })
+    }
+
+    async fn ordered_datastore_delete(
+        &self,
+        _universe_id: u64,
+        _datastore_name: &str,
+        _scope: Option<&str>,
+        _entry_id: &str,
+    ) -> Result<(), RobloxMcpError> {
+        self.ordered_datastore_delete_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                Err(RobloxMcpError::InvalidStudioData(
+                    "MockCloudClient: No response queued for ordered_datastore_delete".into(),
+                ))
+            })
+    }
+
+    async fn get_universe(&self, _universe_id: u64) -> Result<UniverseInfo, RobloxMcpError> {
+        self.get_universe_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                Err(RobloxMcpError::InvalidStudioData(
+                    "MockCloudClient: No response queued for get_universe".into(),
+                ))
+            })
+    }
+
+    async fn restart_universe_servers(&self, _universe_id: u64) -> Result<(), RobloxMcpError> {
+        self.restart_universe_servers_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                Err(RobloxMcpError::InvalidStudioData(
+                    "MockCloudClient: No response queued for restart_universe_servers".into(),
                 ))
             })
     }

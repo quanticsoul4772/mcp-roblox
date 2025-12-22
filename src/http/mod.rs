@@ -139,6 +139,13 @@ pub trait HttpClient: Send + Sync + 'static {
         headers: &[(&str, &str)],
         form: MultipartForm,
     ) -> Result<HttpResponse, RobloxMcpError>;
+
+    /// Perform a DELETE request
+    async fn delete(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<HttpResponse, RobloxMcpError>;
 }
 
 #[cfg(test)]

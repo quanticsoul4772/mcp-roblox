@@ -162,6 +162,21 @@ impl HttpClient for ReqwestHttpClient {
 
         Self::convert_response(response).await
     }
+
+    async fn delete(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<HttpResponse, RobloxMcpError> {
+        let mut req = self.client.delete(url);
+
+        for (name, value) in headers {
+            req = req.header(*name, *value);
+        }
+
+        let response = req.send().await.map_err(RobloxMcpError::from_reqwest)?;
+        Self::convert_response(response).await
+    }
 }
 
 #[cfg(test)]
@@ -584,6 +599,70 @@ mod tests {
         assert_eq!(parsed["name"], "test");
         assert_eq!(parsed["count"], 42);
         assert_eq!(parsed["active"], true);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_success() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("DELETE", "/api/resource/123")
+            .with_status(204)
+            .with_body("")
+            .create_async()
+            .await;
+
+        let client = ReqwestHttpClient::new().unwrap();
+        let response = client
+            .delete(&format!("{}/api/resource/123", server.url()), &[])
+            .await
+            .unwrap();
+
+        assert_eq!(response.status, 204);
+        assert!(response.is_success());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_with_headers() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("DELETE", "/api/item")
+            .match_header("x-api-key", "secret123")
+            .with_status(200)
+            .with_body("deleted")
+            .create_async()
+            .await;
+
+        let client = ReqwestHttpClient::new().unwrap();
+        let headers = [("x-api-key", "secret123")];
+        let response = client
+            .delete(&format!("{}/api/item", server.url()), &headers)
+            .await
+            .unwrap();
+
+        assert_eq!(response.status, 200);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_not_found() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("DELETE", "/api/missing")
+            .with_status(404)
+            .with_body("not found")
+            .create_async()
+            .await;
+
+        let client = ReqwestHttpClient::new().unwrap();
+        let response = client
+            .delete(&format!("{}/api/missing", server.url()), &[])
+            .await
+            .unwrap();
+
+        assert_eq!(response.status, 404);
+        assert!(!response.is_success());
         mock.assert_async().await;
     }
 }

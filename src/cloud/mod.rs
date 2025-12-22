@@ -4,7 +4,9 @@
 //! - Publish places to Roblox
 //! - Upload assets (images, models, audio)
 //! - Manage DataStores
+//! - Manage OrderedDataStores (leaderboards)
 //! - Publish messages via MessagingService
+//! - Manage Universes (game metadata, server restart)
 //!
 //! # Architecture
 //!
@@ -16,7 +18,9 @@ mod assets;
 mod client;
 mod datastores;
 mod messaging;
+mod ordered_datastores;
 mod traits;
+mod universes;
 
 #[cfg(test)]
 pub mod mock;
@@ -27,4 +31,6 @@ pub use client::{OpenCloudClient, PublishResult};
 pub use datastores::DataStoreEntry;
 #[allow(unused_imports)]
 pub use messaging::MessagePublishResult;
+pub use ordered_datastores::{OrderedDataStoreEntry, OrderedDataStoreList};
 pub use traits::CloudClient;
+pub use universes::UniverseInfo;

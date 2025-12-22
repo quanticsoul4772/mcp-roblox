@@ -27,8 +27,14 @@ use crate::mcp::params::{
     // Cloud params
     CloudDatastoreGetParams,
     CloudDatastoreSetParams,
+    CloudGetUniverseParams,
     CloudMessagingPublishParams,
+    CloudOrderedDatastoreDeleteParams,
+    CloudOrderedDatastoreIncrementParams,
+    CloudOrderedDatastoreListParams,
+    CloudOrderedDatastoreSetParams,
     CloudPublishPlaceParams,
+    CloudRestartServersParams,
     CloudUploadAssetParams,
     // Filesystem params
     FsDeleteScriptParams,
@@ -1353,6 +1359,283 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static> RobloxMcpSe
         )]))
     }
 
+    // === PHASE 1: ORDERED DATASTORE TOOLS (4) ===
+    // OrderedDataStores are used for leaderboards and ranking systems.
+
+    #[tool(
+        description = "List entries from an OrderedDataStore via Open Cloud API. Returns entries sorted by value, commonly used for leaderboards. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
+    async fn cloud_ordered_datastore_list(
+        &self,
+        Parameters(params): Parameters<CloudOrderedDatastoreListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_ordered_datastore_list");
+        let result = self.cloud_ordered_datastore_list_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_ordered_datastore_list_impl(
+        &self,
+        params: CloudOrderedDatastoreListParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        let result = client
+            .ordered_datastore_list(
+                params.universe_id,
+                &params.datastore_name,
+                params.scope.as_deref(),
+                params.max_page_size,
+                params.page_token.as_deref(),
+                params.order_by.as_deref(),
+                params.filter.as_deref(),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "entries": result.entries,
+                "next_page_token": result.next_page_token
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Set a value in an OrderedDataStore via Open Cloud API. Creates or updates an entry with the specified key and numerical value. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
+    async fn cloud_ordered_datastore_set(
+        &self,
+        Parameters(params): Parameters<CloudOrderedDatastoreSetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_ordered_datastore_set");
+        let result = self.cloud_ordered_datastore_set_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_ordered_datastore_set_impl(
+        &self,
+        params: CloudOrderedDatastoreSetParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        let result = client
+            .ordered_datastore_set(
+                params.universe_id,
+                &params.datastore_name,
+                params.scope.as_deref(),
+                &params.entry_id,
+                params.value,
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "path": result.path,
+                "id": result.id,
+                "value": result.value
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Atomically increment a value in an OrderedDataStore via Open Cloud API. Creates the entry if it doesn't exist. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
+    async fn cloud_ordered_datastore_increment(
+        &self,
+        Parameters(params): Parameters<CloudOrderedDatastoreIncrementParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_ordered_datastore_increment");
+        let result = self.cloud_ordered_datastore_increment_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_ordered_datastore_increment_impl(
+        &self,
+        params: CloudOrderedDatastoreIncrementParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        let result = client
+            .ordered_datastore_increment(
+                params.universe_id,
+                &params.datastore_name,
+                params.scope.as_deref(),
+                &params.entry_id,
+                params.increment,
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "path": result.path,
+                "id": result.id,
+                "value": result.value
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Delete an entry from an OrderedDataStore via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
+    async fn cloud_ordered_datastore_delete(
+        &self,
+        Parameters(params): Parameters<CloudOrderedDatastoreDeleteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_ordered_datastore_delete");
+        let result = self.cloud_ordered_datastore_delete_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_ordered_datastore_delete_impl(
+        &self,
+        params: CloudOrderedDatastoreDeleteParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        client
+            .ordered_datastore_delete(
+                params.universe_id,
+                &params.datastore_name,
+                params.scope.as_deref(),
+                &params.entry_id,
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "success": true,
+                "deleted_entry_id": params.entry_id
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    // === PHASE 1: UNIVERSE TOOLS (2) ===
+    // Universe API tools for game metadata and server management.
+
+    #[tool(
+        description = "Get information about a Roblox universe (game) via Open Cloud API. Returns metadata including name, description, ownership, and platform support. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
+    async fn cloud_get_universe(
+        &self,
+        Parameters(params): Parameters<CloudGetUniverseParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_get_universe");
+        let result = self.cloud_get_universe_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_get_universe_impl(
+        &self,
+        params: CloudGetUniverseParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        let info = client
+            .get_universe(params.universe_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "path": info.path,
+                "display_name": info.display_name,
+                "description": info.description,
+                "create_time": info.create_time,
+                "update_time": info.update_time,
+                "visibility": info.visibility,
+                "user": info.user,
+                "group": info.group,
+                "voice_chat_enabled": info.voice_chat_enabled,
+                "age_rating": info.age_rating,
+                "platforms": {
+                    "desktop": info.desktop_enabled,
+                    "mobile": info.mobile_enabled,
+                    "tablet": info.tablet_enabled,
+                    "vr": info.vr_enabled,
+                    "console": info.console_enabled
+                }
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Restart all game servers for a Roblox universe via Open Cloud API. Triggers a graceful restart - players will be disconnected and can rejoin. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
+    )]
+    async fn cloud_restart_servers(
+        &self,
+        Parameters(params): Parameters<CloudRestartServersParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("cloud_restart_servers");
+        let result = self.cloud_restart_servers_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn cloud_restart_servers_impl(
+        &self,
+        params: CloudRestartServersParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let client = self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })?;
+
+        client
+            .restart_universe_servers(params.universe_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "success": true,
+                "universe_id": params.universe_id,
+                "message": "Server restart initiated. All servers will gracefully restart."
+            }))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
     // === WATCHER TOOLS (1) ===
     // These tools provide real-time file change detection.
 
@@ -2489,9 +2772,159 @@ mod tests {
     }
 
     // === CLOUD TOOL TESTS ===
-    // Note: Cloud client is not injectable into RobloxMcpServer, so we test
-    // the error path when cloud is not configured. The actual cloud operations
-    // are thoroughly tested in the cloud/ module with MockHttpClient.
+    // Tests for cloud tool success and error paths using MockCloudClient
+
+    use crate::cloud::mock::MockCloudClient;
+    use crate::cloud::{AssetUploadResult, DataStoreEntry, DataStoreSetResult, PublishResult};
+
+    fn create_server_with_mock_cloud(
+        project_root: PathBuf,
+        mock_cloud: Arc<MockCloudClient>,
+    ) -> RobloxMcpServer<MockBridge, SeleneLinter> {
+        let mock_bridge = Arc::new(MockBridge::new());
+        RobloxMcpServer::with_mock_bridge(mock_bridge, project_root)
+            .with_cloud_client(mock_cloud as Arc<dyn crate::cloud::CloudClient>)
+    }
+
+    #[tokio::test]
+    async fn test_cloud_publish_place_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let rbxl_path = project_root.join("game.rbxl");
+        std::fs::write(&rbxl_path, b"fake rbxl content").unwrap();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_publish_place(Ok(PublishResult { version_number: 42 }));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudPublishPlaceParams {
+            universe_id: 123456,
+            place_id: 789012,
+            rbxl_path: rbxl_path.display().to_string(),
+        };
+
+        let result = server.cloud_publish_place(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_publish_place should succeed: {:?}", result);
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            assert!(text_content.text.contains("42"), "Should contain version: {}", text_content.text);
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cloud_datastore_get_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_get_entry(Ok(DataStoreEntry {
+            value: serde_json::json!({"coins": 100, "level": 5}),
+            version: "abc123".to_string(),
+            created_time: Some("2024-01-01T00:00:00Z".to_string()),
+            updated_time: Some("2024-01-02T00:00:00Z".to_string()),
+        }));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudDatastoreGetParams {
+            universe_id: 123456,
+            datastore_name: "PlayerData".to_string(),
+            key: "user_123".to_string(),
+            scope: None,
+        };
+
+        let result = server.cloud_datastore_get(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_datastore_get should succeed: {:?}", result);
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text_content) = &*call_result.content[0] {
+            assert!(text_content.text.contains("coins"), "Should contain data: {}", text_content.text);
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cloud_datastore_set_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_set_entry(Ok(DataStoreSetResult {
+            version: "v2".to_string(),
+            created_time: Some("2024-01-01T00:00:00Z".to_string()),
+            updated_time: Some("2024-01-02T00:00:00Z".to_string()),
+        }));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudDatastoreSetParams {
+            universe_id: 123456,
+            datastore_name: "PlayerData".to_string(),
+            key: "user_123".to_string(),
+            value: serde_json::json!({"coins": 200}),
+            scope: None,
+        };
+
+        let result = server.cloud_datastore_set(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_datastore_set should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_cloud_messaging_publish_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_publish_message(Ok(()));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudMessagingPublishParams {
+            universe_id: 123456,
+            topic: "game-events".to_string(),
+            message: serde_json::json!({"event": "player_joined"}),
+        };
+
+        let result = server.cloud_messaging_publish(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_messaging_publish should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_cloud_upload_asset_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let asset_path = project_root.join("test_image.png");
+        std::fs::write(&asset_path, b"fake png content").unwrap();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_upload_asset(Ok(AssetUploadResult {
+            operation_path: "operations/op123".to_string(),
+            done: true,
+            asset_id: Some("12345".to_string()),
+        }));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudUploadAssetParams {
+            asset_type: "Decal".to_string(),
+            file_path: asset_path.display().to_string(),
+            name: "TestAsset".to_string(),
+            description: "A test asset".to_string(),
+            creator_id: 123456,
+        };
+
+        let result = server.cloud_upload_asset(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_upload_asset should succeed: {:?}", result);
+    }
+
+    // Tests for when cloud client is not configured
 
     #[tokio::test]
     async fn test_cloud_publish_place_no_client() {
@@ -3815,7 +4248,8 @@ mod tests {
             max_depth: Some(1),
         };
 
-        let result: Result<CallToolResult, ErrorData> = server.fs_get_tree(Parameters(params)).await;
+        let result: Result<CallToolResult, ErrorData> =
+            server.fs_get_tree(Parameters(params)).await;
         assert!(result.is_ok());
     }
 
@@ -3844,7 +4278,8 @@ mod tests {
             max_depth: Some(1),
         };
 
-        let result: Result<CallToolResult, ErrorData> = server.fs_get_tree(Parameters(params)).await;
+        let result: Result<CallToolResult, ErrorData> =
+            server.fs_get_tree(Parameters(params)).await;
         assert!(result.is_ok());
     }
 
@@ -3862,12 +4297,8 @@ mod tests {
         let mock_cloud = Arc::new(MockCloudClient::new());
 
         // Create server without cloud client first
-        let server: RobloxMcpServer<MockBridge, MockLinter> = RobloxMcpServer::with_mocks(
-            mock_bridge,
-            project_root.clone(),
-            None,
-            mock_linter,
-        );
+        let server: RobloxMcpServer<MockBridge, MockLinter> =
+            RobloxMcpServer::with_mocks(mock_bridge, project_root.clone(), None, mock_linter);
 
         // Then add cloud client via with_cloud_client
         let server = server.with_cloud_client(mock_cloud);
@@ -3878,7 +4309,8 @@ mod tests {
             max_depth: Some(1),
         };
 
-        let result: Result<CallToolResult, ErrorData> = server.fs_get_tree(Parameters(params)).await;
+        let result: Result<CallToolResult, ErrorData> =
+            server.fs_get_tree(Parameters(params)).await;
         assert!(result.is_ok());
     }
 
@@ -3893,12 +4325,8 @@ mod tests {
         let mock_bridge = Arc::new(MockBridge::new());
         let mock_linter = MockLinter::new();
 
-        let server: RobloxMcpServer<MockBridge, MockLinter> = RobloxMcpServer::with_mocks(
-            mock_bridge,
-            project_root.clone(),
-            None,
-            mock_linter,
-        );
+        let server: RobloxMcpServer<MockBridge, MockLinter> =
+            RobloxMcpServer::with_mocks(mock_bridge, project_root.clone(), None, mock_linter);
 
         // start_instrumentation is exercised through any tool call
         // We verify that metrics are properly recorded by calling a tool
@@ -3908,7 +4336,8 @@ mod tests {
             max_depth: Some(1),
         };
 
-        let result: Result<CallToolResult, ErrorData> = server.fs_get_tree(Parameters(params)).await;
+        let result: Result<CallToolResult, ErrorData> =
+            server.fs_get_tree(Parameters(params)).await;
         assert!(result.is_ok());
     }
 
@@ -3937,9 +4366,7 @@ mod tests {
             ]),
         };
 
-        let result = server
-            .studio_get_properties(Parameters(params))
-            .await;
+        let result = server.studio_get_properties(Parameters(params)).await;
         assert!(result.is_ok());
 
         assert!(mock.was_called("getProperties"));
@@ -3967,9 +4394,7 @@ mod tests {
             properties: None,
         };
 
-        let result = server
-            .studio_get_properties(Parameters(params))
-            .await;
+        let result = server.studio_get_properties(Parameters(params)).await;
         assert!(result.is_ok());
 
         let call = mock.last_call().unwrap();

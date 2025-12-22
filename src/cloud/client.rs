@@ -10,7 +10,10 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::instrument;
 
-use super::{AssetType, AssetUploadResult, CloudClient, DataStoreEntry};
+use super::{
+    AssetType, AssetUploadResult, CloudClient, DataStoreEntry, OrderedDataStoreEntry,
+    OrderedDataStoreList, UniverseInfo,
+};
 
 /// Result from publishing a place to Roblox
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +204,96 @@ impl<H: HttpClient> CloudClient for OpenCloudClient<H> {
     ) -> Result<AssetUploadResult, RobloxMcpError> {
         OpenCloudClient::upload_asset(self, asset_type, file_path, name, description, creator_id)
             .await
+    }
+
+    // ========================================================================
+    // Phase 1: OrderedDataStore and Universe trait implementations
+    // ========================================================================
+
+    async fn ordered_datastore_list(
+        &self,
+        universe_id: u64,
+        datastore_name: &str,
+        scope: Option<&str>,
+        max_page_size: Option<u32>,
+        page_token: Option<&str>,
+        order_by: Option<&str>,
+        filter: Option<&str>,
+    ) -> Result<OrderedDataStoreList, RobloxMcpError> {
+        OpenCloudClient::ordered_datastore_list(
+            self,
+            universe_id,
+            datastore_name,
+            scope,
+            max_page_size,
+            page_token,
+            order_by,
+            filter,
+        )
+        .await
+    }
+
+    async fn ordered_datastore_set(
+        &self,
+        universe_id: u64,
+        datastore_name: &str,
+        scope: Option<&str>,
+        entry_id: &str,
+        value: i64,
+    ) -> Result<OrderedDataStoreEntry, RobloxMcpError> {
+        OpenCloudClient::ordered_datastore_set(
+            self,
+            universe_id,
+            datastore_name,
+            scope,
+            entry_id,
+            value,
+        )
+        .await
+    }
+
+    async fn ordered_datastore_increment(
+        &self,
+        universe_id: u64,
+        datastore_name: &str,
+        scope: Option<&str>,
+        entry_id: &str,
+        increment: i64,
+    ) -> Result<OrderedDataStoreEntry, RobloxMcpError> {
+        OpenCloudClient::ordered_datastore_increment(
+            self,
+            universe_id,
+            datastore_name,
+            scope,
+            entry_id,
+            increment,
+        )
+        .await
+    }
+
+    async fn ordered_datastore_delete(
+        &self,
+        universe_id: u64,
+        datastore_name: &str,
+        scope: Option<&str>,
+        entry_id: &str,
+    ) -> Result<(), RobloxMcpError> {
+        OpenCloudClient::ordered_datastore_delete(
+            self,
+            universe_id,
+            datastore_name,
+            scope,
+            entry_id,
+        )
+        .await
+    }
+
+    async fn get_universe(&self, universe_id: u64) -> Result<UniverseInfo, RobloxMcpError> {
+        OpenCloudClient::get_universe(self, universe_id).await
+    }
+
+    async fn restart_universe_servers(&self, universe_id: u64) -> Result<(), RobloxMcpError> {
+        OpenCloudClient::restart_universe_servers(self, universe_id).await
     }
 }
 
@@ -927,8 +1020,14 @@ mod tests {
         mock.queue_response(
             MockResponse::json(200, serde_json::json!({"coins": 100})).with_headers([
                 ("roblox-entry-version".to_string(), "v1".to_string()),
-                ("roblox-entry-created-time".to_string(), "2024-01-01".to_string()),
-                ("roblox-entry-version-created-time".to_string(), "2024-01-02".to_string()),
+                (
+                    "roblox-entry-created-time".to_string(),
+                    "2024-01-01".to_string(),
+                ),
+                (
+                    "roblox-entry-version-created-time".to_string(),
+                    "2024-01-02".to_string(),
+                ),
             ]),
         );
 
@@ -945,8 +1044,14 @@ mod tests {
         mock.queue_response(
             MockResponse::json(200, serde_json::json!({})).with_headers([
                 ("roblox-entry-version".to_string(), "v2".to_string()),
-                ("roblox-entry-created-time".to_string(), "2024-01-01".to_string()),
-                ("roblox-entry-version-created-time".to_string(), "2024-01-03".to_string()),
+                (
+                    "roblox-entry-created-time".to_string(),
+                    "2024-01-01".to_string(),
+                ),
+                (
+                    "roblox-entry-version-created-time".to_string(),
+                    "2024-01-03".to_string(),
+                ),
             ]),
         );
 

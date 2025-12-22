@@ -220,6 +220,15 @@ impl HttpClient for MockHttpClient {
         self.record_request("POST_MULTIPART", url, headers, None);
         self.next_response()
     }
+
+    async fn delete(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<HttpResponse, RobloxMcpError> {
+        self.record_request("DELETE", url, headers, None);
+        self.next_response()
+    }
 }
 
 #[cfg(test)]
@@ -416,5 +425,27 @@ mod tests {
         // Queued responses should still be available
         let response = mock.get("http://test.com/2", &[]).await.unwrap();
         assert_eq!(response.body, b"2");
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_delete_method() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(204, b""));
+
+        let response = mock
+            .delete("http://test.com/resource/123", &[("x-api-key", "key")])
+            .await
+            .unwrap();
+
+        assert_eq!(response.status, 204);
+
+        let requests = mock.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "DELETE");
+        assert_eq!(requests[0].url, "http://test.com/resource/123");
+        assert!(requests[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "x-api-key" && v == "key"));
     }
 }

@@ -221,6 +221,78 @@ pub struct CloudMessagingPublishParams {
     pub message: serde_json::Value,
 }
 
+// === PHASE 1: ORDERED DATASTORE AND UNIVERSE PARAMS ===
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloudOrderedDatastoreListParams {
+    #[schemars(description = "Universe ID containing the OrderedDataStore")]
+    pub universe_id: u64,
+    #[schemars(description = "Name of the OrderedDataStore")]
+    pub datastore_name: String,
+    #[schemars(description = "Scope within the datastore (default: 'global')")]
+    pub scope: Option<String>,
+    #[schemars(description = "Maximum entries to return per page (1-100, default: 100)")]
+    pub max_page_size: Option<u32>,
+    #[schemars(description = "Page token from previous response for pagination")]
+    pub page_token: Option<String>,
+    #[schemars(description = "Sort order: 'desc' (default) or 'asc'")]
+    pub order_by: Option<String>,
+    #[schemars(description = "Filter expression for value ranges (e.g., 'value > 100')")]
+    pub filter: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloudOrderedDatastoreSetParams {
+    #[schemars(description = "Universe ID containing the OrderedDataStore")]
+    pub universe_id: u64,
+    #[schemars(description = "Name of the OrderedDataStore")]
+    pub datastore_name: String,
+    #[schemars(description = "Scope within the datastore (default: 'global')")]
+    pub scope: Option<String>,
+    #[schemars(description = "Entry ID (key) for the entry")]
+    pub entry_id: String,
+    #[schemars(description = "Numerical value to store (integer)")]
+    pub value: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloudOrderedDatastoreIncrementParams {
+    #[schemars(description = "Universe ID containing the OrderedDataStore")]
+    pub universe_id: u64,
+    #[schemars(description = "Name of the OrderedDataStore")]
+    pub datastore_name: String,
+    #[schemars(description = "Scope within the datastore (default: 'global')")]
+    pub scope: Option<String>,
+    #[schemars(description = "Entry ID (key) for the entry")]
+    pub entry_id: String,
+    #[schemars(description = "Amount to increment the value by (can be negative)")]
+    pub increment: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloudOrderedDatastoreDeleteParams {
+    #[schemars(description = "Universe ID containing the OrderedDataStore")]
+    pub universe_id: u64,
+    #[schemars(description = "Name of the OrderedDataStore")]
+    pub datastore_name: String,
+    #[schemars(description = "Scope within the datastore (default: 'global')")]
+    pub scope: Option<String>,
+    #[schemars(description = "Entry ID (key) to delete")]
+    pub entry_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloudGetUniverseParams {
+    #[schemars(description = "Universe ID to get information for")]
+    pub universe_id: u64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloudRestartServersParams {
+    #[schemars(description = "Universe ID to restart servers for")]
+    pub universe_id: u64,
+}
+
 // === LINTING PARAMS ===
 
 #[derive(Debug, Deserialize, JsonSchema)]
