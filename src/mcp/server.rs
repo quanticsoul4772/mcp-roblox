@@ -404,6 +404,14 @@ impl<
     ) -> Result<CallToolResult, ErrorData> {
         let path = PathBuf::from(&params.file_path);
 
+        // Validate .luau extension
+        if path.extension() != Some(std::ffi::OsStr::new("luau")) {
+            return Err(ErrorData::invalid_params(
+                "Only .luau files are supported",
+                None,
+            ));
+        }
+
         // Validate path is within project root
         let validated_path = validate_path(&path, &self.project_root)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
@@ -1749,7 +1757,7 @@ impl<
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         // Validate .luau extension
-        if validated_path.extension().is_none_or(|ext| ext != "luau") {
+        if validated_path.extension() != Some(std::ffi::OsStr::new("luau")) {
             return Err(ErrorData::invalid_params(
                 "Only .luau files can be formatted",
                 None,
