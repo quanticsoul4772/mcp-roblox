@@ -11,7 +11,7 @@ Rust MCP server for Roblox Studio integration. Provides 27 MCP tools for filesys
 ```bash
 cargo build          # Build debug binary
 cargo build --release # Build optimized release binary
-cargo test           # Run 499 unit tests
+cargo test           # Run 607 unit tests
 cargo check          # Check for errors without building
 cargo run            # Run the server
 ```
@@ -115,7 +115,7 @@ studio_modify_script(path, source, record_undo: false)
 
 ## Testing
 
-499 unit tests (86.7% coverage) cover:
+607 unit tests (78% coverage) cover:
 - Configuration parsing and validation
 - Filesystem operations and path validation
 - HTTP bridge command handling

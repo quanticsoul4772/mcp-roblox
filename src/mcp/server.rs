@@ -2924,7 +2924,221 @@ mod tests {
         assert!(result.is_ok(), "cloud_upload_asset should succeed: {:?}", result);
     }
 
+    // Tests for ordered datastore tools
+
+    use crate::cloud::{OrderedDataStoreEntry, OrderedDataStoreList, UniverseInfo};
+
+    #[tokio::test]
+    async fn test_cloud_ordered_datastore_list_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_ordered_datastore_list(Ok(OrderedDataStoreList {
+            entries: vec![
+                OrderedDataStoreEntry {
+                    path: "entry1".to_string(),
+                    id: "player1".to_string(),
+                    value: 1500,
+                },
+                OrderedDataStoreEntry {
+                    path: "entry2".to_string(),
+                    id: "player2".to_string(),
+                    value: 1200,
+                },
+            ],
+            next_page_token: None,
+        }));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudOrderedDatastoreListParams {
+            universe_id: 123456,
+            datastore_name: "Leaderboard".to_string(),
+            scope: None,
+            max_page_size: Some(10),
+            page_token: None,
+            order_by: None,
+            filter: None,
+        };
+
+        let result = server.cloud_ordered_datastore_list(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_ordered_datastore_list should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_cloud_ordered_datastore_set_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_ordered_datastore_set(Ok(OrderedDataStoreEntry {
+            path: "entry1".to_string(),
+            id: "player1".to_string(),
+            value: 2000,
+        }));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudOrderedDatastoreSetParams {
+            universe_id: 123456,
+            datastore_name: "Leaderboard".to_string(),
+            scope: None,
+            entry_id: "player1".to_string(),
+            value: 2000,
+        };
+
+        let result = server.cloud_ordered_datastore_set(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_ordered_datastore_set should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_cloud_ordered_datastore_increment_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_ordered_datastore_increment(Ok(OrderedDataStoreEntry {
+            path: "entry1".to_string(),
+            id: "player1".to_string(),
+            value: 1550,
+        }));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudOrderedDatastoreIncrementParams {
+            universe_id: 123456,
+            datastore_name: "Leaderboard".to_string(),
+            scope: None,
+            entry_id: "player1".to_string(),
+            increment: 50,
+        };
+
+        let result = server.cloud_ordered_datastore_increment(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_ordered_datastore_increment should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_cloud_ordered_datastore_delete_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_ordered_datastore_delete(Ok(()));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudOrderedDatastoreDeleteParams {
+            universe_id: 123456,
+            datastore_name: "Leaderboard".to_string(),
+            scope: None,
+            entry_id: "player1".to_string(),
+        };
+
+        let result = server.cloud_ordered_datastore_delete(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_ordered_datastore_delete should succeed: {:?}", result);
+    }
+
+    // Tests for universe management tools
+
+    #[tokio::test]
+    async fn test_cloud_get_universe_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_get_universe(Ok(UniverseInfo {
+            path: "universes/123456".to_string(),
+            create_time: "2024-01-01T00:00:00Z".to_string(),
+            update_time: "2024-06-15T12:00:00Z".to_string(),
+            display_name: "Test Game".to_string(),
+            description: "A test game".to_string(),
+            user: Some("users/12345".to_string()),
+            group: None,
+            visibility: Some("PUBLIC".to_string()),
+            voice_chat_enabled: false,
+            age_rating: None,
+            desktop_enabled: true,
+            mobile_enabled: true,
+            tablet_enabled: true,
+            vr_enabled: false,
+            console_enabled: false,
+        }));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudGetUniverseParams {
+            universe_id: 123456,
+        };
+
+        let result = server.cloud_get_universe(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_get_universe should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_cloud_restart_servers_success_with_mock() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_restart_universe_servers(Ok(()));
+
+        let server = create_server_with_mock_cloud(project_root, mock_cloud);
+
+        let params = CloudRestartServersParams {
+            universe_id: 123456,
+        };
+
+        let result = server.cloud_restart_servers(Parameters(params)).await;
+        assert!(result.is_ok(), "cloud_restart_servers should succeed: {:?}", result);
+    }
+
     // Tests for when cloud client is not configured
+
+    #[tokio::test]
+    async fn test_cloud_ordered_datastore_list_no_client() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = CloudOrderedDatastoreListParams {
+            universe_id: 123456,
+            datastore_name: "Leaderboard".to_string(),
+            scope: None,
+            max_page_size: None,
+            page_token: None,
+            order_by: None,
+            filter: None,
+        };
+
+        let result = server.cloud_ordered_datastore_list(Parameters(params)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_cloud_get_universe_no_client() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = CloudGetUniverseParams {
+            universe_id: 123456,
+        };
+
+        let result = server.cloud_get_universe(Parameters(params)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_cloud_restart_servers_no_client() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_mock_server(temp_dir.path().to_path_buf());
+
+        let params = CloudRestartServersParams {
+            universe_id: 123456,
+        };
+
+        let result = server.cloud_restart_servers(Parameters(params)).await;
+        assert!(result.is_err());
+    }
 
     #[tokio::test]
     async fn test_cloud_publish_place_no_client() {
