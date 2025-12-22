@@ -1,11 +1,12 @@
 use crate::error::RobloxMcpError;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 use std::fs::FileType;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileTree {
     pub path: String,
     pub name: String,
@@ -139,26 +140,25 @@ pub fn reject_if_symlink(path: &Path) -> Result<(), RobloxMcpError> {
     Ok(())
 }
 
-/// Build a file tree recursively (boxed for async recursion)
-/// Returns both the tree and a list of all skipped entries with reasons
-pub async fn build_tree(
-    path: &Path,
-    current_depth: usize,
-    max_depth: usize,
-) -> Result<TreeBuildResult> {
-    let name = path
+/// Build a file tree synchronously (for use inside spawn_blocking)
+///
+/// Uses iterative BFS approach to avoid recursive async overhead and blocking the async runtime.
+pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult> {
+    let mut all_skipped: Vec<SkippedEntry> = vec![];
+
+    let root_name = root
         .file_name()
-        .ok_or_else(|| anyhow::anyhow!("Path has no file name: {}", path.display()))?
+        .ok_or_else(|| anyhow::anyhow!("Path has no file name: {}", root.display()))?
         .to_string_lossy()
         .to_string();
 
-    let metadata = fs::metadata(path).await?;
+    let root_metadata = std::fs::metadata(root)?;
 
-    if metadata.is_file() {
+    if root_metadata.is_file() {
         return Ok(TreeBuildResult {
             tree: FileTree {
-                path: path.display().to_string(),
-                name,
+                path: root.display().to_string(),
+                name: root_name,
                 is_file: true,
                 children: None,
             },
@@ -166,20 +166,66 @@ pub async fn build_tree(
         });
     }
 
-    // For directories, recurse if we haven't hit max depth
-    let mut all_skipped: Vec<SkippedEntry> = vec![];
+    // Struct for tracking pending directories to process
+    struct PendingDir {
+        path: PathBuf,
+        depth: usize,
+        tree_index: usize,
+    }
 
-    let children = if current_depth < max_depth {
-        let mut entries = vec![];
-        let mut dir = fs::read_dir(path).await?;
+    // Build tree iteratively using BFS
+    let mut trees: Vec<FileTree> = vec![FileTree {
+        path: root.display().to_string(),
+        name: root_name,
+        is_file: false,
+        children: Some(vec![]),
+    }];
 
-        while let Some(entry) = dir.next_entry().await? {
+    let mut queue: VecDeque<PendingDir> = VecDeque::new();
+    queue.push_back(PendingDir {
+        path: root.to_path_buf(),
+        depth: 0,
+        tree_index: 0,
+    });
+
+    // Map from tree_index to list of child indices
+    let mut children_map: HashMap<usize, Vec<usize>> = HashMap::new();
+
+    while let Some(pending) = queue.pop_front() {
+        if pending.depth >= max_depth {
+            continue;
+        }
+
+        let entries = match std::fs::read_dir(&pending.path) {
+            Ok(entries) => entries,
+            Err(e) => {
+                all_skipped.push(SkippedEntry {
+                    path: pending.path.display().to_string(),
+                    reason: format!("cannot read directory: {}", e),
+                });
+                continue;
+            }
+        };
+
+        let mut child_entries: Vec<(PathBuf, bool)> = vec![]; // (path, is_file)
+
+        for entry_result in entries {
+            let entry = match entry_result {
+                Ok(e) => e,
+                Err(e) => {
+                    all_skipped.push(SkippedEntry {
+                        path: pending.path.display().to_string(),
+                        reason: format!("entry error: {}", e),
+                    });
+                    continue;
+                }
+            };
+
             let child_path = entry.path();
 
             // Security: Check for symlinks FIRST (before any other checks)
-            // Use symlink_metadata to detect symlinks without following them
-            match get_file_type_no_follow(&child_path) {
-                Ok(file_type) if file_type.is_symlink() => {
+            match std::fs::symlink_metadata(&child_path) {
+                Ok(meta) if meta.file_type().is_symlink() => {
                     all_skipped.push(SkippedEntry {
                         path: child_path.display().to_string(),
                         reason: "symlink rejected for security".to_string(),
@@ -187,7 +233,6 @@ pub async fn build_tree(
                     continue;
                 }
                 Err(_) => {
-                    // Can't read metadata - skip silently (might be permission issue)
                     all_skipped.push(SkippedEntry {
                         path: child_path.display().to_string(),
                         reason: "cannot read file metadata".to_string(),
@@ -223,37 +268,103 @@ pub async fn build_tree(
                 }
             }
 
-            // Box the recursive call to avoid infinite sized future
-            let child_result =
-                Box::pin(build_tree(&child_path, current_depth + 1, max_depth)).await?;
-            entries.push(child_result.tree);
-            // Collect skipped entries from children
-            all_skipped.extend(child_result.skipped);
+            let is_file = match std::fs::metadata(&child_path) {
+                Ok(m) => m.is_file(),
+                Err(_) => true, // Assume file if can't read metadata
+            };
+
+            child_entries.push((child_path, is_file));
         }
 
-        // Sort entries: directories first, then files, alphabetically within each group
-        entries.sort_by(|a, b| {
-            match (a.is_file, b.is_file) {
-                (false, true) => std::cmp::Ordering::Less, // directories before files
-                (true, false) => std::cmp::Ordering::Greater, // files after directories
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()), // alphabetical within group
+        // Sort: directories first, then files, alphabetically within each group
+        child_entries.sort_by(|(a, a_is_file), (b, b_is_file)| {
+            match (a_is_file, b_is_file) {
+                (false, true) => std::cmp::Ordering::Less,
+                (true, false) => std::cmp::Ordering::Greater,
+                _ => {
+                    let a_name = a.file_name().map(|n| n.to_string_lossy().to_lowercase());
+                    let b_name = b.file_name().map(|n| n.to_string_lossy().to_lowercase());
+                    a_name.cmp(&b_name)
+                }
             }
         });
 
-        Some(entries)
-    } else {
-        None
-    };
+        let mut child_indices = vec![];
+
+        for (child_path, is_file) in child_entries {
+            let child_name = child_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let child_index = trees.len();
+            let child_depth = pending.depth + 1;
+
+            // Files have no children; directories at max depth have None (won't recurse);
+            // other directories get Some(vec![]) to be populated when processed
+            let children = if !is_file && child_depth < max_depth {
+                Some(vec![]) // Will be populated when we process this directory
+            } else {
+                None // File, or max depth reached
+            };
+
+            trees.push(FileTree {
+                path: child_path.display().to_string(),
+                name: child_name,
+                is_file,
+                children,
+            });
+
+            child_indices.push(child_index);
+
+            // Only queue directories that haven't reached max depth
+            if !is_file && child_depth < max_depth {
+                queue.push_back(PendingDir {
+                    path: child_path,
+                    depth: child_depth,
+                    tree_index: child_index,
+                });
+            }
+        }
+
+        children_map.insert(pending.tree_index, child_indices);
+    }
+
+    // Reconstruct tree by assigning children (work backwards to handle nested)
+    // Use indices sorted in reverse to process children before parents
+    let mut indices: Vec<usize> = children_map.keys().copied().collect();
+    indices.sort_by(|a, b| b.cmp(a)); // Reverse order
+
+    for parent_idx in indices {
+        if let Some(child_indices) = children_map.get(&parent_idx) {
+            let children: Vec<FileTree> = child_indices
+                .iter()
+                .map(|&idx| trees[idx].clone())
+                .collect();
+            trees[parent_idx].children = Some(children);
+        }
+    }
 
     Ok(TreeBuildResult {
-        tree: FileTree {
-            path: path.display().to_string(),
-            name,
-            is_file: false,
-            children,
-        },
+        tree: trees.into_iter().next().unwrap(),
         skipped: all_skipped,
     })
+}
+
+/// Build a file tree asynchronously by running sync traversal on blocking thread pool
+///
+/// This wrapper maintains API compatibility while moving blocking I/O off the async runtime.
+/// Returns both the tree and a list of all skipped entries with reasons.
+pub async fn build_tree(
+    path: &Path,
+    _current_depth: usize, // Kept for API compatibility, ignored (always starts from 0)
+    max_depth: usize,
+) -> Result<TreeBuildResult> {
+    let path = path.to_path_buf();
+
+    tokio::task::spawn_blocking(move || build_tree_sync(&path, max_depth))
+        .await
+        .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
 }
 
 /// Read a Luau script file

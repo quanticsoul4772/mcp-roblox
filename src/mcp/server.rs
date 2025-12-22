@@ -576,73 +576,80 @@ impl<
         let regex = Regex::new(&params.pattern)
             .map_err(|e| ErrorData::internal_error(format!("Invalid regex pattern: {e}"), None))?;
 
-        // Extension is REQUIRED (enforced by schema)
-        let extension = params.extension.as_str();
+        // Extension is REQUIRED (enforced by schema) - clone for move into closure
+        let extension = params.extension.clone();
 
-        let mut results: Vec<serde_json::Value> = Vec::new();
-        let mut errors: Vec<serde_json::Value> = Vec::new();
+        // Move entire traversal to blocking thread pool to avoid blocking async runtime
+        let (results, errors) = tokio::task::spawn_blocking(move || {
+            let mut results: Vec<serde_json::Value> = Vec::new();
+            let mut errors: Vec<serde_json::Value> = Vec::new();
 
-        // Walk directory and search files - REPORT ALL ERRORS
-        for entry in WalkDir::new(&validated_path).into_iter() {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    errors.push(json!({
-                        "type": "enumeration_error",
-                        "path": e.path().map(|p| p.display().to_string()),
-                        "error": e.to_string()
-                    }));
+            // Walk directory and search files - REPORT ALL ERRORS
+            for entry in WalkDir::new(&validated_path).into_iter() {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        errors.push(json!({
+                            "type": "enumeration_error",
+                            "path": e.path().map(|p| p.display().to_string()),
+                            "error": e.to_string()
+                        }));
+                        continue;
+                    }
+                };
+
+                let entry_path = entry.path();
+
+                // Skip directories
+                if entry_path.is_dir() {
                     continue;
                 }
-            };
 
-            let entry_path = entry.path();
-
-            // Skip directories
-            if entry_path.is_dir() {
-                continue;
-            }
-
-            // Check extension
-            if entry_path.extension() != Some(std::ffi::OsStr::new(extension)) {
-                continue;
-            }
-
-            // Skip hidden files - but REPORT that we're skipping
-            if let Some(name) = entry_path.file_name() {
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with('.') {
-                    errors.push(json!({
-                        "type": "skipped_hidden",
-                        "path": entry_path.display().to_string()
-                    }));
+                // Check extension
+                if entry_path.extension() != Some(std::ffi::OsStr::new(&extension)) {
                     continue;
                 }
+
+                // Skip hidden files - but REPORT that we're skipping
+                if let Some(name) = entry_path.file_name() {
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with('.') {
+                        errors.push(json!({
+                            "type": "skipped_hidden",
+                            "path": entry_path.display().to_string()
+                        }));
+                        continue;
+                    }
+                }
+
+                // Read and search file - use std::fs (NOT tokio::fs) inside spawn_blocking
+                let content = match std::fs::read_to_string(entry_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        errors.push(json!({
+                            "type": "read_error",
+                            "path": entry_path.display().to_string(),
+                            "error": e.to_string()
+                        }));
+                        continue;
+                    }
+                };
+
+                for (line_num, line) in content.lines().enumerate() {
+                    if regex.is_match(line) {
+                        results.push(json!({
+                            "file": entry_path.display().to_string(),
+                            "line": line_num + 1,
+                            "content": line.trim()
+                        }));
+                    }
+                }
             }
 
-            // Read and search file - REPORT READ FAILURES
-            let content = match fs::read_to_string(entry_path).await {
-                Ok(c) => c,
-                Err(e) => {
-                    errors.push(json!({
-                        "type": "read_error",
-                        "path": entry_path.display().to_string(),
-                        "error": e.to_string()
-                    }));
-                    continue;
-                }
-            };
-
-            for (line_num, line) in content.lines().enumerate() {
-                if regex.is_match(line) {
-                    results.push(json!({
-                        "file": entry_path.display().to_string(),
-                        "line": line_num + 1,
-                        "content": line.trim()
-                    }));
-                }
-            }
-        }
+            (results, errors)
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(format!("Task join error: {e}"), None))?;
 
         // Always include errors in response so caller knows what was skipped
         Ok(CallToolResult::success(vec![Content::text(
@@ -678,86 +685,93 @@ impl<
         let validated_path = validate_path(&path, &self.project_root)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        let mut mtimes: HashMap<String, u64> = HashMap::new();
-        let mut errors: Vec<serde_json::Value> = Vec::new();
+        // Move entire traversal to blocking thread pool to avoid blocking async runtime
+        let (mtimes, errors) = tokio::task::spawn_blocking(move || {
+            let mut mtimes: HashMap<String, u64> = HashMap::new();
+            let mut errors: Vec<serde_json::Value> = Vec::new();
 
-        // Walk directory and collect mtimes - REPORT ALL ERRORS
-        for entry in WalkDir::new(&validated_path).into_iter() {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    errors.push(json!({
-                        "type": "enumeration_error",
-                        "path": e.path().map(|p| p.display().to_string()),
-                        "error": e.to_string()
-                    }));
+            // Walk directory and collect mtimes - REPORT ALL ERRORS
+            for entry in WalkDir::new(&validated_path).into_iter() {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        errors.push(json!({
+                            "type": "enumeration_error",
+                            "path": e.path().map(|p| p.display().to_string()),
+                            "error": e.to_string()
+                        }));
+                        continue;
+                    }
+                };
+
+                let entry_path = entry.path();
+
+                // Skip directories
+                if entry_path.is_dir() {
                     continue;
                 }
-            };
 
-            let entry_path = entry.path();
+                // Only track .luau files
+                if entry_path.extension() != Some(std::ffi::OsStr::new("luau")) {
+                    continue;
+                }
 
-            // Skip directories
-            if entry_path.is_dir() {
-                continue;
+                // Skip hidden files - but REPORT
+                if let Some(name) = entry_path.file_name() {
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with('.') {
+                        errors.push(json!({
+                            "type": "skipped_hidden",
+                            "path": entry_path.display().to_string()
+                        }));
+                        continue;
+                    }
+                }
+
+                // Get modification time - use std::fs::metadata (already was, now explicit)
+                let metadata = match std::fs::metadata(entry_path) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        errors.push(json!({
+                            "type": "metadata_error",
+                            "path": entry_path.display().to_string(),
+                            "error": e.to_string()
+                        }));
+                        continue;
+                    }
+                };
+
+                let modified = match metadata.modified() {
+                    Ok(m) => m,
+                    Err(e) => {
+                        errors.push(json!({
+                            "type": "modified_time_error",
+                            "path": entry_path.display().to_string(),
+                            "error": e.to_string()
+                        }));
+                        continue;
+                    }
+                };
+
+                let duration = match modified.duration_since(std::time::UNIX_EPOCH) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        errors.push(json!({
+                            "type": "timestamp_error",
+                            "path": entry_path.display().to_string(),
+                            "error": e.to_string()
+                        }));
+                        continue;
+                    }
+                };
+
+                mtimes.insert(entry_path.display().to_string(), duration.as_secs());
             }
 
-            // Only track .luau files
-            if entry_path.extension() != Some(std::ffi::OsStr::new("luau")) {
-                continue;
-            }
-
-            // Skip hidden files - but REPORT
-            if let Some(name) = entry_path.file_name() {
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with('.') {
-                    errors.push(json!({
-                        "type": "skipped_hidden",
-                        "path": entry_path.display().to_string()
-                    }));
-                    continue;
-                }
-            }
-
-            // Get modification time - REPORT ALL FAILURES
-            let metadata = match entry_path.metadata() {
-                Ok(m) => m,
-                Err(e) => {
-                    errors.push(json!({
-                        "type": "metadata_error",
-                        "path": entry_path.display().to_string(),
-                        "error": e.to_string()
-                    }));
-                    continue;
-                }
-            };
-
-            let modified = match metadata.modified() {
-                Ok(m) => m,
-                Err(e) => {
-                    errors.push(json!({
-                        "type": "modified_time_error",
-                        "path": entry_path.display().to_string(),
-                        "error": e.to_string()
-                    }));
-                    continue;
-                }
-            };
-
-            let duration = match modified.duration_since(std::time::UNIX_EPOCH) {
-                Ok(d) => d,
-                Err(e) => {
-                    errors.push(json!({
-                        "type": "timestamp_error",
-                        "path": entry_path.display().to_string(),
-                        "error": e.to_string()
-                    }));
-                    continue;
-                }
-            };
-
-            mtimes.insert(entry_path.display().to_string(), duration.as_secs());
-        }
+            (mtimes, errors)
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(format!("Task join error: {e}"), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
