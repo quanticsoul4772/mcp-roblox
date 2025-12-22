@@ -318,6 +318,23 @@ impl<
     fn start_instrumentation(&self, tool_name: &str) -> InstrumentedCall {
         InstrumentedCall::start(self.metrics.clone(), tool_name)
     }
+
+    /// Get the cloud client, returning an error if not configured
+    ///
+    /// This centralizes the "cloud client required" check that all cloud tools need.
+    /// Returns a reference to the Arc<dyn CloudClient> if available.
+    ///
+    /// # Errors
+    /// Returns `ErrorData::internal_error` if `ROBLOX_OPEN_CLOUD_API_KEY` was not set.
+    fn cloud(&self) -> Result<&Arc<dyn CloudClient>, ErrorData> {
+        self.cloud_client.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
+                    .to_string(),
+                None,
+            )
+        })
+    }
 }
 
 #[tool_router]
@@ -1241,14 +1258,7 @@ impl<
         &self,
         params: CloudPublishPlaceParams,
     ) -> Result<CallToolResult, ErrorData> {
-        // Check if cloud client is available
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         let path = PathBuf::from(&params.rbxl_path);
         let result = client
@@ -1283,14 +1293,7 @@ impl<
         &self,
         params: CloudUploadAssetParams,
     ) -> Result<CallToolResult, ErrorData> {
-        // Check if cloud client is available
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         // Parse asset type
         let asset_type = AssetType::from_str(&params.asset_type)
@@ -1334,14 +1337,7 @@ impl<
         &self,
         params: CloudDatastoreGetParams,
     ) -> Result<CallToolResult, ErrorData> {
-        // Check if cloud client is available
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         let result = client
             .datastore_get(
@@ -1380,14 +1376,7 @@ impl<
         &self,
         params: CloudDatastoreSetParams,
     ) -> Result<CallToolResult, ErrorData> {
-        // Check if cloud client is available
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         let result = client
             .datastore_set(
@@ -1428,14 +1417,7 @@ impl<
         &self,
         params: CloudMessagingPublishParams,
     ) -> Result<CallToolResult, ErrorData> {
-        // Check if cloud client is available
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         client
             .messaging_publish(params.universe_id, &params.topic, params.message.clone())
@@ -1476,13 +1458,7 @@ impl<
         &self,
         params: CloudOrderedDatastoreListParams,
     ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         let result = client
             .ordered_datastore_list(
@@ -1522,13 +1498,7 @@ impl<
         &self,
         params: CloudOrderedDatastoreSetParams,
     ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         let result = client
             .ordered_datastore_set(
@@ -1567,13 +1537,7 @@ impl<
         &self,
         params: CloudOrderedDatastoreIncrementParams,
     ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         let result = client
             .ordered_datastore_increment(
@@ -1612,13 +1576,7 @@ impl<
         &self,
         params: CloudOrderedDatastoreDeleteParams,
     ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         client
             .ordered_datastore_delete(
@@ -1658,13 +1616,7 @@ impl<
         &self,
         params: CloudGetUniverseParams,
     ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         let info = client
             .get_universe(params.universe_id)
@@ -1711,13 +1663,7 @@ impl<
         &self,
         params: CloudRestartServersParams,
     ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud_client.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
-                    .to_string(),
-                None,
-            )
-        })?;
+        let client = self.cloud()?;
 
         client
             .restart_universe_servers(params.universe_id)
