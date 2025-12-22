@@ -1127,4 +1127,256 @@ mod tests {
             .await;
         assert!(result.is_ok());
     }
+
+    // ========================================
+    // CloudClient Trait - OrderedDataStore Tests
+    // ========================================
+
+    #[tokio::test]
+    async fn test_trait_object_ordered_datastore_list() {
+        use super::OrderedDataStoreListParams;
+
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({
+                "entries": [
+                    {"path": "p1", "id": "player1", "value": 100}
+                ]
+            }),
+        ));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client
+            .ordered_datastore_list(OrderedDataStoreListParams {
+                universe_id: 123,
+                datastore_name: "LB",
+                ..Default::default()
+            })
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_trait_object_ordered_datastore_set() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({
+                "path": "universes/123/orderedDataStores/LB/scopes/global/entries/p1",
+                "id": "p1",
+                "value": 500
+            }),
+        ));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client
+            .ordered_datastore_set(123, "LB", None, "p1", 500)
+            .await;
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        assert_eq!(entry.value, 500);
+    }
+
+    #[tokio::test]
+    async fn test_trait_object_ordered_datastore_increment() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(200, serde_json::json!({"value": 150})));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client
+            .ordered_datastore_increment(123, "LB", None, "p1", 50)
+            .await;
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        assert_eq!(entry.value, 150);
+    }
+
+    #[tokio::test]
+    async fn test_trait_object_ordered_datastore_delete() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(204, b""));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client
+            .ordered_datastore_delete(123, "LB", None, "p1")
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // ========================================
+    // CloudClient Trait - Universe Tests
+    // ========================================
+
+    #[tokio::test]
+    async fn test_trait_object_get_universe() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({
+                "path": "universes/123",
+                "createTime": "2024-01-01T00:00:00Z",
+                "updateTime": "2024-01-02T00:00:00Z",
+                "displayName": "Test Universe",
+                "description": "A test universe",
+                "user": "123456",
+                "visibility": "PUBLIC"
+            }),
+        ));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client.get_universe(123).await;
+        assert!(result.is_ok());
+        let info = result.unwrap();
+        assert_eq!(info.display_name, "Test Universe");
+    }
+
+    #[tokio::test]
+    async fn test_trait_object_restart_universe_servers() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(200, b""));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client.restart_universe_servers(123).await;
+        assert!(result.is_ok());
+    }
+
+    // ========================================
+    // Additional Edge Case Tests
+    // ========================================
+
+    #[tokio::test]
+    async fn test_trait_datastore_get_with_scope() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(
+            MockResponse::json(200, serde_json::json!({"level": 10})).with_headers([
+                ("roblox-entry-version".to_string(), "v1".to_string()),
+                (
+                    "roblox-entry-created-time".to_string(),
+                    "2024-01-01".to_string(),
+                ),
+                (
+                    "roblox-entry-version-created-time".to_string(),
+                    "2024-01-02".to_string(),
+                ),
+            ]),
+        );
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client
+            .datastore_get(123, "Store", "key", Some("custom"))
+            .await;
+        assert!(result.is_ok());
+
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("scope=custom"));
+    }
+
+    #[tokio::test]
+    async fn test_trait_datastore_set_with_scope() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(
+            MockResponse::json(200, serde_json::json!({})).with_headers([
+                ("roblox-entry-version".to_string(), "v2".to_string()),
+                (
+                    "roblox-entry-created-time".to_string(),
+                    "2024-01-01".to_string(),
+                ),
+                (
+                    "roblox-entry-version-created-time".to_string(),
+                    "2024-01-03".to_string(),
+                ),
+            ]),
+        );
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client
+            .datastore_set(
+                123,
+                "Store",
+                "key",
+                serde_json::json!({"coins": 500}),
+                Some("scoped"),
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("scope=scoped"));
+    }
+
+    #[tokio::test]
+    async fn test_trait_ordered_datastore_set_with_scope() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({
+                "path": "universes/123/orderedDataStores/LB/scopes/custom/entries/p1",
+                "id": "p1",
+                "value": 1000
+            }),
+        ));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client
+            .ordered_datastore_set(123, "LB", Some("custom"), "p1", 1000)
+            .await;
+        assert!(result.is_ok());
+
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("/scopes/custom/"));
+    }
+
+    #[tokio::test]
+    async fn test_trait_ordered_datastore_increment_with_scope() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(200, serde_json::json!({"value": 250})));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client
+            .ordered_datastore_increment(123, "LB", Some("myScope"), "p1", 25)
+            .await;
+        assert!(result.is_ok());
+
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("/scopes/myScope/"));
+    }
+
+    #[tokio::test]
+    async fn test_trait_ordered_datastore_delete_with_scope() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(204, b""));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+        let cloud_client: &dyn CloudClient = &client;
+
+        let result = cloud_client
+            .ordered_datastore_delete(123, "LB", Some("special"), "entry1")
+            .await;
+        assert!(result.is_ok());
+
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("/scopes/special/"));
+    }
 }

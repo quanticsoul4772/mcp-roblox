@@ -276,6 +276,46 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static>
     }
 }
 
+/// Full test constructor for RobloxMcpServer with all injectable toolchain components
+#[cfg(test)]
+impl<
+        B: StudioBridge + Clone + 'static,
+        L: Linter + Clone + 'static,
+        F: Formatter + Clone + 'static,
+        R: RojoRunner + Clone + 'static,
+        W: WallyRunner + Clone + 'static,
+        M: MoonwaveRunner + Clone + 'static,
+    > RobloxMcpServer<B, L, F, R, W, M>
+{
+    /// Create a test server with all mock toolchain components
+    ///
+    /// This constructor allows injecting mocks for all toolchain tools.
+    pub fn with_all_mocks(
+        bridge: Arc<B>,
+        project_root: PathBuf,
+        cloud_client: Option<Arc<dyn CloudClient>>,
+        linter: L,
+        formatter: F,
+        rojo: R,
+        wally: W,
+        moonwave: M,
+    ) -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+            bridge,
+            project_root,
+            cloud_client,
+            file_watcher: None,
+            metrics: Arc::new(ServerMetrics::new()),
+            linter,
+            formatter,
+            rojo,
+            wally,
+            moonwave,
+        }
+    }
+}
+
 /// Generic implementation for all variants - shared utility methods
 impl<
         B: StudioBridge + Clone + 'static,
@@ -5055,5 +5095,525 @@ mod tests {
         } else {
             panic!("Expected text content");
         }
+    }
+
+    // === TOOLCHAIN TOOL TESTS (with mock toolchain implementations) ===
+
+    use crate::tools::formatting::mock::MockFormatter;
+    use crate::tools::formatting::FormatResult;
+    use crate::tools::rojo::mock::MockRojoRunner;
+    use crate::tools::rojo::{RojoBuildResult, RojoSourcemapResult};
+    use crate::tools::wally::mock::MockWallyRunner;
+    use crate::tools::wally::{WallyInstallResult, WallyUpdateResult};
+    use crate::tools::moonwave::mock::MockMoonwaveRunner;
+    use crate::tools::moonwave::MoonwaveBuildResult;
+    use crate::tools::linting::mock::MockLinter;
+
+    #[tokio::test]
+    async fn test_stylua_format_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("test.luau");
+        std::fs::write(&script_path, "local x=1").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        mock_formatter.queue_response(Ok(FormatResult {
+            file_path: script_path.display().to_string(),
+            formatted: true,
+            diff: None,
+            original: None,
+            formatted_content: None,
+        }));
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root,
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = StyluaFormatParams {
+            file_path: script_path.display().to_string(),
+            config_path: None,
+            check_only: None,
+        };
+
+        let result = server.stylua_format(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_stylua_format_check_only() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("test.luau");
+        std::fs::write(&script_path, "local x=1").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        mock_formatter.queue_response(Ok(FormatResult {
+            file_path: script_path.display().to_string(),
+            formatted: false,
+            diff: Some("+ local x = 1".to_string()),
+            original: None,
+            formatted_content: None,
+        }));
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root,
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = StyluaFormatParams {
+            file_path: script_path.display().to_string(),
+            config_path: None,
+            check_only: Some(true),
+        };
+
+        let result = server.stylua_format(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_stylua_format_non_luau_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let txt_path = project_root.join("test.txt");
+        std::fs::write(&txt_path, "not luau").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root,
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = StyluaFormatParams {
+            file_path: txt_path.display().to_string(),
+            config_path: None,
+            check_only: None,
+        };
+
+        let result = server.stylua_format(Parameters(params)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rojo_build_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let project_json = project_root.join("default.project.json");
+        std::fs::write(&project_json, "{}").unwrap();
+        let output_path = project_root.join("game.rbxl");
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        let mock_rojo = MockRojoRunner::new();
+        mock_rojo.queue_build_response(Ok(RojoBuildResult {
+            output_path: output_path.display().to_string(),
+            success: true,
+            stdout: Some("Built successfully".to_string()),
+            stderr: None,
+        }));
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root,
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = RojoBuildParams {
+            project_path: project_json.display().to_string(),
+            output_path: output_path.display().to_string(),
+        };
+
+        let result = server.rojo_build(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_rojo_sourcemap_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let project_json = project_root.join("default.project.json");
+        std::fs::write(&project_json, "{}").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        let mock_rojo = MockRojoRunner::new();
+        mock_rojo.queue_sourcemap_response(Ok(RojoSourcemapResult {
+            sourcemap: r#"{"name": "game"}"#.to_string(),
+            output_path: None,
+            success: true,
+        }));
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root,
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = RojoSourcemapParams {
+            project_path: project_json.display().to_string(),
+            output_path: None,
+        };
+
+        let result = server.rojo_sourcemap(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_wally_install_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let wally_toml = project_root.join("wally.toml");
+        std::fs::write(&wally_toml, "[package]").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        mock_wally.queue_install_response(Ok(WallyInstallResult {
+            packages_dir: project_root.join("Packages").display().to_string(),
+            success: true,
+            stdout: Some("Installed 5 packages".to_string()),
+            stderr: None,
+        }));
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root.clone(),
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = WallyInstallParams {
+            project_path: project_root.display().to_string(),
+        };
+
+        let result = server.wally_install(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_wally_update_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let wally_toml = project_root.join("wally.toml");
+        std::fs::write(&wally_toml, "[package]").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        mock_wally.queue_update_response(Ok(WallyUpdateResult {
+            success: true,
+            stdout: Some("Updated 3 packages".to_string()),
+            stderr: None,
+        }));
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root.clone(),
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = WallyUpdateParams {
+            project_path: project_root.display().to_string(),
+        };
+
+        let result = server.wally_update(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_moonwave_build_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let moonwave_toml = project_root.join("moonwave.toml");
+        std::fs::write(&moonwave_toml, "[config]").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+        mock_moonwave.queue_build_response(Ok(MoonwaveBuildResult {
+            output_dir: project_root.join("build").display().to_string(),
+            success: true,
+            stdout: Some("Documentation generated".to_string()),
+            stderr: None,
+        }));
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root.clone(),
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = MoonwaveBuildParams {
+            project_path: project_root.display().to_string(),
+            output_dir: None,
+        };
+
+        let result = server.moonwave_build(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_moonwave_build_with_output_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let moonwave_toml = project_root.join("moonwave.toml");
+        std::fs::write(&moonwave_toml, "[config]").unwrap();
+        let output_dir = project_root.join("custom_docs");
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+        mock_moonwave.queue_build_response(Ok(MoonwaveBuildResult {
+            output_dir: output_dir.display().to_string(),
+            success: true,
+            stdout: None,
+            stderr: None,
+        }));
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root.clone(),
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = MoonwaveBuildParams {
+            project_path: project_root.display().to_string(),
+            output_dir: Some(output_dir.display().to_string()),
+        };
+
+        let result = server.moonwave_build(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_stylua_format_with_config_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("test.luau");
+        std::fs::write(&script_path, "local x=1").unwrap();
+        let config_path = project_root.join("stylua.toml");
+        std::fs::write(&config_path, "column_width = 120").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        mock_formatter.queue_response(Ok(FormatResult {
+            file_path: script_path.display().to_string(),
+            formatted: true,
+            diff: None,
+            original: None,
+            formatted_content: None,
+        }));
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root,
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = StyluaFormatParams {
+            file_path: script_path.display().to_string(),
+            config_path: Some(config_path.display().to_string()),
+            check_only: None,
+        };
+
+        let result = server.stylua_format(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_rojo_sourcemap_with_output_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let project_json = project_root.join("default.project.json");
+        std::fs::write(&project_json, "{}").unwrap();
+        let output_path = project_root.join("sourcemap.json");
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        let mock_rojo = MockRojoRunner::new();
+        mock_rojo.queue_sourcemap_response(Ok(RojoSourcemapResult {
+            sourcemap: r#"{"name": "game"}"#.to_string(),
+            output_path: Some(output_path.display().to_string()),
+            success: true,
+        }));
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root,
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = RojoSourcemapParams {
+            project_path: project_json.display().to_string(),
+            output_path: Some(output_path.display().to_string()),
+        };
+
+        let result = server.rojo_sourcemap(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_toolchain_error_handling() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let script_path = project_root.join("test.luau");
+        std::fs::write(&script_path, "local x=1").unwrap();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        mock_formatter.queue_response(Err(crate::error::RobloxMcpError::ToolNotInstalled {
+            tool: "stylua".to_string(),
+            install_hint: "cargo install stylua".to_string(),
+        }));
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root,
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        let params = StyluaFormatParams {
+            file_path: script_path.display().to_string(),
+            config_path: None,
+            check_only: None,
+        };
+
+        let result = server.stylua_format(Parameters(params)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_with_all_mocks_constructor() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_formatter = MockFormatter::new();
+        let mock_rojo = MockRojoRunner::new();
+        let mock_wally = MockWallyRunner::new();
+        let mock_moonwave = MockMoonwaveRunner::new();
+
+        let server = RobloxMcpServer::with_all_mocks(
+            mock_bridge,
+            project_root,
+            None,
+            mock_linter,
+            mock_formatter,
+            mock_rojo,
+            mock_wally,
+            mock_moonwave,
+        );
+
+        // Verify construction by calling get_info
+        let info = server.get_info();
+        assert!(info.instructions.is_some());
     }
 }

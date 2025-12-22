@@ -691,4 +691,37 @@ mod tests {
         // Serialization errors map to Internal Error (-32603)
         assert_eq!(mcp_err.code, ErrorCode(-32603));
     }
+
+    #[test]
+    fn test_tool_not_installed_error_to_mcp() {
+        let err = RobloxMcpError::ToolNotInstalled {
+            tool: "selene".to_string(),
+            install_hint: "cargo install selene".to_string(),
+        };
+        let mcp_err: ErrorData = err.into();
+        // ToolNotInstalled maps to custom error code -32002
+        assert_eq!(mcp_err.code, ErrorCode(-32002));
+    }
+
+    #[test]
+    fn test_tool_not_installed_error_display() {
+        let err = RobloxMcpError::ToolNotInstalled {
+            tool: "stylua".to_string(),
+            install_hint: "cargo install stylua".to_string(),
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("stylua"));
+        assert!(msg.contains("cargo install stylua"));
+    }
+
+    #[test]
+    fn test_tool_execution_error_to_mcp() {
+        let err = RobloxMcpError::ToolExecutionError {
+            tool: "rojo".to_string(),
+            message: "Build failed".to_string(),
+        };
+        let mcp_err: ErrorData = err.into();
+        // ToolExecutionError maps to Internal Error (-32603)
+        assert_eq!(mcp_err.code, ErrorCode(-32603));
+    }
 }

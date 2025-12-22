@@ -492,4 +492,241 @@ mod tests {
         assert!(requests[0].url.contains("My%20Leaderboard"));
         assert!(requests[0].url.contains("custom%20scope"));
     }
+
+    // ========================================
+    // Additional coverage tests for error paths
+    // ========================================
+
+    #[tokio::test]
+    async fn test_ordered_datastore_list_error() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(500, b"Internal Server Error"));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+
+        let result = client
+            .ordered_datastore_list(OrderedDataStoreListParams {
+                universe_id: 123,
+                datastore_name: "LB",
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, .. } => {
+                assert_eq!(status, 500);
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ordered_datastore_set_error() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(400, b"Invalid value"));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+
+        let result = client
+            .ordered_datastore_set(123, "LB", None, "player1", -100)
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, message } => {
+                assert_eq!(status, 400);
+                assert!(message.contains("Invalid"));
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ordered_datastore_increment_error() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(404, b"Entry not found"));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+
+        let result = client
+            .ordered_datastore_increment(123, "LB", None, "missing", 10)
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, message } => {
+                assert_eq!(status, 404);
+                assert!(message.contains("not found"));
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ordered_datastore_delete_error() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::success(403, b"Forbidden"));
+
+        let client = OpenCloudClient::with_http(mock, "test-key");
+
+        let result = client
+            .ordered_datastore_delete(123, "LB", Some("custom"), "entry")
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::OpenCloudError { status, message } => {
+                assert_eq!(status, 403);
+                assert!(message.contains("Forbidden"));
+            }
+            e => panic!("Expected OpenCloudError, got {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ordered_datastore_list_with_filter() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(200, serde_json::json!({"entries": []})));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+
+        client
+            .ordered_datastore_list(OrderedDataStoreListParams {
+                universe_id: 123,
+                datastore_name: "LB",
+                filter: Some("value > 100"),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("filter="));
+        assert!(requests[0].url.contains("value"));
+    }
+
+    #[tokio::test]
+    async fn test_ordered_datastore_list_with_order_by() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(200, serde_json::json!({"entries": []})));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+
+        client
+            .ordered_datastore_list(OrderedDataStoreListParams {
+                universe_id: 123,
+                datastore_name: "LB",
+                order_by: Some("asc"),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("order_by=asc"));
+    }
+
+    #[tokio::test]
+    async fn test_ordered_datastore_set_with_scope() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(
+            200,
+            serde_json::json!({
+                "path": "universes/123/orderedDataStores/LB/scopes/custom/entries/p1",
+                "id": "p1",
+                "value": 500
+            }),
+        ));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+
+        let result = client
+            .ordered_datastore_set(123, "LB", Some("custom"), "p1", 500)
+            .await;
+
+        assert!(result.is_ok());
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("/scopes/custom/"));
+    }
+
+    #[tokio::test]
+    async fn test_ordered_datastore_increment_with_scope() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(200, serde_json::json!({"value": 200})));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+
+        let result = client
+            .ordered_datastore_increment(123, "LB", Some("scoped"), "p1", 100)
+            .await;
+
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        assert_eq!(entry.value, 200);
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("/scopes/scoped/"));
+        assert!(requests[0].url.contains(":increment"));
+    }
+
+    #[tokio::test]
+    async fn test_ordered_datastore_max_page_size_capped() {
+        let mock = MockHttpClient::new();
+        mock.queue_response(MockResponse::json(200, serde_json::json!({"entries": []})));
+
+        let client = OpenCloudClient::with_http(mock.clone(), "test-key");
+
+        // Request 500, but should be capped at 100
+        client
+            .ordered_datastore_list(OrderedDataStoreListParams {
+                universe_id: 123,
+                datastore_name: "LB",
+                max_page_size: Some(500),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let requests = mock.requests();
+        assert!(requests[0].url.contains("max_page_size=100"));
+    }
+
+    #[test]
+    fn test_increment_response_deserialize() {
+        let json = r#"{"value": 12345}"#;
+        let resp: IncrementResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.value, 12345);
+    }
+
+    #[test]
+    fn test_increment_response_negative() {
+        let json = r#"{"value": -500}"#;
+        let resp: IncrementResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.value, -500);
+    }
+
+    #[test]
+    fn test_ordered_datastore_entry_serialize() {
+        let entry = OrderedDataStoreEntry {
+            path: "universes/1/orderedDataStores/LB/scopes/global/entries/p1".to_string(),
+            id: "p1".to_string(),
+            value: 999,
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("p1"));
+        assert!(json.contains("999"));
+    }
+
+    #[test]
+    fn test_ordered_datastore_list_params_default() {
+        let params = OrderedDataStoreListParams::default();
+        assert_eq!(params.universe_id, 0);
+        assert!(params.datastore_name.is_empty());
+        assert!(params.scope.is_none());
+        assert!(params.max_page_size.is_none());
+        assert!(params.page_token.is_none());
+        assert!(params.order_by.is_none());
+        assert!(params.filter.is_none());
+    }
 }
