@@ -6,6 +6,7 @@
 //! without requiring the external StyLua binary.
 
 use crate::error::RobloxMcpError;
+use crate::tools::timeout::execute_with_timeout;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -88,6 +89,12 @@ impl Formatter for StyLuaFormatter {
 // ============================================================================
 
 /// Format a Luau script using the stylua CLI
+///
+/// # Errors
+/// Returns error if:
+/// - StyLua is not installed
+/// - File cannot be formatted
+/// - Tool execution times out (default: 30 seconds)
 async fn format_script(
     file_path: &Path,
     config_path: Option<&Path>,
@@ -106,17 +113,14 @@ async fn format_script(
         cmd.arg(file_path);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let output = cmd.output().await.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
+        // Execute with timeout protection
+        let output = execute_with_timeout(cmd, "stylua", None).await.map_err(|e| {
+            if e.to_string().contains("timed out") {
+                e
+            } else {
                 RobloxMcpError::ToolNotInstalled {
                     tool: "stylua".to_string(),
                     install_hint: "Install via: cargo install stylua".to_string(),
-                }
-            } else {
-                RobloxMcpError::FileSystemError {
-                    operation: "spawn stylua".to_string(),
-                    path: file_path.display().to_string(),
-                    source: e,
                 }
             }
         })?;
@@ -141,17 +145,14 @@ async fn format_script(
         cmd.arg(file_path);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let output = cmd.output().await.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
+        // Execute with timeout protection
+        let output = execute_with_timeout(cmd, "stylua", None).await.map_err(|e| {
+            if e.to_string().contains("timed out") {
+                e
+            } else {
                 RobloxMcpError::ToolNotInstalled {
                     tool: "stylua".to_string(),
                     install_hint: "Install via: cargo install stylua".to_string(),
-                }
-            } else {
-                RobloxMcpError::FileSystemError {
-                    operation: "spawn stylua".to_string(),
-                    path: file_path.display().to_string(),
-                    source: e,
                 }
             }
         })?;

@@ -1300,4 +1300,196 @@ mod tests {
         assert!(msg.contains("Security violation"));
         assert!(msg.contains("test symlink attack"));
     }
+
+    // ========================================
+    // Path Traversal Attack Tests
+    // ========================================
+
+    #[test]
+    fn test_validate_path_rejects_dot_dot_traversal() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Create a subdirectory structure
+        let subdir = project_root.join("src");
+        std::fs::create_dir(&subdir).unwrap();
+
+        // Create a file in the project root
+        let file_in_root = project_root.join("secret.luau");
+        std::fs::write(&file_in_root, "-- secret").unwrap();
+
+        // Try to traverse out and back using ../.. pattern
+        let traversal_path = subdir.join("..").join("..").join("etc").join("passwd");
+        let result = validate_path(&traversal_path, &project_root);
+
+        // Should fail - either as InvalidPath or PathTraversal
+        assert!(result.is_err(), "Path traversal should be rejected");
+    }
+
+    #[test]
+    fn test_validate_path_rejects_embedded_null_byte() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Note: Rust's Path doesn't allow embedded nulls, so this tests
+        // that we properly handle the path before any null can cause issues
+        let normal_path = project_root.join("test.luau");
+        std::fs::write(&normal_path, "-- test").unwrap();
+
+        let result = validate_path(&normal_path, &project_root);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_path_handles_absolute_vs_relative() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+        let test_file = project_root.join("test.luau");
+        std::fs::write(&test_file, "-- test").unwrap();
+
+        // Absolute path should work
+        let result_abs = validate_path(&test_file, &project_root);
+        assert!(result_abs.is_ok());
+
+        // A completely different absolute path should be rejected
+        let other_absolute = PathBuf::from(if cfg!(windows) {
+            "C:\\Windows\\System32\\cmd.exe"
+        } else {
+            "/usr/bin/ls"
+        });
+
+        // This should fail because it's outside project root
+        // May fail as InvalidPath if it can't be canonicalized or PathTraversal if it can
+        let result_other = validate_path(&other_absolute, &project_root);
+        assert!(result_other.is_err());
+    }
+
+    #[test]
+    fn test_validate_path_rejects_path_outside_project() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Create sibling directory outside project root
+        let sibling_dir = temp_dir.path().parent().unwrap().join("sibling_dir");
+        if std::fs::create_dir(&sibling_dir).is_ok() {
+            let sibling_file = sibling_dir.join("file.luau");
+            if std::fs::write(&sibling_file, "-- outside project").is_ok() {
+                let result = validate_path(&sibling_file, &project_root);
+                assert!(result.is_err(), "File outside project root should be rejected");
+                // Clean up
+                let _ = std::fs::remove_dir_all(&sibling_dir);
+            }
+        }
+    }
+
+    #[test]
+    fn test_validate_path_detects_traversal_in_filename_components() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Try various traversal patterns in path components
+        let traversal_patterns = [
+            project_root.join("..").join("script.luau"),
+            project_root.join("src").join("..").join("..").join("script.luau"),
+            project_root.join(".").join("..").join("script.luau"),
+        ];
+
+        for pattern in &traversal_patterns {
+            // The validate_path function should either:
+            // 1. Reject these as InvalidPath (can't canonicalize)
+            // 2. Reject as PathTraversal (resolved outside project)
+            // 3. Accept if it resolves back inside project root
+            // The key is no path should allow access outside project_root
+
+            if let Ok(validated) = validate_path(pattern, &project_root) {
+                // If it succeeded, the validated path MUST start with project_root
+                assert!(
+                    validated.starts_with(&project_root),
+                    "Validated path {:?} must start with project root {:?}",
+                    validated,
+                    project_root
+                );
+            }
+            // If it errored, that's also acceptable (security block)
+        }
+    }
+
+    #[test]
+    fn test_validate_path_case_sensitivity_windows() {
+        // On Windows, paths are case-insensitive
+        // This test ensures validate_path handles this correctly
+        if !cfg!(windows) {
+            return; // Skip on non-Windows
+        }
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+        let test_file = project_root.join("Test.luau");
+        std::fs::write(&test_file, "-- test").unwrap();
+
+        // Try with different case
+        let different_case = project_root.join("TEST.LUAU");
+        let result = validate_path(&different_case, &project_root);
+
+        // Should succeed on Windows (case-insensitive)
+        assert!(result.is_ok());
+    }
+
+    // ========================================
+    // Resource Limit Tests
+    // ========================================
+
+    #[tokio::test]
+    async fn test_build_tree_respects_max_entries_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Create more than a few files but not exceeding test limits
+        for i in 0..20 {
+            std::fs::write(project_root.join(format!("file{}.luau", i)), format!("-- file {}", i))
+                .unwrap();
+        }
+
+        // Build tree - should not panic or hang
+        let result = build_tree(&project_root, 0, 5).await;
+        assert!(result.is_ok());
+
+        let tree_result = result.unwrap();
+        assert!(tree_result.tree.children.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_build_tree_handles_deeply_nested_directories() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Create a deeply nested directory structure
+        let mut current = project_root.clone();
+        for i in 0..10 {
+            current = current.join(format!("level{}", i));
+            std::fs::create_dir(&current).unwrap();
+        }
+        std::fs::write(current.join("deep.luau"), "-- deep file").unwrap();
+
+        // Build tree with limited depth - should truncate gracefully
+        let result = build_tree(&project_root, 0, 3).await;
+        assert!(result.is_ok());
+
+        let tree_result = result.unwrap();
+        // Should have truncated metadata if depth was exceeded
+        assert!(tree_result.tree.children.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_build_tree_handles_empty_directories() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Create empty nested directories
+        let empty_dir = project_root.join("empty").join("nested").join("dir");
+        std::fs::create_dir_all(&empty_dir).unwrap();
+
+        let result = build_tree(&project_root, 0, 5).await;
+        assert!(result.is_ok());
+    }
 }

@@ -6,6 +6,7 @@
 //! without requiring the external Wally binary.
 
 use crate::error::RobloxMcpError;
+use crate::tools::timeout::execute_with_timeout;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -93,6 +94,11 @@ impl WallyRunner for DefaultWallyRunner {
 // ============================================================================
 
 /// Install Wally packages using the wally CLI
+///
+/// # Errors
+/// Returns error if:
+/// - Wally is not installed
+/// - Tool execution times out (default: 30 seconds)
 async fn install_packages(project_path: &Path) -> Result<WallyInstallResult, RobloxMcpError> {
     let mut cmd = Command::new("wally");
     cmd.arg("install")
@@ -100,17 +106,14 @@ async fn install_packages(project_path: &Path) -> Result<WallyInstallResult, Rob
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let output = cmd.output().await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+    // Execute with timeout protection
+    let output = execute_with_timeout(cmd, "wally", None).await.map_err(|e| {
+        if e.to_string().contains("timed out") {
+            e
+        } else {
             RobloxMcpError::ToolNotInstalled {
                 tool: "wally".to_string(),
                 install_hint: "Install via: aftman install UpliftGames/wally".to_string(),
-            }
-        } else {
-            RobloxMcpError::FileSystemError {
-                operation: "spawn wally".to_string(),
-                path: project_path.display().to_string(),
-                source: e,
             }
         }
     })?;
@@ -138,6 +141,11 @@ async fn install_packages(project_path: &Path) -> Result<WallyInstallResult, Rob
 }
 
 /// Update Wally packages using the wally CLI
+///
+/// # Errors
+/// Returns error if:
+/// - Wally is not installed
+/// - Tool execution times out (default: 30 seconds)
 async fn update_packages(project_path: &Path) -> Result<WallyUpdateResult, RobloxMcpError> {
     let mut cmd = Command::new("wally");
     cmd.arg("update")
@@ -145,17 +153,14 @@ async fn update_packages(project_path: &Path) -> Result<WallyUpdateResult, Roblo
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let output = cmd.output().await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+    // Execute with timeout protection
+    let output = execute_with_timeout(cmd, "wally", None).await.map_err(|e| {
+        if e.to_string().contains("timed out") {
+            e
+        } else {
             RobloxMcpError::ToolNotInstalled {
                 tool: "wally".to_string(),
                 install_hint: "Install via: aftman install UpliftGames/wally".to_string(),
-            }
-        } else {
-            RobloxMcpError::FileSystemError {
-                operation: "spawn wally".to_string(),
-                path: project_path.display().to_string(),
-                source: e,
             }
         }
     })?;

@@ -6,6 +6,7 @@
 //! without requiring the external Moonwave binary.
 
 use crate::error::RobloxMcpError;
+use crate::tools::timeout::execute_with_timeout;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -79,6 +80,11 @@ impl MoonwaveRunner for DefaultMoonwaveRunner {
 // ============================================================================
 
 /// Build Moonwave documentation using the moonwave CLI
+///
+/// # Errors
+/// Returns error if:
+/// - Moonwave is not installed
+/// - Tool execution times out (default: 30 seconds)
 async fn build_docs(
     project_path: &Path,
     output_dir: Option<&Path>,
@@ -93,17 +99,14 @@ async fn build_docs(
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let output = cmd.output().await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+    // Execute with timeout protection
+    let output = execute_with_timeout(cmd, "moonwave", None).await.map_err(|e| {
+        if e.to_string().contains("timed out") {
+            e
+        } else {
             RobloxMcpError::ToolNotInstalled {
                 tool: "moonwave".to_string(),
                 install_hint: "Install via: npm install -g moonwave".to_string(),
-            }
-        } else {
-            RobloxMcpError::FileSystemError {
-                operation: "spawn moonwave".to_string(),
-                path: project_path.display().to_string(),
-                source: e,
             }
         }
     })?;

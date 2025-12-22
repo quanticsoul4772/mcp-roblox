@@ -6,6 +6,7 @@
 //! without requiring the external Rojo binary.
 
 use crate::error::RobloxMcpError;
+use crate::tools::timeout::execute_with_timeout;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -110,6 +111,11 @@ impl RojoRunner for DefaultRojoRunner {
 // ============================================================================
 
 /// Build a Rojo project using the rojo CLI
+///
+/// # Errors
+/// Returns error if:
+/// - Rojo is not installed
+/// - Tool execution times out (default: 30 seconds)
 async fn build_project(
     project_path: &Path,
     output_path: &Path,
@@ -122,17 +128,14 @@ async fn build_project(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let output = cmd.output().await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+    // Execute with timeout protection
+    let output = execute_with_timeout(cmd, "rojo", None).await.map_err(|e| {
+        if e.to_string().contains("timed out") {
+            e
+        } else {
             RobloxMcpError::ToolNotInstalled {
                 tool: "rojo".to_string(),
                 install_hint: "Install via: aftman install rojo-rbx/rojo".to_string(),
-            }
-        } else {
-            RobloxMcpError::FileSystemError {
-                operation: "spawn rojo".to_string(),
-                path: project_path.display().to_string(),
-                source: e,
             }
         }
     })?;
@@ -157,6 +160,11 @@ async fn build_project(
 }
 
 /// Generate a sourcemap using the rojo CLI
+///
+/// # Errors
+/// Returns error if:
+/// - Rojo is not installed
+/// - Tool execution times out (default: 30 seconds)
 async fn generate_sourcemap(
     project_path: &Path,
     output_path: Option<&Path>,
@@ -170,17 +178,14 @@ async fn generate_sourcemap(
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let output = cmd.output().await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+    // Execute with timeout protection
+    let output = execute_with_timeout(cmd, "rojo", None).await.map_err(|e| {
+        if e.to_string().contains("timed out") {
+            e
+        } else {
             RobloxMcpError::ToolNotInstalled {
                 tool: "rojo".to_string(),
                 install_hint: "Install via: aftman install rojo-rbx/rojo".to_string(),
-            }
-        } else {
-            RobloxMcpError::FileSystemError {
-                operation: "spawn rojo".to_string(),
-                path: project_path.display().to_string(),
-                source: e,
             }
         }
     })?;

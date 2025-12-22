@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use regex::Regex;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
@@ -74,6 +73,7 @@ use crate::tools::linting::{Linter, SeleneLinter};
 use crate::tools::moonwave::{DefaultMoonwaveRunner, MoonwaveRunner};
 use crate::tools::rojo::{DefaultRojoRunner, RojoRunner};
 use crate::tools::wally::{DefaultWallyRunner, WallyRunner};
+use crate::regex_safety::validate_regex_safety;
 use crate::watcher::FileWatcher;
 
 /// Roblox MCP Server with injectable dependencies
@@ -590,9 +590,10 @@ impl<
         let validated_path = validate_path(&path, &self.project_root)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        // Compile regex pattern
-        let regex = Regex::new(&params.pattern)
-            .map_err(|e| ErrorData::internal_error(format!("Invalid regex pattern: {e}"), None))?;
+        // Validate and compile regex pattern with DoS protection
+        // This prevents catastrophic backtracking attacks via malicious patterns
+        let regex = validate_regex_safety(&params.pattern)
+            .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
 
         // Extension is REQUIRED (enforced by schema) - clone for move into closure
         let extension = params.extension.clone();

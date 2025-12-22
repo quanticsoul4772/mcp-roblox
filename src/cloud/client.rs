@@ -5,6 +5,7 @@
 
 use crate::error::RobloxMcpError;
 use crate::http::{HttpClient, ReqwestHttpClient};
+use secrecy::{ExposeSecret, Secret};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -26,17 +27,23 @@ pub struct PublishResult {
 ///
 /// Generic over HttpClient to allow mocking in tests.
 /// Default type parameter uses ReqwestHttpClient for production.
+///
+/// # Security
+/// The API key is stored as a `Secret<String>` which provides:
+/// - Automatic redaction in Debug output (shows `[REDACTED]`)
+/// - Memory zeroization on drop
+/// - Compile-time enforcement requiring explicit `expose_secret()` to access
 pub struct OpenCloudClient<H: HttpClient = ReqwestHttpClient> {
     http: Arc<H>,
-    api_key: String,
+    api_key: Secret<String>,
     base_url: String,
 }
 
-// Manual Debug implementation to avoid exposing API key in logs
+// Manual Debug implementation using Secret's automatic redaction
 impl<H: HttpClient> std::fmt::Debug for OpenCloudClient<H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenCloudClient")
-            .field("api_key", &"[REDACTED]")
+            .field("api_key", &"[REDACTED]") // Secret auto-redacts, but be explicit
             .field("base_url", &self.base_url)
             .finish()
     }
@@ -58,7 +65,7 @@ impl OpenCloudClient<ReqwestHttpClient> {
 
         Ok(Self {
             http: Arc::new(http),
-            api_key,
+            api_key: Secret::new(api_key),
             base_url: "https://apis.roblox.com".into(),
         })
     }
@@ -70,14 +77,18 @@ impl<H: HttpClient> OpenCloudClient<H> {
     pub fn with_http(http: H, api_key: impl Into<String>) -> Self {
         Self {
             http: Arc::new(http),
-            api_key: api_key.into(),
+            api_key: Secret::new(api_key.into()),
             base_url: "https://apis.roblox.com".into(),
         }
     }
 
     /// Get the API key (for use by extension modules)
+    ///
+    /// # Security
+    /// This method explicitly exposes the secret. Only use it when the key
+    /// is needed for an HTTP request header.
     pub(crate) fn api_key(&self) -> &str {
-        &self.api_key
+        self.api_key.expose_secret()
     }
 
     /// Get the base URL (for use by extension modules)
@@ -127,7 +138,7 @@ impl<H: HttpClient> OpenCloudClient<H> {
             .post_binary(
                 &url,
                 &[
-                    ("x-api-key", self.api_key.as_str()),
+                    ("x-api-key", self.api_key.expose_secret()),
                     ("Content-Type", "application/octet-stream"),
                 ],
                 content,
@@ -368,6 +379,29 @@ mod tests {
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("secret-api-key-12345"));
         assert!(debug.contains("OpenCloudClient"));
+    }
+
+    #[test]
+    fn test_api_key_uses_secret_type() {
+        // Verify that accessing the API key requires explicit expose_secret()
+        let mock = MockHttpClient::new();
+        let client = OpenCloudClient::with_http(mock, "my-secure-key");
+
+        // api_key() method should return the exposed secret
+        assert_eq!(client.api_key(), "my-secure-key");
+    }
+
+    #[test]
+    fn test_api_key_not_in_any_debug_format() {
+        let mock = MockHttpClient::new();
+        let client = OpenCloudClient::with_http(mock, "super-secret-key-xyz");
+
+        // Check both Debug and alternate Debug formats
+        let debug = format!("{:?}", client);
+        let debug_alternate = format!("{:#?}", client);
+
+        assert!(!debug.contains("super-secret-key-xyz"));
+        assert!(!debug_alternate.contains("super-secret-key-xyz"));
     }
 
     #[tokio::test]

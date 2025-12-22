@@ -6,6 +6,7 @@ mod http;
 mod limits;
 mod mcp;
 mod metrics;
+mod regex_safety;
 mod startup;
 mod tasks;
 mod tools;

@@ -6,6 +6,7 @@
 //! without requiring the external Selene binary.
 
 use crate::error::RobloxMcpError;
+use crate::tools::timeout::execute_with_timeout;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -312,6 +313,7 @@ pub mod mock {
 /// - Selene is not installed
 /// - File cannot be read
 /// - JSON parsing fails
+/// - Tool execution times out (default: 30 seconds)
 pub async fn lint_script(
     file_path: &Path,
     config_path: Option<&Path>,
@@ -330,11 +332,17 @@ pub async fn lint_script(
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let output = cmd.output().await.map_err(|e| {
-        RobloxMcpError::ConfigError(format!(
-            "Failed to run selene: {}. Is selene installed? Install with: cargo install selene",
+    // Execute with timeout protection to prevent hanging
+    let output = execute_with_timeout(cmd, "selene", None).await.map_err(|e| {
+        // Convert ToolExecutionError to a more user-friendly error
+        if e.to_string().contains("timed out") {
             e
-        ))
+        } else {
+            RobloxMcpError::ToolNotInstalled {
+                tool: "selene".to_string(),
+                install_hint: "Install with: cargo install selene".to_string(),
+            }
+        }
     })?;
 
     parse_selene_output(&output.stdout, &output.stderr, file_path)
