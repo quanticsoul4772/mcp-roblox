@@ -350,9 +350,7 @@ mod tests {
 
     #[test]
     fn test_task_health_debug() {
-        let handle = tokio::runtime::Runtime::new()
-            .unwrap()
-            .spawn(async {});
+        let handle = tokio::runtime::Runtime::new().unwrap().spawn(async {});
         let health = TaskHealth::new("debug_test", handle);
 
         let debug_str = format!("{:?}", health);

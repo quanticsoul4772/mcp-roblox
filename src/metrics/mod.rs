@@ -724,10 +724,7 @@ mod tests {
             .unwrap()
             .block_on(from_new.snapshot());
 
-        assert_eq!(
-            snapshot_default.tools.len(),
-            snapshot_new.tools.len()
-        );
+        assert_eq!(snapshot_default.tools.len(), snapshot_new.tools.len());
         assert_eq!(
             snapshot_default.connection.total_checks,
             snapshot_new.connection.total_checks

@@ -2775,7 +2775,7 @@ mod tests {
     // Tests for cloud tool success and error paths using MockCloudClient
 
     use crate::cloud::mock::MockCloudClient;
-    use crate::cloud::{AssetUploadResult, DataStoreEntry, DataStoreSetResult, PublishResult};
+    use crate::cloud::{AssetUploadResult, DataStoreEntry, PublishResult};
 
     fn create_server_with_mock_cloud(
         project_root: PathBuf,
@@ -2822,11 +2822,11 @@ mod tests {
         let project_root = temp_dir.path().to_path_buf();
 
         let mock_cloud = Arc::new(MockCloudClient::new());
-        mock_cloud.queue_get_entry(Ok(DataStoreEntry {
+        mock_cloud.queue_datastore_get(Ok(DataStoreEntry {
             value: serde_json::json!({"coins": 100, "level": 5}),
             version: "abc123".to_string(),
-            created_time: Some("2024-01-01T00:00:00Z".to_string()),
-            updated_time: Some("2024-01-02T00:00:00Z".to_string()),
+            created_time: "2024-01-01T00:00:00Z".to_string(),
+            updated_time: "2024-01-02T00:00:00Z".to_string(),
         }));
 
         let server = create_server_with_mock_cloud(project_root, mock_cloud);
@@ -2855,10 +2855,11 @@ mod tests {
         let project_root = temp_dir.path().to_path_buf();
 
         let mock_cloud = Arc::new(MockCloudClient::new());
-        mock_cloud.queue_set_entry(Ok(DataStoreSetResult {
+        mock_cloud.queue_datastore_set(Ok(DataStoreEntry {
+            value: serde_json::json!({"coins": 200}),
             version: "v2".to_string(),
-            created_time: Some("2024-01-01T00:00:00Z".to_string()),
-            updated_time: Some("2024-01-02T00:00:00Z".to_string()),
+            created_time: "2024-01-01T00:00:00Z".to_string(),
+            updated_time: "2024-01-02T00:00:00Z".to_string(),
         }));
 
         let server = create_server_with_mock_cloud(project_root, mock_cloud);
@@ -2881,7 +2882,7 @@ mod tests {
         let project_root = temp_dir.path().to_path_buf();
 
         let mock_cloud = Arc::new(MockCloudClient::new());
-        mock_cloud.queue_publish_message(Ok(()));
+        mock_cloud.queue_messaging_publish(Ok(()));
 
         let server = create_server_with_mock_cloud(project_root, mock_cloud);
 
@@ -2905,9 +2906,8 @@ mod tests {
 
         let mock_cloud = Arc::new(MockCloudClient::new());
         mock_cloud.queue_upload_asset(Ok(AssetUploadResult {
-            operation_path: "operations/op123".to_string(),
+            path: "operations/op123".to_string(),
             done: true,
-            asset_id: Some("12345".to_string()),
         }));
 
         let server = create_server_with_mock_cloud(project_root, mock_cloud);

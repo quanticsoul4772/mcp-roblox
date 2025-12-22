@@ -242,8 +242,13 @@ impl McpTestClient {
 impl Drop for McpTestClient {
     fn drop(&mut self) {
         // Kill the server process
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // Log cleanup errors but don't panic - process may already be dead
+        if let Err(e) = self.child.kill() {
+            eprintln!("[test cleanup] Failed to kill MCP server process: {e}");
+        }
+        if let Err(e) = self.child.wait() {
+            eprintln!("[test cleanup] Failed to wait for MCP server process: {e}");
+        }
     }
 }
 
