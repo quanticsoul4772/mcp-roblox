@@ -40,61 +40,74 @@ pub struct WriteResult {
 }
 
 /// Validate that a path is within the project root
-pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, RobloxMcpError> {
-    // Canonicalize both paths to ensure consistent comparison
-    // This handles Windows \\?\ prefix and other platform differences
-    let canonical_root = project_root.canonicalize().map_err(|e| {
-        RobloxMcpError::InvalidPath(format!("Cannot canonicalize project root: {e}"))
-    })?;
-
-    let canonical = requested
-        .canonicalize()
-        .map_err(|e| RobloxMcpError::InvalidPath(e.to_string()))?;
-
-    if !canonical.starts_with(&canonical_root) {
-        return Err(RobloxMcpError::PathTraversal(
-            canonical.display().to_string(),
-        ));
-    }
-
-    Ok(canonical)
-}
-
-/// Validate an output path that may not exist yet
 ///
-/// This validates that the parent directory exists and is within the project root,
-/// then returns the full path with the filename appended. Use this for output paths
-/// where the target file will be created by an operation.
-pub fn validate_output_path(requested: &Path, project_root: &Path) -> Result<PathBuf, RobloxMcpError> {
+/// Handles both existing and non-existing paths:
+/// - If path exists: uses canonicalize for maximum security
+/// - If path doesn't exist: finds nearest existing ancestor, canonicalizes it,
+///   then safely appends remaining components (rejecting any `..` segments)
+pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, RobloxMcpError> {
     let canonical_root = project_root.canonicalize().map_err(|e| {
         RobloxMcpError::InvalidPath(format!("Cannot canonicalize project root: {e}"))
     })?;
 
-    // Get the parent directory and filename
-    let parent = requested.parent().ok_or_else(|| {
-        RobloxMcpError::InvalidPath("Output path has no parent directory".to_string())
+    // Try canonicalize first (works if path exists)
+    if let Ok(canonical) = requested.canonicalize() {
+        if !canonical.starts_with(&canonical_root) {
+            return Err(RobloxMcpError::PathTraversal(
+                canonical.display().to_string(),
+            ));
+        }
+        return Ok(canonical);
+    }
+
+    // Path doesn't exist - find existing ancestor and validate
+    let mut existing_ancestor = requested.to_path_buf();
+    let mut components_to_add = Vec::new();
+
+    // Walk up until we find an existing directory
+    while !existing_ancestor.exists() {
+        if let Some(file_name) = existing_ancestor.file_name() {
+            components_to_add.push(file_name.to_os_string());
+            if let Some(parent) = existing_ancestor.parent() {
+                existing_ancestor = parent.to_path_buf();
+            } else {
+                return Err(RobloxMcpError::InvalidPath(
+                    "Cannot find existing ancestor directory".to_string(),
+                ));
+            }
+        } else {
+            return Err(RobloxMcpError::InvalidPath(
+                "Path has no valid components".to_string(),
+            ));
+        }
+    }
+
+    // Canonicalize the existing ancestor
+    let canonical_ancestor = existing_ancestor.canonicalize().map_err(|e| {
+        RobloxMcpError::InvalidPath(format!("Cannot canonicalize ancestor: {e}"))
     })?;
 
-    let filename = requested.file_name().ok_or_else(|| {
-        RobloxMcpError::InvalidPath("Output path has no filename".to_string())
-    })?;
-
-    // Canonicalize the parent directory (which must exist)
-    let canonical_parent = parent
-        .canonicalize()
-        .map_err(|e| RobloxMcpError::InvalidPath(format!("Parent directory does not exist: {e}")))?;
-
-    // Build the full output path
-    let output_path = canonical_parent.join(filename);
-
-    // Verify it's within the project root
-    if !canonical_parent.starts_with(&canonical_root) {
+    // Verify ancestor is within project root
+    if !canonical_ancestor.starts_with(&canonical_root) {
         return Err(RobloxMcpError::PathTraversal(
-            output_path.display().to_string(),
+            canonical_ancestor.display().to_string(),
         ));
     }
 
-    Ok(output_path)
+    // Rebuild path by appending components (in reverse order)
+    let mut result = canonical_ancestor;
+    for component in components_to_add.into_iter().rev() {
+        // Reject any path traversal attempts in remaining components
+        let component_str = component.to_string_lossy();
+        if component_str == ".." || component_str.contains("..") {
+            return Err(RobloxMcpError::PathTraversal(
+                requested.display().to_string(),
+            ));
+        }
+        result.push(component);
+    }
+
+    Ok(result)
 }
 
 /// Build a file tree recursively (boxed for async recursion)
@@ -287,21 +300,29 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_path_nonexistent_fails() {
+    fn test_validate_path_nonexistent_with_existing_parent_succeeds() {
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path().to_path_buf();
         let nonexistent = project_root.join("does_not_exist.luau");
 
+        // Should succeed - parent directory exists and is within project root
         let result = validate_path(&nonexistent, &project_root);
-        assert!(result.is_err());
+        assert!(result.is_ok());
 
-        // Check it's an InvalidPath error
-        if let Err(e) = result {
-            match e {
-                RobloxMcpError::InvalidPath(_) => (),
-                _ => panic!("Expected InvalidPath error, got {e:?}"),
-            }
-        }
+        let validated = result.unwrap();
+        assert!(validated.ends_with("does_not_exist.luau"));
+    }
+
+    #[test]
+    fn test_validate_path_nonexistent_parent_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        // Both the file AND the parent directory don't exist
+        let nonexistent = project_root.join("nonexistent_dir").join("file.luau");
+
+        // Should succeed - walks up to project_root which exists
+        let result = validate_path(&nonexistent, &project_root);
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

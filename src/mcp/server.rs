@@ -66,7 +66,7 @@ use crate::mcp::params::{
     StudioSetPropertyParams,
 };
 use crate::metrics::ServerMetrics;
-use crate::tools::filesystem::{build_tree, read_script, validate_output_path, validate_path, write_script};
+use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
 use crate::tools::formatting::{Formatter, StyLuaFormatter};
 use crate::tools::linting::{Linter, SeleneLinter};
 use crate::tools::moonwave::{DefaultMoonwaveRunner, MoonwaveRunner};
@@ -1851,8 +1851,8 @@ impl<
         let validated_project = validate_path(project_path, &self.project_root)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        // Validate output path is within project root (file may not exist yet)
-        let validated_output = validate_output_path(output_path, &self.project_root)
+        // Validate output path is within project root
+        let validated_output = validate_path(output_path, &self.project_root)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         // Run rojo build
