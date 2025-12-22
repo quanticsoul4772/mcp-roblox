@@ -957,6 +957,196 @@ rojo build -o test.rbxl && run-in-roblox --place test.rbxl --script tests/run.lu
 
 ---
 
+## Procedural Generation Patterns
+
+This section documents patterns learned from building a procedural city generator.
+
+### Chunk-Based Generation
+
+For large-scale procedural content, use chunk-based systems with frame budgets:
+
+```lua
+-- Configuration (mobile-friendly)
+local CHUNK_SIZE = 128        -- studs
+local FRAME_BUDGET_MS = 2     -- 2ms leaves room for rendering at 30fps
+local LOAD_RADIUS = 3         -- chunks around player
+local UNLOAD_RADIUS = 5       -- cleanup distance
+
+-- Chunk structure
+local Chunk = {
+    cx = 0, cz = 0,           -- chunk coordinates
+    state = "idle",           -- idle | loading | ready | unloading
+    data = {},                -- layer data (terrain, road, lot, building)
+    model = nil,              -- Workspace model when ready
+}
+
+-- Deterministic seeding for reproducible worlds
+local function getChunkSeed(masterSeed, cx, cz)
+    return masterSeed * 31 + cx * 17 + cz * 13
+end
+```
+
+### Layer-Based Generation Pipeline
+
+**CRITICAL:** Layers must run in dependency order. Lua's `pairs()` has undefined iteration order.
+
+```lua
+-- WRONG: pairs() gives random order - will break dependencies
+for layerName, generator in pairs(self.layers) do
+    generator(chunk)  -- terrain might run AFTER buildings!
+end
+
+-- CORRECT: Define explicit order and use ipairs()
+local LAYER_ORDER = {"terrain", "road", "lot", "building", "prop"}
+
+function generateChunk(chunk, layers)
+    for _, layerName in ipairs(LAYER_ORDER) do
+        local generator = layers[layerName]
+        if generator then
+            chunk.data[layerName] = generator(chunk)
+            coroutine.yield()  -- yield for frame budget
+        end
+    end
+end
+```
+
+### Data Key Consistency
+
+A common bug: layer producers and consumers use different keys.
+
+```lua
+-- RoadLayer writes:
+chunk.data.road = { roads = {...}, blocks = {...} }
+
+-- LotLayer reads (WRONG - will get nil):
+local roadData = chunk.data.roads  -- "roads" vs "road"!
+
+-- LotLayer reads (CORRECT):
+local roadData = chunk.data.road or { roads = {}, blocks = {} }
+```
+
+### Frame-Budget Scheduler
+
+Spread generation across frames to maintain framerate:
+
+```lua
+local GenScheduler = {
+    queue = {},
+    activeCoroutine = nil,
+    BUDGET_MS = 2,
+}
+
+function GenScheduler:update()
+    local startTime = os.clock()
+
+    while os.clock() - startTime < self.BUDGET_MS / 1000 do
+        if not self.activeCoroutine then
+            local task = table.remove(self.queue, 1)
+            if not task then return end
+            self.activeCoroutine = coroutine.create(task.fn)
+        end
+
+        local ok, err = coroutine.resume(self.activeCoroutine)
+        if coroutine.status(self.activeCoroutine) == "dead" then
+            self.activeCoroutine = nil
+        end
+
+        if not ok then
+            warn("Generation error:", err)
+            self.activeCoroutine = nil
+        end
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    GenScheduler:update()
+end)
+```
+
+### LOD System for Mobile
+
+Swap building detail based on distance:
+
+```lua
+local LOD_LEVELS = {
+    [1] = { maxDistance = 64,  maxParts = 100 },  -- Full detail
+    [2] = { maxDistance = 128, maxParts = 20 },   -- Reduced
+    [3] = { maxDistance = 256, maxParts = 4 },    -- Minimal
+    [4] = { maxDistance = math.huge, maxParts = 1 }, -- Billboard
+}
+
+function getLODLevel(buildingPos, playerPos)
+    local distance = (buildingPos - playerPos).Magnitude
+    for level, config in ipairs(LOD_LEVELS) do
+        if distance <= config.maxDistance then
+            return level
+        end
+    end
+    return 4
+end
+```
+
+### Debug Visualization
+
+Toggle-able debug visuals help during development:
+
+```lua
+-- Config.lua
+Config.Debug = {
+    ENABLED = true,
+    VERBOSE = false,           -- log spam control
+    SHOW_CHUNK_BORDERS = true, -- red neon borders
+    SHOW_LOD_COLORS = false,   -- color-code by LOD
+}
+
+-- ChunkManager.lua (debug border creation)
+if Config.Debug.SHOW_CHUNK_BORDERS then
+    local border = Instance.new("Part")
+    border.Size = Vector3.new(CHUNK_SIZE, 1, 1)
+    border.BrickColor = BrickColor.Red()
+    border.Material = Enum.Material.Neon
+    border.Anchored = true
+    border.CanCollide = false
+    border.Parent = chunk.model
+end
+```
+
+### Seeded Random for Consistency
+
+Use seeded randoms so the same coordinates always produce the same content:
+
+```lua
+local function SeededRandom(seed)
+    local rng = Random.new(seed)
+    return {
+        NextNumber = function(min, max)
+            return rng:NextNumber(min or 0, max or 1)
+        end,
+        NextInteger = function(min, max)
+            return rng:NextInteger(min, max)
+        end,
+    }
+end
+
+-- Usage in building generation
+local buildingSeed = getChunkSeed(masterSeed, cx, cz) + lotIndex
+local rng = SeededRandom(buildingSeed)
+local floors = rng.NextInteger(lot.minFloors, lot.maxFloors)
+```
+
+### Mobile Performance Checklist
+
+- [ ] Total parts loaded < 15k active
+- [ ] Parts per chunk < 300
+- [ ] Render distance 384 studs
+- [ ] Frame budget 2ms for generation
+- [ ] LOD system with 4 levels
+- [ ] CastShadow = false for LOD2+
+- [ ] CanCollide = false for decorative parts
+- [ ] workspace.StreamingEnabled = true
+
+---
+
 ## Troubleshooting
 
 ### Plugin Won't Connect
