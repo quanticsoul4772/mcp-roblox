@@ -286,7 +286,14 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
 
             let is_file = match std::fs::metadata(&child_path) {
                 Ok(m) => m.is_file(),
-                Err(_) => true, // Assume file if can't read metadata
+                Err(e) => {
+                    // Report the metadata error, don't silently assume
+                    all_skipped.push(SkippedEntry {
+                        path: child_path.display().to_string(),
+                        reason: format!("cannot read metadata: {}", e),
+                    });
+                    continue;
+                }
             };
 
             child_entries.push((child_path, is_file));
@@ -1491,5 +1498,305 @@ mod tests {
 
         let result = build_tree(&project_root, 0, 5).await;
         assert!(result.is_ok());
+    }
+
+    // ========================================
+    // Additional Coverage Tests for Edge Cases
+    // ========================================
+
+    #[test]
+    fn test_validate_path_traversal_in_nonexistent_components() {
+        // Test that .. in nonexistent path components is rejected
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Create a path with .. in the nonexistent portion
+        let malicious_path = project_root.join("exists").join("..").join("attack.luau");
+
+        // Create the "exists" directory so we have an existing ancestor
+        let exists_dir = project_root.join("exists");
+        std::fs::create_dir_all(&exists_dir).unwrap();
+
+        let result = validate_path(&malicious_path, &project_root);
+        // This should be caught by canonicalize or the .. check
+        // Either way, it should not return a path outside the project root
+        if let Ok(validated) = result {
+            assert!(
+                validated.starts_with(&project_root),
+                "Validated path should be within project root"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_path_ancestor_outside_project_root() {
+        // Test when the existing ancestor is outside the project root
+        let temp_dir1 = TempDir::new().unwrap();
+        let temp_dir2 = TempDir::new().unwrap();
+
+        let project_root = temp_dir1.path().canonicalize().unwrap();
+        // Try to validate a path that's in a completely different temp dir
+        let outside_path = temp_dir2.path().join("file.luau");
+
+        let result = validate_path(&outside_path, &project_root);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_path_deeply_nested_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Create a deeply nested nonexistent path
+        let deep_path = project_root
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("e")
+            .join("f")
+            .join("file.luau");
+
+        let result = validate_path(&deep_path, &project_root);
+        assert!(result.is_ok());
+        let validated = result.unwrap();
+        assert!(validated.starts_with(&project_root));
+    }
+
+    #[test]
+    fn test_validate_path_existing_file_inside_project() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().canonicalize().unwrap();
+
+        // Create an actual file
+        let file = project_root.join("script.luau");
+        std::fs::write(&file, "-- test").unwrap();
+
+        let result = validate_path(&file, &project_root);
+        assert!(result.is_ok());
+        let validated = result.unwrap();
+        assert!(validated.ends_with("script.luau"));
+    }
+
+    #[test]
+    fn test_validate_path_existing_file_outside_project() {
+        let temp_dir1 = TempDir::new().unwrap();
+        let temp_dir2 = TempDir::new().unwrap();
+
+        let project_root = temp_dir1.path().canonicalize().unwrap();
+
+        // Create a file outside the project
+        let outside_file = temp_dir2.path().join("outside.luau");
+        std::fs::write(&outside_file, "-- outside").unwrap();
+
+        let result = validate_path(&outside_file, &project_root);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RobloxMcpError::PathTraversal(_) => (),
+            e => panic!("Expected PathTraversal error, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_script_large_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let luau_file = temp_dir.path().join("large.luau");
+
+        // Create a large file (100KB)
+        let large_content = "-- ".to_string() + &"x".repeat(100_000);
+        std::fs::write(&luau_file, &large_content).unwrap();
+
+        let result = read_script(&luau_file).await;
+        assert!(result.is_ok());
+
+        let script = result.unwrap();
+        assert_eq!(script.size_bytes, large_content.len());
+    }
+
+    #[tokio::test]
+    async fn test_write_script_overwrite_preserves_content() {
+        let temp_dir = TempDir::new().unwrap();
+        let luau_file = temp_dir.path().join("test.luau");
+
+        // Write initial
+        write_script(&luau_file, "-- v1", false).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&luau_file).unwrap(), "-- v1");
+
+        // Overwrite
+        write_script(&luau_file, "-- v2", false).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&luau_file).unwrap(), "-- v2");
+
+        // Overwrite again
+        write_script(&luau_file, "-- v3", false).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&luau_file).unwrap(), "-- v3");
+    }
+
+    #[tokio::test]
+    async fn test_build_tree_with_mixed_content() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create a mix of files, directories, hidden entries
+        std::fs::write(root.join("visible.luau"), "-- visible").unwrap();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("main.luau"), "-- main").unwrap();
+        std::fs::create_dir(root.join(".hidden")).unwrap();
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        std::fs::create_dir(root.join("target")).unwrap();
+
+        let result = build_tree(root, 0, 5).await.unwrap();
+
+        // Should have skipped 3 entries (.hidden, node_modules, target)
+        assert_eq!(result.skipped.len(), 3);
+
+        // Should only have 2 visible items (visible.luau and src)
+        let children = result.tree.children.unwrap();
+        assert_eq!(children.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_build_tree_starting_depth() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        std::fs::create_dir(root.join("level1")).unwrap();
+        std::fs::create_dir(root.join("level1").join("level2")).unwrap();
+        std::fs::write(
+            root.join("level1").join("level2").join("deep.luau"),
+            "-- deep",
+        )
+        .unwrap();
+
+        // Start at depth 2 with max_depth 1 - should not recurse into level2
+        let result = build_tree(&root.join("level1"), 2, 3).await.unwrap();
+
+        assert_eq!(result.tree.name, "level1");
+        // With starting_depth=2 and max_depth=3, we can go 1 more level
+        let children = result.tree.children.unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "level2");
+    }
+
+    // ========================================
+    // Additional validate_path Edge Case Tests
+    // ========================================
+
+    #[test]
+    fn test_validate_path_empty_path() {
+        // Test with an empty path (edge case for "no valid components")
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path();
+
+        // Create a path that has no components
+        let empty_path = PathBuf::from("");
+
+        let result = validate_path(&empty_path, project_root);
+        // Empty path won't canonicalize - should error
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_path_root_path_outside_project() {
+        // Test with an absolute path outside the project root
+        // This covers the path traversal detection for non-existent paths
+        use std::path::PathBuf;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path();
+
+        // Use a non-existent path at root level (outside project root)
+        let outside_path = PathBuf::from("/tmp/outside_project_xyz/file.luau");
+
+        let result = validate_path(&outside_path, project_root);
+        // Path exists at root level but is outside project - should fail
+        assert!(result.is_err(), "Path outside project root should fail validation");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_path_dotdot_escape_attempt() {
+        // Test that a path attempting to escape via .. is rejected
+        // This uses a manually constructed OsString to ensure .. isn't normalized
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path();
+
+        // Create existing subdir
+        let subdir = project_root.join("subdir");
+        std::fs::create_dir(&subdir).unwrap();
+
+        // Try to escape: project_root/subdir/../../../etc/passwd
+        // Using OsString to prevent path normalization
+        let mut malicious = subdir.as_os_str().to_os_string();
+        malicious.push("/../../../etc/passwd");
+        let malicious_path = PathBuf::from(malicious);
+
+        let result = validate_path(&malicious_path, project_root);
+        // Should be rejected - either path doesn't exist or it's outside project
+        assert!(result.is_err(), "Path escape attempt should be rejected");
+    }
+
+    #[test]
+    fn test_validate_path_deep_nested_walks_to_root() {
+        // Test with a deeply nested non-existent path that walks up to project root
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path();
+
+        // Create a deeply nested path that doesn't exist
+        let deep_path = project_root
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("e")
+            .join("deep.luau");
+
+        // Should succeed because walking up eventually reaches project_root
+        let result = validate_path(&deep_path, project_root);
+        // This should succeed because it walks up to project_root
+        assert!(result.is_ok(), "Deep nested path should be valid if it walks up to project root");
+    }
+
+    #[test]
+    fn test_validate_path_with_existing_parent() {
+        // Test a non-existent file within an existing directory
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path();
+
+        // Create a parent directory
+        let subdir = project_root.join("src");
+        std::fs::create_dir(&subdir).unwrap();
+
+        // Path to non-existent file in existing directory
+        let new_file = subdir.join("new_file.luau");
+
+        let result = validate_path(&new_file, project_root);
+        assert!(result.is_ok(), "Non-existent file in existing directory should be valid");
+    }
+
+    #[test]
+    fn test_validate_path_canonical_ancestor_outside_project() {
+        // Test that path traversal is detected when ancestor resolves outside project
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path();
+
+        // Create a subdirectory to use as project root
+        let inner_project = project_root.join("project");
+        std::fs::create_dir(&inner_project).unwrap();
+
+        // Try to access a path outside the inner project
+        let outside_path = project_root.join("outside.luau");
+        std::fs::write(&outside_path, "-- outside").unwrap();
+
+        // Validate path relative to inner_project - should fail
+        let result = validate_path(&outside_path, &inner_project);
+        assert!(result.is_err(), "Path outside project should be rejected");
+        match result.unwrap_err() {
+            RobloxMcpError::PathTraversal(_) => (),
+            e => panic!("Expected PathTraversal error, got {e:?}"),
+        }
     }
 }

@@ -19,7 +19,10 @@ pub enum ConfigError {
     },
 
     #[error("RUST_LOG environment variable contains invalid unicode: {0:?}")]
-    InvalidUnicode(OsString),
+    InvalidLogUnicode(OsString),
+
+    #[error("ROBLOX_MCP_PORT environment variable contains invalid unicode: {0:?}")]
+    InvalidPortUnicode(OsString),
 
     #[error("Invalid port number '{value}': {source}")]
     InvalidPort {
@@ -94,7 +97,7 @@ pub fn parse_log_filter_from_env() -> Result<EnvFilter, ConfigError> {
     match std::env::var("RUST_LOG") {
         Ok(filter_str) => parse_log_filter(&filter_str),
         Err(std::env::VarError::NotPresent) => Ok(EnvFilter::new(DEFAULT_LOG_FILTER)),
-        Err(std::env::VarError::NotUnicode(os_str)) => Err(ConfigError::InvalidUnicode(os_str)),
+        Err(std::env::VarError::NotUnicode(os_str)) => Err(ConfigError::InvalidLogUnicode(os_str)),
     }
 }
 
@@ -120,10 +123,12 @@ pub fn parse_log_filter(filter_str: &str) -> Result<EnvFilter, ConfigError> {
 ///
 /// # Errors
 /// - If ROBLOX_MCP_PORT is set but not a valid u16
+/// - If ROBLOX_MCP_PORT contains invalid unicode
 pub fn parse_port_from_env() -> Result<u16, ConfigError> {
     match std::env::var("ROBLOX_MCP_PORT") {
         Ok(port_str) => parse_port(&port_str),
-        Err(_) => Ok(DEFAULT_PORT),
+        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_PORT),
+        Err(std::env::VarError::NotUnicode(os_str)) => Err(ConfigError::InvalidPortUnicode(os_str)),
     }
 }
 
@@ -415,11 +420,20 @@ mod tests {
     }
 
     #[test]
-    fn test_config_error_display_invalid_unicode() {
+    fn test_config_error_display_invalid_log_unicode() {
         use std::ffi::OsString;
-        let err = ConfigError::InvalidUnicode(OsString::from("test"));
+        let err = ConfigError::InvalidLogUnicode(OsString::from("test"));
         let msg = err.to_string();
         assert!(msg.contains("RUST_LOG"));
+        assert!(msg.contains("unicode"));
+    }
+
+    #[test]
+    fn test_config_error_display_invalid_port_unicode() {
+        use std::ffi::OsString;
+        let err = ConfigError::InvalidPortUnicode(OsString::from("test"));
+        let msg = err.to_string();
+        assert!(msg.contains("ROBLOX_MCP_PORT"));
         assert!(msg.contains("unicode"));
     }
 
