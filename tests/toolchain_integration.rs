@@ -8,7 +8,7 @@
 //! export PATH="$HOME/.aftman/bin:$PATH"
 //!
 //! # Run tests serially (required for wally tests due to global index lock)
-//! cargo test --test toolchain_integration -- --ignored --test-threads=1
+//! cargo test --test toolchain_integration -- --test-threads=1
 //! ```
 //!
 //! Tool installation:
