@@ -30,12 +30,6 @@ pub struct OrderedDataStoreList {
     pub next_page_token: Option<String>,
 }
 
-/// Request body for creating/updating ordered datastore entries
-#[derive(Debug, Serialize)]
-struct OrderedDataStoreEntryRequest {
-    value: i64,
-}
-
 /// Response from increment operation
 #[derive(Debug, Clone, Deserialize)]
 pub struct IncrementResponse {
