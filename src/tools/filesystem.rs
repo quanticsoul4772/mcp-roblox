@@ -1,6 +1,7 @@
 use crate::error::RobloxMcpError;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::fs::FileType;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
@@ -110,6 +111,34 @@ pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, R
     Ok(result)
 }
 
+/// Check if a path is a symlink using symlink_metadata (doesn't follow symlinks)
+///
+/// Returns the file type for further inspection, or an error if metadata cannot be read.
+pub fn get_file_type_no_follow(path: &Path) -> Result<FileType, RobloxMcpError> {
+    std::fs::symlink_metadata(path)
+        .map(|m| m.file_type())
+        .map_err(|e| RobloxMcpError::FileSystemError {
+            operation: "symlink_metadata".to_string(),
+            path: path.display().to_string(),
+            source: e,
+        })
+}
+
+/// Reject symlinks for security - prevents symlink-based information disclosure
+///
+/// Must be called before any file read/write operation to ensure the target
+/// is not a symlink pointing outside the project root.
+pub fn reject_if_symlink(path: &Path) -> Result<(), RobloxMcpError> {
+    let file_type = get_file_type_no_follow(path)?;
+    if file_type.is_symlink() {
+        return Err(RobloxMcpError::SecurityViolation(format!(
+            "Symlinks are not allowed for security reasons: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Build a file tree recursively (boxed for async recursion)
 /// Returns both the tree and a list of all skipped entries with reasons
 pub async fn build_tree(
@@ -146,6 +175,27 @@ pub async fn build_tree(
 
         while let Some(entry) = dir.next_entry().await? {
             let child_path = entry.path();
+
+            // Security: Check for symlinks FIRST (before any other checks)
+            // Use symlink_metadata to detect symlinks without following them
+            match get_file_type_no_follow(&child_path) {
+                Ok(file_type) if file_type.is_symlink() => {
+                    all_skipped.push(SkippedEntry {
+                        path: child_path.display().to_string(),
+                        reason: "symlink rejected for security".to_string(),
+                    });
+                    continue;
+                }
+                Err(_) => {
+                    // Can't read metadata - skip silently (might be permission issue)
+                    all_skipped.push(SkippedEntry {
+                        path: child_path.display().to_string(),
+                        reason: "cannot read file metadata".to_string(),
+                    });
+                    continue;
+                }
+                Ok(_) => {} // Not a symlink, continue processing
+            }
 
             // Check for exclusions and REPORT them
             if let Some(file_name) = child_path.file_name() {
@@ -215,6 +265,9 @@ pub async fn read_script(file_path: &Path) -> Result<ScriptContent, RobloxMcpErr
         ));
     }
 
+    // Security: Reject symlinks to prevent information disclosure
+    reject_if_symlink(file_path)?;
+
     let content =
         fs::read_to_string(file_path)
             .await
@@ -237,6 +290,12 @@ pub async fn write_script(
     content: &str,
     create_directories: bool,
 ) -> Result<WriteResult, RobloxMcpError> {
+    // Security: If file exists, reject if it's a symlink
+    // This prevents attackers from tricking us into overwriting files outside project root
+    if file_path.exists() {
+        reject_if_symlink(file_path)?;
+    }
+
     // Create parent directories if requested
     if create_directories {
         if let Some(parent) = file_path.parent() {
@@ -819,5 +878,254 @@ mod tests {
         assert!(result.is_ok());
 
         assert!(deep_path.exists());
+    }
+
+    // ========================================
+    // Symlink Security Tests
+    // ========================================
+
+    #[test]
+    fn test_get_file_type_no_follow_regular_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("regular.luau");
+        std::fs::write(&file, "-- content").unwrap();
+
+        let file_type = get_file_type_no_follow(&file).unwrap();
+        assert!(file_type.is_file());
+        assert!(!file_type.is_symlink());
+    }
+
+    #[test]
+    fn test_get_file_type_no_follow_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path().join("subdir");
+        std::fs::create_dir(&dir).unwrap();
+
+        let file_type = get_file_type_no_follow(&dir).unwrap();
+        assert!(file_type.is_dir());
+        assert!(!file_type.is_symlink());
+    }
+
+    #[test]
+    fn test_get_file_type_no_follow_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let nonexistent = temp_dir.path().join("does_not_exist.luau");
+
+        let result = get_file_type_no_follow(&nonexistent);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reject_if_symlink_regular_file_succeeds() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("regular.luau");
+        std::fs::write(&file, "-- content").unwrap();
+
+        let result = reject_if_symlink(&file);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_reject_if_symlink_directory_succeeds() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path().join("subdir");
+        std::fs::create_dir(&dir).unwrap();
+
+        let result = reject_if_symlink(&dir);
+        assert!(result.is_ok());
+    }
+
+    // Unix-only symlink tests
+    #[cfg(unix)]
+    mod unix_symlink_tests {
+        use super::*;
+
+        #[test]
+        fn test_get_file_type_no_follow_detects_symlink() {
+            let temp_dir = TempDir::new().unwrap();
+            let target = temp_dir.path().join("target.luau");
+            let symlink = temp_dir.path().join("symlink.luau");
+
+            std::fs::write(&target, "-- target").unwrap();
+            std::os::unix::fs::symlink(&target, &symlink).unwrap();
+
+            let file_type = get_file_type_no_follow(&symlink).unwrap();
+            assert!(file_type.is_symlink());
+        }
+
+        #[test]
+        fn test_reject_if_symlink_rejects_symlink() {
+            let temp_dir = TempDir::new().unwrap();
+            let target = temp_dir.path().join("target.luau");
+            let symlink = temp_dir.path().join("symlink.luau");
+
+            std::fs::write(&target, "-- target").unwrap();
+            std::os::unix::fs::symlink(&target, &symlink).unwrap();
+
+            let result = reject_if_symlink(&symlink);
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                RobloxMcpError::SecurityViolation(msg) => {
+                    assert!(msg.contains("Symlinks are not allowed"));
+                    assert!(msg.contains("symlink.luau"));
+                }
+                e => panic!("Expected SecurityViolation, got {e:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_read_script_rejects_symlinks() {
+            let temp_dir = TempDir::new().unwrap();
+            let target = temp_dir.path().join("real.luau");
+            let symlink = temp_dir.path().join("link.luau");
+
+            std::fs::write(&target, "-- real content").unwrap();
+            std::os::unix::fs::symlink(&target, &symlink).unwrap();
+
+            let result = read_script(&symlink).await;
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                RobloxMcpError::SecurityViolation(msg) => {
+                    assert!(msg.contains("Symlinks"));
+                }
+                e => panic!("Expected SecurityViolation, got {e:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_write_script_rejects_existing_symlinks() {
+            let temp_dir = TempDir::new().unwrap();
+            let target = temp_dir.path().join("target.luau");
+            let symlink = temp_dir.path().join("symlink.luau");
+
+            std::fs::write(&target, "-- original").unwrap();
+            std::os::unix::fs::symlink(&target, &symlink).unwrap();
+
+            // Try to write through the symlink - should be rejected
+            let result = write_script(&symlink, "-- malicious", false).await;
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                RobloxMcpError::SecurityViolation(msg) => {
+                    assert!(msg.contains("Symlinks"));
+                }
+                e => panic!("Expected SecurityViolation, got {e:?}"),
+            }
+
+            // Verify target was not modified
+            let content = std::fs::read_to_string(&target).unwrap();
+            assert_eq!(content, "-- original");
+        }
+
+        #[tokio::test]
+        async fn test_build_tree_skips_symlinks() {
+            let temp_dir = TempDir::new().unwrap();
+            let target = temp_dir.path().join("real_file.luau");
+            let symlink = temp_dir.path().join("symlink.luau");
+
+            std::fs::write(&target, "-- real").unwrap();
+            std::os::unix::fs::symlink(&target, &symlink).unwrap();
+
+            let result = build_tree(temp_dir.path(), 0, 5).await.unwrap();
+
+            // Symlink should be in skipped list
+            let skipped_symlink = result
+                .skipped
+                .iter()
+                .find(|s| s.path.contains("symlink.luau"));
+            assert!(
+                skipped_symlink.is_some(),
+                "Symlink should be in skipped list"
+            );
+            assert!(
+                skipped_symlink.unwrap().reason.contains("symlink"),
+                "Reason should mention symlink"
+            );
+
+            // Symlink should NOT be in children
+            let children = result.tree.children.unwrap();
+            assert!(
+                !children.iter().any(|c| c.name == "symlink.luau"),
+                "Symlink should not appear in tree children"
+            );
+
+            // Real file should still be present
+            assert!(
+                children.iter().any(|c| c.name == "real_file.luau"),
+                "Real file should be in tree children"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_build_tree_skips_symlink_directories() {
+            let temp_dir = TempDir::new().unwrap();
+            let real_dir = temp_dir.path().join("real_dir");
+            let symlink_dir = temp_dir.path().join("symlink_dir");
+
+            std::fs::create_dir(&real_dir).unwrap();
+            std::fs::write(real_dir.join("file.luau"), "-- inside real dir").unwrap();
+            std::os::unix::fs::symlink(&real_dir, &symlink_dir).unwrap();
+
+            let result = build_tree(temp_dir.path(), 0, 5).await.unwrap();
+
+            // Symlink directory should be skipped
+            let skipped_symlink = result
+                .skipped
+                .iter()
+                .find(|s| s.path.contains("symlink_dir"));
+            assert!(
+                skipped_symlink.is_some(),
+                "Symlink directory should be skipped"
+            );
+
+            // Should not recurse into symlink directory
+            let children = result.tree.children.unwrap();
+            assert!(
+                !children.iter().any(|c| c.name == "symlink_dir"),
+                "Symlink directory should not appear in tree"
+            );
+        }
+    }
+
+    // Windows-only symlink tests (requires admin privileges)
+    #[cfg(windows)]
+    mod windows_symlink_tests {
+        use super::*;
+
+        // Note: Creating symlinks on Windows typically requires admin privileges
+        // These tests will be skipped if symlink creation fails
+        fn try_create_symlink(target: &Path, symlink: &Path) -> bool {
+            std::os::windows::fs::symlink_file(target, symlink).is_ok()
+        }
+
+        #[test]
+        fn test_reject_if_symlink_rejects_windows_symlink() {
+            let temp_dir = TempDir::new().unwrap();
+            let target = temp_dir.path().join("target.luau");
+            let symlink = temp_dir.path().join("symlink.luau");
+
+            std::fs::write(&target, "-- target").unwrap();
+
+            if !try_create_symlink(&target, &symlink) {
+                // Skip test if we can't create symlinks (no admin privileges)
+                return;
+            }
+
+            let result = reject_if_symlink(&symlink);
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                RobloxMcpError::SecurityViolation(msg) => {
+                    assert!(msg.contains("Symlinks"));
+                }
+                e => panic!("Expected SecurityViolation, got {e:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_security_violation_error_display() {
+        let err = RobloxMcpError::SecurityViolation("test symlink attack".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("Security violation"));
+        assert!(msg.contains("test symlink attack"));
     }
 }

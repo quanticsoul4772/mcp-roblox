@@ -64,6 +64,9 @@ pub enum RobloxMcpError {
 
     #[error("Configuration error: {0}")]
     ConfigError(String),
+
+    #[error("Security violation: {0}")]
+    SecurityViolation(String),
 }
 
 /// Convert our custom errors to MCP protocol errors
@@ -78,6 +81,7 @@ impl From<RobloxMcpError> for ErrorData {
             RobloxMcpError::HttpClientError { .. }
             | RobloxMcpError::InvalidPath(_)
             | RobloxMcpError::PathTraversal(_)
+            | RobloxMcpError::SecurityViolation(_)
             | RobloxMcpError::InvalidStudioData(_) => Self::invalid_request(err.to_string(), None),
 
             // Server/infrastructure errors (5xx) → Internal Error (-32603)
@@ -437,6 +441,22 @@ mod tests {
         let mcp_err: ErrorData = err.into();
         // -32600 is Invalid Request
         assert_eq!(mcp_err.code, ErrorCode(-32600));
+    }
+
+    #[test]
+    fn test_security_violation_maps_to_invalid_request() {
+        let err = RobloxMcpError::SecurityViolation("Symlink attack detected".to_string());
+        let mcp_err: ErrorData = err.into();
+        // -32600 is Invalid Request (security violations are client errors)
+        assert_eq!(mcp_err.code, ErrorCode(-32600));
+    }
+
+    #[test]
+    fn test_security_violation_error_display() {
+        let err = RobloxMcpError::SecurityViolation("test attack".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("Security violation"));
+        assert!(msg.contains("test attack"));
     }
 
     // ========================================

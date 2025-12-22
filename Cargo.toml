@@ -33,6 +33,12 @@ urlencoding = "2"
 md5 = "0.7"
 base64 = "0.22"
 
+# Cryptographic random for auth token generation
+rand = "0.8"
+
+# Constant-time comparison for secure token validation
+subtle = "2.5"
+
 # File watching
 notify = "7"
 

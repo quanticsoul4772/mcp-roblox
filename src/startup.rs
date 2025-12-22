@@ -10,7 +10,8 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use crate::bridge::http::{create_router, PluginBridge};
+use crate::bridge::auth::AuthToken;
+use crate::bridge::http::{create_authenticated_router, PluginBridge};
 use crate::tasks::spawn_monitored;
 
 /// Initialize the tracing subscriber with stderr output
@@ -72,7 +73,7 @@ pub fn format_bind_error(bind_addr: &str, error: &std::io::Error) -> String {
     )
 }
 
-/// Run the HTTP bridge server
+/// Run the HTTP bridge server with authentication
 ///
 /// This is the core HTTP bridge logic extracted for testability.
 /// It attempts to bind to the specified address and serve HTTP requests.
@@ -80,13 +81,14 @@ pub fn format_bind_error(bind_addr: &str, error: &std::io::Error) -> String {
 /// # Arguments
 /// * `bridge` - The plugin bridge for handling commands
 /// * `bind_addr` - The address to bind to
+/// * `token` - Authentication token for securing endpoints
 ///
 /// # Behavior
 /// - On bind failure: logs error and returns (graceful degradation)
 /// - On serve error: logs error and returns
 /// - On success: serves HTTP requests until shutdown
-pub async fn run_http_bridge(bridge: PluginBridge, bind_addr: &str) {
-    let app = create_router(bridge);
+pub async fn run_http_bridge(bridge: PluginBridge, bind_addr: &str, token: AuthToken) {
+    let app = create_authenticated_router(bridge, token);
 
     let listener = match try_bind(bind_addr).await {
         BindResult::Success(listener) => listener,
@@ -115,13 +117,29 @@ pub async fn run_http_bridge(bridge: PluginBridge, bind_addr: &str) {
 /// # Arguments
 /// * `bridge` - The plugin bridge for handling commands
 /// * `bind_addr` - The address to bind to
+/// * `token` - Authentication token for securing endpoints
 ///
 /// # Returns
 /// A JoinHandle for the spawned task
-pub fn spawn_http_bridge(bridge: PluginBridge, bind_addr: String) -> JoinHandle<()> {
+pub fn spawn_http_bridge(bridge: PluginBridge, bind_addr: String, token: AuthToken) -> JoinHandle<()> {
     spawn_monitored("http_bridge", async move {
-        run_http_bridge(bridge, &bind_addr).await
+        run_http_bridge(bridge, &bind_addr, token).await
     })
+}
+
+/// Generate a new authentication token and log it for plugin configuration
+///
+/// The token is logged to stderr (where tracing output goes) so it can be
+/// captured for plugin configuration. The token must be included in the
+/// Authorization header as "Bearer <token>" for all authenticated endpoints.
+///
+/// # Returns
+/// A new AuthToken that should be passed to `spawn_http_bridge`
+pub fn generate_auth_token() -> AuthToken {
+    let token = AuthToken::generate();
+    info!("HTTP Bridge Authentication Token: {}", token.as_str());
+    info!("Configure your Roblox Studio plugin with this token");
+    token
 }
 
 /// Parse and validate a socket address string
@@ -367,13 +385,14 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_http_bridge_returns_join_handle() {
         let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
         // Use an invalid address so it fails immediately
-        let handle = spawn_http_bridge(bridge, "999.999.999.999:8080".to_string());
-        
+        let handle = spawn_http_bridge(bridge, "999.999.999.999:8080".to_string(), token);
+
         // The task should complete (with an error internally) without panicking
         // Give it a moment to fail
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        
+
         // Abort the handle to clean up
         handle.abort();
     }
@@ -381,15 +400,16 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_http_bridge_graceful_failure() {
         let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
         // Invalid address will cause bind to fail
-        let handle = spawn_http_bridge(bridge, "invalid:not_a_port".to_string());
-        
+        let handle = spawn_http_bridge(bridge, "invalid:not_a_port".to_string(), token);
+
         // The task should complete without panicking
         let result = tokio::time::timeout(
             tokio::time::Duration::from_millis(100),
             handle
         ).await;
-        
+
         // Should either complete (Ok) or timeout (Err) - both are acceptable
         // The important thing is no panic
         match result {
@@ -410,16 +430,18 @@ mod tests {
     #[tokio::test]
     async fn test_run_http_bridge_fails_gracefully_on_invalid_address() {
         let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
         // This should return immediately without panicking
-        run_http_bridge(bridge, "999.999.999.999:8080").await;
+        run_http_bridge(bridge, "999.999.999.999:8080", token).await;
         // If we get here, the function handled the error gracefully
     }
 
     #[tokio::test]
     async fn test_run_http_bridge_fails_gracefully_on_malformed_address() {
         let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
         // Malformed address should fail gracefully
-        run_http_bridge(bridge, "not_an_address").await;
+        run_http_bridge(bridge, "not_an_address", token).await;
         // Success if no panic
     }
 
@@ -431,17 +453,37 @@ mod tests {
     async fn test_full_startup_sequence_without_serving() {
         // Test the full startup sequence without actually serving
         let bridge = create_bridge();
-        
+        let token = AuthToken::generate();
+
         // Clone the inner bridge (like main.rs does)
         let http_bridge = (*bridge).clone();
-        
+
         // Spawn with invalid address so it fails immediately
-        let _handle = spawn_http_bridge(http_bridge, "999.999.999.999:0".to_string());
-        
+        let _handle = spawn_http_bridge(http_bridge, "999.999.999.999:0".to_string(), token);
+
         // Small delay to let the task start
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        
+
         // The bridge should still be usable even if HTTP failed
         assert!(Arc::strong_count(&bridge) >= 1);
+    }
+
+    // ========================================
+    // Authentication token tests
+    // ========================================
+
+    #[test]
+    fn test_generate_auth_token_returns_token() {
+        let token = generate_auth_token();
+        // Token should be non-empty
+        assert!(!token.as_str().is_empty());
+    }
+
+    #[test]
+    fn test_generate_auth_token_produces_unique_tokens() {
+        let token1 = generate_auth_token();
+        let token2 = generate_auth_token();
+        // Each call should produce a unique token
+        assert_ne!(token1.as_str(), token2.as_str());
     }
 }

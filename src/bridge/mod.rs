@@ -3,6 +3,7 @@
 //! Provides trait-based abstraction over Studio plugin communication
 //! for testability while maintaining production HTTP-based implementation.
 
+pub mod auth;
 pub mod http;
 
 #[cfg(test)]

@@ -143,10 +143,16 @@ impl PluginBridge {
 }
 
 use axum::{
+    body::Body,
     extract::State,
+    http::{Request, StatusCode},
+    middleware::{self, Next},
+    response::Response,
     routing::{get, post},
     Json, Router,
 };
+
+use super::auth::AuthToken;
 
 /// HTTP endpoint: Plugin polls for pending commands
 async fn poll_handler(State(bridge): State<PluginBridge>) -> Json<Option<Command>> {
@@ -228,13 +234,59 @@ async fn health_handler(State(bridge): State<PluginBridge>) -> Json<HealthStatus
     })
 }
 
-/// Create the Axum router for the plugin bridge
+/// Authentication middleware for protected endpoints
+///
+/// Validates the Authorization header contains a valid Bearer token.
+/// Skips authentication for the /health endpoint (monitoring).
+async fn auth_middleware(
+    State(token): State<AuthToken>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    // Skip auth for health endpoint - allows monitoring without credentials
+    if request.uri().path() == "/health" {
+        return Ok(next.run(request).await);
+    }
+
+    // Extract Authorization header
+    let auth_header = request
+        .headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+
+    match auth_header {
+        Some(candidate) if token.validate(candidate) => Ok(next.run(request).await),
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }
+}
+
+/// Create the Axum router for the plugin bridge (without authentication)
+///
+/// Use `create_authenticated_router` for production with token authentication.
+#[allow(dead_code)]
 pub fn create_router(bridge: PluginBridge) -> Router {
     Router::new()
         .route("/poll", get(poll_handler))
         .route("/result", post(result_handler))
         .route("/health", get(health_handler))
         .with_state(bridge)
+}
+
+/// Create the Axum router with authentication middleware
+///
+/// All endpoints except /health require a valid Bearer token in the
+/// Authorization header. The token should be obtained from server startup logs.
+pub fn create_authenticated_router(bridge: PluginBridge, token: AuthToken) -> Router {
+    // Create routes that need bridge state
+    let bridge_routes = Router::new()
+        .route("/poll", get(poll_handler))
+        .route("/result", post(result_handler))
+        .route("/health", get(health_handler))
+        .with_state(bridge);
+
+    // Wrap with authentication middleware
+    bridge_routes.layer(middleware::from_fn_with_state(token, auth_middleware))
 }
 
 #[cfg(test)]
@@ -1312,5 +1364,293 @@ mod tests {
             late_snapshot.successful, 1,
             "Late result should be marked successful"
         );
+    }
+
+    // ========================================
+    // HTTP Authentication Tests
+    // ========================================
+
+    use super::super::auth::AuthToken;
+
+    #[tokio::test]
+    async fn test_poll_requires_auth() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let router = create_authenticated_router(bridge, token);
+
+        // Request without auth header should fail
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/poll")
+                    .method("GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_poll_succeeds_with_valid_token() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let token_str = token.as_str().to_string();
+        let router = create_authenticated_router(bridge, token);
+
+        // Request with valid Bearer token should succeed
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/poll")
+                    .method("GET")
+                    .header("Authorization", format!("Bearer {}", token_str))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_poll_fails_with_invalid_token() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let router = create_authenticated_router(bridge, token);
+
+        // Request with wrong token should fail
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/poll")
+                    .method("GET")
+                    .header("Authorization", "Bearer wrong-token-value")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_poll_fails_with_wrong_auth_scheme() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let token_str = token.as_str().to_string();
+        let router = create_authenticated_router(bridge, token);
+
+        // Request with Basic auth instead of Bearer should fail
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/poll")
+                    .method("GET")
+                    .header("Authorization", format!("Basic {}", token_str))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_result_requires_auth() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let router = create_authenticated_router(bridge, token);
+
+        // Request without auth header should fail
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "test-id".to_string(),
+                            result: Some(serde_json::json!({"ok": true})),
+                            error: None,
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_result_succeeds_with_valid_token() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let token_str = token.as_str().to_string();
+        let router = create_authenticated_router(bridge, token);
+
+        // Request with valid Bearer token should succeed
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/result")
+                    .method("POST")
+                    .header("Authorization", format!("Bearer {}", token_str))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&PluginResponse {
+                            id: "test-id".to_string(),
+                            result: Some(serde_json::json!({"ok": true})),
+                            error: None,
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_health_does_not_require_auth() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let router = create_authenticated_router(bridge, token);
+
+        // Health endpoint should work WITHOUT auth header
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .method("GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify response body is valid health status
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let health: HealthStatusTest = serde_json::from_slice(&body).unwrap();
+        assert!(!health.version.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_health_also_works_with_auth() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let token_str = token.as_str().to_string();
+        let router = create_authenticated_router(bridge, token);
+
+        // Health endpoint should also work WITH auth header
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .method("GET")
+                    .header("Authorization", format!("Bearer {}", token_str))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_authenticated_router_full_flow() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let token_str = token.as_str().to_string();
+
+        // Queue a command manually
+        bridge.pending_commands.write().await.push(Command {
+            id: "auth-test-cmd".to_string(),
+            action: "testAction".to_string(),
+            params: serde_json::json!({}),
+        });
+
+        let router = create_authenticated_router(bridge.clone(), token);
+
+        // Poll with valid auth should return the command
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/poll")
+                    .method("GET")
+                    .header("Authorization", format!("Bearer {}", token_str))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("auth-test-cmd"));
+        assert!(body_str.contains("testAction"));
+    }
+
+    #[tokio::test]
+    async fn test_auth_empty_bearer_token_rejected() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let router = create_authenticated_router(bridge, token);
+
+        // Request with empty Bearer token should fail
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/poll")
+                    .method("GET")
+                    .header("Authorization", "Bearer ")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_malformed_header_rejected() {
+        let bridge = PluginBridge::new();
+        let token = AuthToken::generate();
+        let router = create_authenticated_router(bridge, token);
+
+        // Request with malformed auth header should fail
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/poll")
+                    .method("GET")
+                    .header("Authorization", "malformed")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
