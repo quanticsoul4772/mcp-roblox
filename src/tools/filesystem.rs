@@ -60,6 +60,43 @@ pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, R
     Ok(canonical)
 }
 
+/// Validate an output path that may not exist yet
+///
+/// This validates that the parent directory exists and is within the project root,
+/// then returns the full path with the filename appended. Use this for output paths
+/// where the target file will be created by an operation.
+pub fn validate_output_path(requested: &Path, project_root: &Path) -> Result<PathBuf, RobloxMcpError> {
+    let canonical_root = project_root.canonicalize().map_err(|e| {
+        RobloxMcpError::InvalidPath(format!("Cannot canonicalize project root: {e}"))
+    })?;
+
+    // Get the parent directory and filename
+    let parent = requested.parent().ok_or_else(|| {
+        RobloxMcpError::InvalidPath("Output path has no parent directory".to_string())
+    })?;
+
+    let filename = requested.file_name().ok_or_else(|| {
+        RobloxMcpError::InvalidPath("Output path has no filename".to_string())
+    })?;
+
+    // Canonicalize the parent directory (which must exist)
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|e| RobloxMcpError::InvalidPath(format!("Parent directory does not exist: {e}")))?;
+
+    // Build the full output path
+    let output_path = canonical_parent.join(filename);
+
+    // Verify it's within the project root
+    if !canonical_parent.starts_with(&canonical_root) {
+        return Err(RobloxMcpError::PathTraversal(
+            output_path.display().to_string(),
+        ));
+    }
+
+    Ok(output_path)
+}
+
 /// Build a file tree recursively (boxed for async recursion)
 /// Returns both the tree and a list of all skipped entries with reasons
 pub async fn build_tree(
