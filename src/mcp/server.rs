@@ -399,7 +399,8 @@ impl<
             ));
         }
 
-        let json = serde_json::to_string_pretty(&response)
+        // Use compact JSON for large tree responses (up to 10,000 entries)
+        let json = serde_json::to_string(&response)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -968,8 +969,9 @@ impl<
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        // Use compact JSON for large DataModel hierarchies
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
+            serde_json::to_string(&result)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
     }
@@ -1008,8 +1010,9 @@ impl<
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        // Use compact JSON for paginated DataModel responses
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
+            serde_json::to_string(&result)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
     }
@@ -1272,8 +1275,9 @@ impl<
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        // Use compact JSON for potentially large instance lists
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
+            serde_json::to_string(&result)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
     }
@@ -1302,8 +1306,9 @@ impl<
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        // Use compact JSON for log output (many entries)
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
+            serde_json::to_string(&result)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
     }
@@ -1543,8 +1548,9 @@ impl<
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        // Use compact JSON for leaderboard entries (potentially many entries)
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
+            serde_json::to_string(&json!({
                 "entries": result.entries,
                 "next_page_token": result.next_page_token
             }))
@@ -1780,8 +1786,9 @@ impl<
         let changes = watcher.poll_changes(limit).await;
         let pending = watcher.pending_count().await;
 
+        // Use compact JSON for file change events
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
+            serde_json::to_string(&json!({
                 "changes": changes,
                 "returned_count": changes.len(),
                 "pending_count": pending
@@ -1918,8 +1925,9 @@ impl<
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        // Use compact JSON for large sourcemap output
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
+            serde_json::to_string(&result)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
     }
@@ -2049,8 +2057,9 @@ impl<
         // and because it's a meta-tool for observing metrics, not a primary tool
         let snapshot = self.metrics.snapshot().await;
 
+        // Use compact JSON for metrics data
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&snapshot)
+            serde_json::to_string(&snapshot)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
     }
