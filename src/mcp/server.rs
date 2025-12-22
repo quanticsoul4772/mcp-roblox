@@ -3368,9 +3368,8 @@ mod tests {
         let script_path = project_root.join("error.luau");
         std::fs::write(&script_path, "local x = y").unwrap();
 
-        let mock_linter = MockLinter::with_errors(vec![
-            ("undefined_variable", "y is not defined", 1),
-        ]);
+        let mock_linter =
+            MockLinter::with_errors(vec![("undefined_variable", "y is not defined", 1)]);
         let server = RobloxMcpServer::with_mock_bridge_and_linter(
             Arc::new(MockBridge::new()),
             project_root,
@@ -3383,7 +3382,10 @@ mod tests {
         };
 
         let result = server.fs_lint_script(Parameters(params)).await;
-        assert!(result.is_ok(), "Lint should succeed even with errors in file");
+        assert!(
+            result.is_ok(),
+            "Lint should succeed even with errors in file"
+        );
 
         // Verify the result contains error diagnostics
         let call_result = result.unwrap();
@@ -3427,8 +3429,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fs_lint_script_linter_error() {
-        use crate::tools::linting::mock::MockLinter;
         use crate::error::RobloxMcpError;
+        use crate::tools::linting::mock::MockLinter;
 
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path().to_path_buf();
@@ -3437,7 +3439,7 @@ mod tests {
 
         let mock_linter = MockLinter::new();
         mock_linter.queue_error(RobloxMcpError::ConfigError(
-            "Selene not installed".to_string()
+            "Selene not installed".to_string(),
         ));
 
         let server = RobloxMcpServer::with_mock_bridge_and_linter(
@@ -3475,8 +3477,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fs_lint_script_nonexistent_file() {
-        use crate::tools::linting::mock::MockLinter;
         use crate::error::RobloxMcpError;
+        use crate::tools::linting::mock::MockLinter;
 
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path().to_path_buf();
@@ -3484,9 +3486,7 @@ mod tests {
         // Don't create the file - it should fail during path validation
         let mock_linter = MockLinter::new();
         // Queue an error in case we get to the linter (we shouldn't)
-        mock_linter.queue_error(RobloxMcpError::ConfigError(
-            "File not found".to_string()
-        ));
+        mock_linter.queue_error(RobloxMcpError::ConfigError("File not found".to_string()));
 
         let server = RobloxMcpServer::with_mock_bridge_and_linter(
             Arc::new(MockBridge::new()),
@@ -3590,10 +3590,13 @@ mod tests {
 
         // Verify response is valid JSON with expected fields
         if let RawContent::Text(text) = &*call_result.content[0] {
-            let metrics: serde_json::Value = serde_json::from_str(&text.text)
-                .expect("Metrics should be valid JSON");
+            let metrics: serde_json::Value =
+                serde_json::from_str(&text.text).expect("Metrics should be valid JSON");
             assert!(metrics.get("tools").is_some(), "Should have tools field");
-            assert!(metrics.get("connection").is_some(), "Should have connection field");
+            assert!(
+                metrics.get("connection").is_some(),
+                "Should have connection field"
+            );
         }
     }
 }

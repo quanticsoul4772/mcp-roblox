@@ -11,8 +11,8 @@
 //! - [`TaskHealth`]: Health monitoring for long-running background tasks
 
 use std::future::Future;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, warn};
 
@@ -191,9 +191,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_monitored_result_success() {
-        let handle = spawn_monitored_result("success_task", async {
-            Ok::<(), String>(())
-        });
+        let handle = spawn_monitored_result("success_task", async { Ok::<(), String>(()) });
 
         let result = handle.await;
         assert!(result.is_ok());
@@ -289,9 +287,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_health_detects_panic() {
-        let health = TaskHealth::new("panic_task", tokio::spawn(async {
-            panic!("deliberate panic for testing");
-        }));
+        let health = TaskHealth::new(
+            "panic_task",
+            tokio::spawn(async {
+                panic!("deliberate panic for testing");
+            }),
+        );
 
         // Wait for panic to occur
         sleep(Duration::from_millis(50)).await;
