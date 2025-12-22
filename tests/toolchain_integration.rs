@@ -28,6 +28,37 @@ fn project_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// Get the aftman bin directory
+fn aftman_bin() -> std::path::PathBuf {
+    dirs::home_dir()
+        .expect("Failed to get home directory")
+        .join(".aftman")
+        .join("bin")
+}
+
+/// Get the path to an aftman-managed tool
+fn tool_path(name: &str) -> std::path::PathBuf {
+    // Selene is installed via cargo, not aftman
+    if name == "selene" {
+        let cargo_bin = dirs::home_dir()
+            .expect("Failed to get home directory")
+            .join(".cargo")
+            .join("bin");
+        if cfg!(windows) {
+            return cargo_bin.join("selene.exe");
+        } else {
+            return cargo_bin.join("selene");
+        }
+    }
+
+    let bin = aftman_bin();
+    if cfg!(windows) {
+        bin.join(format!("{}.exe", name))
+    } else {
+        bin.join(name)
+    }
+}
+
 /// Copy aftman.toml to a directory so aftman-managed tools work there
 fn setup_aftman_config(dir: &Path) {
     let source = project_root().join("aftman.toml");
@@ -141,7 +172,7 @@ print(z)"#;
     let script_path = create_test_script(temp.path(), "test.luau", unformatted);
 
     // Run stylua
-    let output = Command::new("stylua")
+    let output = Command::new(tool_path("stylua"))
         .arg(&script_path)
         .output()
         .expect("Failed to run stylua");
@@ -165,7 +196,7 @@ fn test_stylua_check_mode_detects_unformatted() {
     let script_path = create_test_script(temp.path(), "test.luau", unformatted);
 
     // Run stylua in check mode
-    let output = Command::new("stylua")
+    let output = Command::new(tool_path("stylua"))
         .arg("--check")
         .arg(&script_path)
         .output()
@@ -187,7 +218,7 @@ fn test_stylua_check_mode_passes_formatted() {
     let script_path = create_test_script(temp.path(), "test.luau", formatted);
 
     // Run stylua in check mode
-    let output = Command::new("stylua")
+    let output = Command::new(tool_path("stylua"))
         .arg("--check")
         .arg(&script_path)
         .output()
@@ -221,7 +252,7 @@ indent_width = 4
     let script_path = create_test_script(temp.path(), "test.luau", script);
 
     // Run stylua with config
-    let output = Command::new("stylua")
+    let output = Command::new(tool_path("stylua"))
         .arg("--config-path")
         .arg(&config_path)
         .arg(&script_path)
@@ -244,7 +275,7 @@ fn test_stylua_handles_syntax_error() {
     let script_path = create_test_script(temp.path(), "test.luau", invalid_syntax);
 
     // Run stylua - should handle gracefully
-    let output = Command::new("stylua")
+    let output = Command::new(tool_path("stylua"))
         .arg(&script_path)
         .output()
         .expect("Failed to run stylua");
@@ -269,7 +300,7 @@ fn test_rojo_build_project() {
     let output_path = temp.path().join("output.rbxl");
 
     // Run rojo build
-    let output = Command::new("rojo")
+    let output = Command::new(tool_path("rojo"))
         .arg("build")
         .arg(&project_path)
         .arg("--output")
@@ -295,7 +326,7 @@ fn test_rojo_build_model() {
     let output_path = temp.path().join("output.rbxm");
 
     // Run rojo build for model output
-    let output = Command::new("rojo")
+    let output = Command::new(tool_path("rojo"))
         .arg("build")
         .arg(&project_path)
         .arg("--output")
@@ -320,7 +351,7 @@ fn test_rojo_sourcemap() {
     let sourcemap_path = temp.path().join("sourcemap.json");
 
     // Run rojo sourcemap
-    let output = Command::new("rojo")
+    let output = Command::new(tool_path("rojo"))
         .arg("sourcemap")
         .arg(&project_path)
         .arg("--output")
@@ -351,7 +382,7 @@ fn test_rojo_sourcemap_stdout() {
     let project_path = create_rojo_project(temp.path());
 
     // Run rojo sourcemap without output file (prints to stdout)
-    let output = Command::new("rojo")
+    let output = Command::new(tool_path("rojo"))
         .arg("sourcemap")
         .arg(&project_path)
         .output()
@@ -379,7 +410,7 @@ fn test_rojo_invalid_project() {
     std::fs::write(&invalid_project, "{ invalid json }").expect("Failed to write invalid project");
 
     // Run rojo build with invalid project
-    let output = Command::new("rojo")
+    let output = Command::new(tool_path("rojo"))
         .arg("build")
         .arg(&invalid_project)
         .arg("--output")
@@ -405,7 +436,7 @@ fn test_wally_manifest_validation() {
     let _wally_toml = create_wally_project(temp.path());
 
     // Run wally install (validates manifest)
-    let output = Command::new("wally")
+    let output = Command::new(tool_path("wally"))
         .arg("install")
         .current_dir(temp.path())
         .output()
@@ -427,7 +458,7 @@ fn test_wally_install_dependencies() {
     let _wally_toml = create_wally_project_with_deps(temp.path());
 
     // Run wally install
-    let output = Command::new("wally")
+    let output = Command::new(tool_path("wally"))
         .arg("install")
         .current_dir(temp.path())
         .output()
@@ -456,7 +487,7 @@ fn test_wally_invalid_manifest() {
     let _wally_toml = create_invalid_wally_project(temp.path());
 
     // Run wally install with invalid manifest
-    let output = Command::new("wally")
+    let output = Command::new(tool_path("wally"))
         .arg("install")
         .current_dir(temp.path())
         .output()
@@ -490,7 +521,7 @@ Players.PlayerAdded:Connect(onPlayerAdded)
     let script_path = create_test_script(temp.path(), "clean.luau", clean_script);
 
     // Run selene
-    let output = Command::new("selene")
+    let output = Command::new(tool_path("selene"))
         .arg(&script_path)
         .current_dir(temp.path())
         .output()
@@ -519,7 +550,7 @@ print("hello")
     let script_path = create_test_script(temp.path(), "warnings.luau", script_with_warnings);
 
     // Run selene
-    let output = Command::new("selene")
+    let output = Command::new(tool_path("selene"))
         .arg(&script_path)
         .current_dir(temp.path())
         .output()
@@ -555,7 +586,7 @@ unused_variable = "allow"
     let script_path = create_test_script(temp.path(), "test.luau", script);
 
     // Run selene with config
-    let output = Command::new("selene")
+    let output = Command::new(tool_path("selene"))
         .arg("--config")
         .arg(&config_path)
         .arg(&script_path)
@@ -588,14 +619,14 @@ end)"#;
     let script_path = create_test_script(temp.path(), "workflow.luau", script);
 
     // Step 1: Format with stylua
-    let format_output = Command::new("stylua")
+    let format_output = Command::new(tool_path("stylua"))
         .arg(&script_path)
         .output()
         .expect("Failed to run stylua");
     assert!(format_output.status.success(), "stylua should succeed");
 
     // Step 2: Lint with selene
-    let lint_output = Command::new("selene")
+    let lint_output = Command::new(tool_path("selene"))
         .arg(&script_path)
         .current_dir(temp.path())
         .output()
@@ -620,7 +651,7 @@ fn test_rojo_build_with_formatted_scripts() {
     let script_path = temp.path().join("src").join("server").join("Main.server.luau");
 
     // Format the script first
-    let format_output = Command::new("stylua")
+    let format_output = Command::new(tool_path("stylua"))
         .arg(&script_path)
         .output()
         .expect("Failed to run stylua");
@@ -628,7 +659,7 @@ fn test_rojo_build_with_formatted_scripts() {
 
     // Build the project
     let output_path = temp.path().join("output.rbxl");
-    let build_output = Command::new("rojo")
+    let build_output = Command::new(tool_path("rojo"))
         .arg("build")
         .arg(&project_path)
         .arg("--output")
@@ -668,7 +699,7 @@ fn test_stylua_large_file() {
 
     // Run stylua - should complete in reasonable time
     let start = std::time::Instant::now();
-    let output = Command::new("stylua")
+    let output = Command::new(tool_path("stylua"))
         .arg(&script_path)
         .output()
         .expect("Failed to run stylua");
@@ -740,7 +771,7 @@ fn test_rojo_nested_project_structure() {
 
     // Build the project
     let output_path = temp.path().join("output.rbxl");
-    let output = Command::new("rojo")
+    let output = Command::new(tool_path("rojo"))
         .arg("build")
         .arg(&project_json)
         .arg("--output")

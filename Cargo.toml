@@ -63,6 +63,7 @@ regex = "1"
 walkdir = "2"
 
 [dev-dependencies]
+dirs = "6.0.0"
 mockito = "1"
 tempfile = "3"
 tokio-test = "0.4"
