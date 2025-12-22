@@ -129,7 +129,6 @@ fn create_selene_config(dir: &Path) -> std::path::PathBuf {
 // ============================================================================
 
 #[test]
-#[ignore = "requires stylua CLI"]
 fn test_stylua_format_unformatted_script() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -158,7 +157,6 @@ print(z)"#;
 }
 
 #[test]
-#[ignore = "requires stylua CLI"]
 fn test_stylua_check_mode_detects_unformatted() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -181,7 +179,6 @@ fn test_stylua_check_mode_detects_unformatted() {
 }
 
 #[test]
-#[ignore = "requires stylua CLI"]
 fn test_stylua_check_mode_passes_formatted() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -203,7 +200,6 @@ fn test_stylua_check_mode_passes_formatted() {
 }
 
 #[test]
-#[ignore = "requires stylua CLI"]
 fn test_stylua_with_config() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -240,7 +236,6 @@ indent_width = 4
 }
 
 #[test]
-#[ignore = "requires stylua CLI"]
 fn test_stylua_handles_syntax_error() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -266,7 +261,6 @@ fn test_stylua_handles_syntax_error() {
 // ============================================================================
 
 #[test]
-#[ignore = "requires rojo CLI"]
 fn test_rojo_build_project() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -293,7 +287,6 @@ fn test_rojo_build_project() {
 }
 
 #[test]
-#[ignore = "requires rojo CLI"]
 fn test_rojo_build_model() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -319,7 +312,6 @@ fn test_rojo_build_model() {
 }
 
 #[test]
-#[ignore = "requires rojo CLI"]
 fn test_rojo_sourcemap() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -352,7 +344,6 @@ fn test_rojo_sourcemap() {
 }
 
 #[test]
-#[ignore = "requires rojo CLI"]
 fn test_rojo_sourcemap_stdout() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -380,7 +371,6 @@ fn test_rojo_sourcemap_stdout() {
 }
 
 #[test]
-#[ignore = "requires rojo CLI"]
 fn test_rojo_invalid_project() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -408,7 +398,6 @@ fn test_rojo_invalid_project() {
 // ============================================================================
 
 #[test]
-#[ignore = "requires wally CLI"]
 fn test_wally_manifest_validation() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -431,7 +420,6 @@ fn test_wally_manifest_validation() {
 }
 
 #[test]
-#[ignore = "requires wally CLI and network"]
 fn test_wally_install_dependencies() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -461,7 +449,6 @@ fn test_wally_install_dependencies() {
 }
 
 #[test]
-#[ignore = "requires wally CLI"]
 fn test_wally_invalid_manifest() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -486,7 +473,6 @@ fn test_wally_invalid_manifest() {
 // ============================================================================
 
 #[test]
-#[ignore = "requires selene CLI"]
 fn test_selene_lint_clean_script() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -520,7 +506,6 @@ Players.PlayerAdded:Connect(onPlayerAdded)
 }
 
 #[test]
-#[ignore = "requires selene CLI"]
 fn test_selene_lint_with_warnings() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -549,7 +534,6 @@ print("hello")
 }
 
 #[test]
-#[ignore = "requires selene CLI"]
 fn test_selene_with_config() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -590,7 +574,6 @@ unused_variable = "allow"
 // ============================================================================
 
 #[test]
-#[ignore = "requires stylua and selene CLI"]
 fn test_format_then_lint_workflow() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -627,7 +610,6 @@ end)"#;
 }
 
 #[test]
-#[ignore = "requires rojo and stylua CLI"]
 fn test_rojo_build_with_formatted_scripts() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -666,7 +648,6 @@ fn test_rojo_build_with_formatted_scripts() {
 // ============================================================================
 
 #[test]
-#[ignore = "requires stylua CLI"]
 fn test_stylua_large_file() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
@@ -704,7 +685,6 @@ fn test_stylua_large_file() {
 }
 
 #[test]
-#[ignore = "requires rojo CLI"]
 fn test_rojo_nested_project_structure() {
 
     let temp = TempDir::new().expect("Failed to create temp dir");
