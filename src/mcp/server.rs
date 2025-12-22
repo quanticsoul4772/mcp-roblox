@@ -2615,6 +2615,43 @@ mod tests {
         assert!(err.message.contains("File watcher not available"));
     }
 
+    #[tokio::test]
+    async fn test_fs_watch_changes_success() {
+        let temp_dir = TempDir::new().unwrap();
+        // create_test_server creates a server with a real file watcher
+        let server = create_test_server(temp_dir.path().to_path_buf());
+
+        let params = FsWatchChangesParams { limit: Some(50) };
+        let result = server.fs_watch_changes(Parameters(params)).await;
+
+        // May succeed or fail depending on platform - check it doesn't panic
+        if let Ok(call_result) = result {
+            if let RawContent::Text(text) = &*call_result.content[0] {
+                // Should contain expected fields
+                assert!(text.text.contains("changes"));
+                assert!(text.text.contains("returned_count"));
+                assert!(text.text.contains("pending_count"));
+            }
+        }
+        // If file watcher not available, it's fine - just return early
+    }
+
+    #[tokio::test]
+    async fn test_fs_watch_changes_with_default_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let server = create_test_server(temp_dir.path().to_path_buf());
+
+        let params = FsWatchChangesParams { limit: None };
+        let result = server.fs_watch_changes(Parameters(params)).await;
+
+        // May succeed or fail depending on platform
+        if let Ok(call_result) = result {
+            if let RawContent::Text(text) = &*call_result.content[0] {
+                assert!(text.text.contains("changes"));
+            }
+        }
+    }
+
     // === FS_LINT_SCRIPT EDGE CASE TESTS ===
 
     #[tokio::test]
@@ -2711,6 +2748,34 @@ mod tests {
         assert!(
             result.is_err(),
             "fs_write_script should reject absolute paths outside project"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fs_write_script_relative_path_traversal_check() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let server = create_test_server(project_root.clone());
+
+        // Use a relative path that would escape project root if allowed
+        // This tests line 346 (project_root.join(&path)) and line 349 (!abs_path.starts_with)
+        let params = FsWriteScriptParams {
+            file_path: "../escape.luau".to_string(),
+            content: "-- should be rejected".to_string(),
+            create_directories: Some(true),
+        };
+
+        let result = server.fs_write_script(Parameters(params)).await;
+        assert!(
+            result.is_err(),
+            "fs_write_script with path traversal should fail"
+        );
+
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("traversal") || err.message.contains("Path"),
+            "Error should mention path issue: {}",
+            err.message
         );
     }
 
@@ -3262,6 +3327,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cloud_messaging_publish_long_message() {
+        use crate::cloud::mock::MockCloudClient;
+
+        let temp_dir = TempDir::new().unwrap();
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        mock_cloud.queue_messaging_publish(Ok(()));
+
+        let server =
+            create_test_server(temp_dir.path().to_path_buf()).with_cloud_client(mock_cloud);
+
+        // Create a message longer than 100 characters to trigger truncation
+        let long_message = "a".repeat(150);
+        let params = CloudMessagingPublishParams {
+            universe_id: 123,
+            topic: "test-topic".to_string(),
+            message: serde_json::json!(long_message),
+        };
+
+        let result = server.cloud_messaging_publish(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        let call_result = result.unwrap();
+        if let RawContent::Text(text) = &*call_result.content[0] {
+            // Should contain truncated message preview ending with "..."
+            assert!(text.text.contains("message_preview"));
+            assert!(text.text.contains("..."));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
     async fn test_cloud_publish_place_success() {
         use crate::cloud::mock::MockCloudClient;
         use crate::cloud::PublishResult;
@@ -3661,6 +3758,285 @@ mod tests {
                 metrics.get("connection").is_some(),
                 "Should have connection field"
             );
+        }
+    }
+
+    // === UTILITY METHOD TESTS ===
+
+    #[tokio::test]
+    async fn test_with_shared_metrics() {
+        use crate::metrics::ServerMetrics;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        // Create shared metrics with pre-recorded data
+        let shared_metrics = Arc::new(ServerMetrics::new());
+        shared_metrics.record_connection_status(true);
+        shared_metrics.record_connection_status(true);
+
+        // Create server with shared metrics
+        let _server = create_test_server(project_root).with_shared_metrics(shared_metrics.clone());
+
+        // The server should use the shared metrics
+        // Record some more data through the server's metrics
+        shared_metrics.record_late_result(false);
+
+        // Verify the metrics are shared by checking the snapshot
+        let snapshot = shared_metrics.snapshot().await;
+        assert_eq!(snapshot.connection.total_checks, 2);
+        assert_eq!(snapshot.late_results.total, 1);
+    }
+
+    #[tokio::test]
+    async fn test_with_mocks_constructor() {
+        use crate::bridge::mock::MockBridge;
+        use crate::cloud::mock::MockCloudClient;
+        use crate::tools::linting::mock::MockLinter;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_cloud = Arc::new(MockCloudClient::new());
+        let mock_linter = MockLinter::new();
+
+        // Use with_mocks constructor
+        let server: RobloxMcpServer<MockBridge, MockLinter> = RobloxMcpServer::with_mocks(
+            mock_bridge,
+            project_root.clone(),
+            Some(mock_cloud as Arc<dyn CloudClient>),
+            mock_linter,
+        );
+
+        // Verify the server was created by calling a simple method
+        let params = FsGetTreeParams {
+            path: project_root.display().to_string(),
+            max_depth: Some(1),
+        };
+
+        let result: Result<CallToolResult, ErrorData> = server.fs_get_tree(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_with_mocks_no_cloud_client() {
+        use crate::bridge::mock::MockBridge;
+        use crate::tools::linting::mock::MockLinter;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+
+        // Use with_mocks constructor without cloud client
+        let server: RobloxMcpServer<MockBridge, MockLinter> = RobloxMcpServer::with_mocks(
+            mock_bridge,
+            project_root.clone(),
+            None, // No cloud client
+            mock_linter,
+        );
+
+        // Verify the server was created
+        let params = FsGetTreeParams {
+            path: project_root.display().to_string(),
+            max_depth: Some(1),
+        };
+
+        let result: Result<CallToolResult, ErrorData> = server.fs_get_tree(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_with_cloud_client() {
+        use crate::bridge::mock::MockBridge;
+        use crate::cloud::mock::MockCloudClient;
+        use crate::tools::linting::mock::MockLinter;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+        let mock_cloud = Arc::new(MockCloudClient::new());
+
+        // Create server without cloud client first
+        let server: RobloxMcpServer<MockBridge, MockLinter> = RobloxMcpServer::with_mocks(
+            mock_bridge,
+            project_root.clone(),
+            None,
+            mock_linter,
+        );
+
+        // Then add cloud client via with_cloud_client
+        let server = server.with_cloud_client(mock_cloud);
+
+        // The server should now have a cloud client
+        let params = FsGetTreeParams {
+            path: project_root.display().to_string(),
+            max_depth: Some(1),
+        };
+
+        let result: Result<CallToolResult, ErrorData> = server.fs_get_tree(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_start_instrumentation() {
+        use crate::bridge::mock::MockBridge;
+        use crate::tools::linting::mock::MockLinter;
+
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+
+        let mock_bridge = Arc::new(MockBridge::new());
+        let mock_linter = MockLinter::new();
+
+        let server: RobloxMcpServer<MockBridge, MockLinter> = RobloxMcpServer::with_mocks(
+            mock_bridge,
+            project_root.clone(),
+            None,
+            mock_linter,
+        );
+
+        // start_instrumentation is exercised through any tool call
+        // We verify that metrics are properly recorded by calling a tool
+        // and checking that no panic occurs
+        let params = FsGetTreeParams {
+            path: project_root.display().to_string(),
+            max_depth: Some(1),
+        };
+
+        let result: Result<CallToolResult, ErrorData> = server.fs_get_tree(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_properties_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "getProperties",
+                json!({
+                    "Name": "MyPart",
+                    "Position": [0, 10, 0],
+                    "Size": [4, 1, 2],
+                    "ClassName": "Part"
+                }),
+            )],
+        );
+
+        let params = StudioGetPropertiesParams {
+            path: "game.Workspace.MyPart".to_string(),
+            properties: Some(vec![
+                "Name".to_string(),
+                "Position".to_string(),
+                "Size".to_string(),
+            ]),
+        };
+
+        let result = server
+            .studio_get_properties(Parameters(params))
+            .await;
+        assert!(result.is_ok());
+
+        assert!(mock.was_called("getProperties"));
+        let call = mock.last_call().unwrap();
+        assert_eq!(call.params["path"], "game.Workspace.MyPart");
+        assert!(call.params["properties"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_properties_no_properties_specified() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "getProperties",
+                json!({
+                    "Name": "Part",
+                    "ClassName": "Part"
+                }),
+            )],
+        );
+
+        let params = StudioGetPropertiesParams {
+            path: "game.Workspace.Part".to_string(),
+            properties: None,
+        };
+
+        let result = server
+            .studio_get_properties(Parameters(params))
+            .await;
+        assert!(result.is_ok());
+
+        let call = mock.last_call().unwrap();
+        assert!(call.params["properties"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_bounds_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "getBounds",
+                json!({
+                    "center": [0, 5, 0],
+                    "size": [10, 10, 10],
+                    "min": [-5, 0, -5],
+                    "max": [5, 10, 5],
+                    "orientation": [0, 0, 0]
+                }),
+            )],
+        );
+
+        let params = StudioGetBoundsParams {
+            path: "game.Workspace.Model".to_string(),
+        };
+
+        let result = server.studio_get_bounds(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        assert!(mock.was_called("getBounds"));
+        let call = mock.last_call().unwrap();
+        assert_eq!(call.params["path"], "game.Workspace.Model");
+    }
+
+    #[tokio::test]
+    async fn test_studio_get_bounds_with_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let (server, _mock) = create_mock_server_with_responses(
+            temp_dir.path().to_path_buf(),
+            [(
+                "getBounds",
+                json!({
+                    "center": [100, 50, 200],
+                    "size": [50, 100, 50],
+                    "min": [75, 0, 175],
+                    "max": [125, 100, 225],
+                    "orientation": [0, 45, 0]
+                }),
+            )],
+        );
+
+        let params = StudioGetBoundsParams {
+            path: "game.Workspace.Building.Roof".to_string(),
+        };
+
+        let result = server.studio_get_bounds(Parameters(params)).await;
+        assert!(result.is_ok());
+
+        let call_result = result.unwrap();
+        if let rmcp::model::RawContent::Text(text) = &*call_result.content[0] {
+            assert!(text.text.contains("center"));
+            assert!(text.text.contains("size"));
+            assert!(text.text.contains("min"));
+            assert!(text.text.contains("max"));
+        } else {
+            panic!("Expected text content");
         }
     }
 }

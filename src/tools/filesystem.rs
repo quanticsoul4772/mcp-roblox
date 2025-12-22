@@ -728,4 +728,36 @@ mod tests {
         let content = std::fs::read_to_string(&luau_file).unwrap();
         assert!(content.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_write_script_with_unicode_content() {
+        let temp_dir = TempDir::new().unwrap();
+        let luau_file = temp_dir.path().join("unicode.luau");
+
+        let unicode_content = "-- Unicode: 你好世界 🚀 émoji";
+        let result = write_script(&luau_file, unicode_content, false).await;
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(&luau_file).unwrap();
+        assert_eq!(content, unicode_content);
+    }
+
+    #[tokio::test]
+    async fn test_write_script_deeply_nested_with_create_dirs() {
+        let temp_dir = TempDir::new().unwrap();
+        let deep_path = temp_dir
+            .path()
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("e")
+            .join("deep.luau");
+
+        let result = write_script(&deep_path, "-- deep", true).await;
+        assert!(result.is_ok());
+
+        assert!(deep_path.exists());
+    }
+
 }

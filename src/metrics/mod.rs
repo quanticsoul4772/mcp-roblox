@@ -688,4 +688,126 @@ mod tests {
         let snapshot = server_metrics.snapshot().await;
         assert_eq!(snapshot.unknown_commands.total, 3);
     }
+
+    // === DEFAULT TRAIT TESTS ===
+
+    #[test]
+    fn test_server_metrics_default() {
+        // Test the Default trait implementation for ServerMetrics
+        let metrics: ServerMetrics = Default::default();
+
+        // Default should be same as new()
+        let snapshot = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(metrics.snapshot());
+
+        // Should have empty tools
+        assert!(snapshot.tools.is_empty());
+        // Should have zero connection checks
+        assert_eq!(snapshot.connection.total_checks, 0);
+        // Should have zero late results
+        assert_eq!(snapshot.late_results.total, 0);
+        // Should have zero unknown commands
+        assert_eq!(snapshot.unknown_commands.total, 0);
+    }
+
+    #[test]
+    fn test_server_metrics_default_equals_new() {
+        let from_default: ServerMetrics = Default::default();
+        let from_new = ServerMetrics::new();
+
+        // Both should have zero totals
+        let snapshot_default = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(from_default.snapshot());
+        let snapshot_new = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(from_new.snapshot());
+
+        assert_eq!(
+            snapshot_default.tools.len(),
+            snapshot_new.tools.len()
+        );
+        assert_eq!(
+            snapshot_default.connection.total_checks,
+            snapshot_new.connection.total_checks
+        );
+    }
+
+    // === ADDITIONAL COVERAGE TESTS ===
+
+    #[tokio::test]
+    async fn test_tool_metrics_single_call() {
+        let metrics = ToolMetrics::new();
+
+        metrics.record_call(Duration::from_millis(42)).await;
+
+        let snapshot = metrics.snapshot().await;
+        assert_eq!(snapshot.calls, 1);
+        assert_eq!(snapshot.errors, 0);
+        // With a single sample, avg should equal that sample
+        assert!((snapshot.avg_duration_ms - 42.0).abs() < 0.1);
+    }
+
+    #[tokio::test]
+    async fn test_tool_metrics_multiple_errors() {
+        let metrics = ToolMetrics::new();
+
+        metrics.record_error();
+        metrics.record_error();
+        metrics.record_error();
+
+        let snapshot = metrics.snapshot().await;
+        assert_eq!(snapshot.calls, 0);
+        assert_eq!(snapshot.errors, 3);
+        // Error rate should be infinite/NaN or 0 with no calls - actually it's 0.0 division check
+        // With 0 calls, error_rate calculation might be 0 or needs special handling
+        // The implementation divides by calls, so with 0 calls it should be 0
+        assert_eq!(snapshot.error_rate, 0.0);
+    }
+
+    #[test]
+    fn test_server_metrics_snapshot_debug() {
+        let server_metrics = ServerMetrics::new();
+        server_metrics.record_connection_status(true);
+
+        let snapshot = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(server_metrics.snapshot());
+
+        let debug_str = format!("{:?}", snapshot);
+        assert!(debug_str.contains("ServerMetricsSnapshot"));
+        assert!(debug_str.contains("uptime_secs"));
+        assert!(debug_str.contains("tools"));
+    }
+
+    #[test]
+    fn test_server_metrics_snapshot_clone() {
+        let server_metrics = ServerMetrics::new();
+        server_metrics.record_connection_status(true);
+        server_metrics.record_late_result(false);
+
+        let snapshot = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(server_metrics.snapshot());
+
+        let cloned = snapshot.clone();
+        assert_eq!(cloned.connection.total_checks, 1);
+        assert_eq!(cloned.late_results.total, 1);
+    }
+
+    #[test]
+    fn test_server_metrics_snapshot_serialize() {
+        let server_metrics = ServerMetrics::new();
+        server_metrics.record_connection_status(true);
+
+        let snapshot = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(server_metrics.snapshot());
+
+        let json = serde_json::to_string(&snapshot).expect("Should serialize");
+        assert!(json.contains("uptime_secs"));
+        assert!(json.contains("connection"));
+        assert!(json.contains("late_results"));
+    }
 }

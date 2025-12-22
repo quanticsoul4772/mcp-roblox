@@ -305,4 +305,58 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().is_panic());
     }
+
+    #[tokio::test]
+    async fn test_spawn_monitored_result_with_async_error() {
+        // Test that async work followed by error is handled correctly
+        let handle = spawn_monitored_result("async_error_task", async {
+            sleep(Duration::from_millis(5)).await;
+            Err::<(), String>("delayed error".to_string())
+        });
+
+        let result = handle.await;
+        assert!(result.is_ok()); // Outer task completes, error is logged
+    }
+
+    #[tokio::test]
+    async fn test_spawn_monitored_result_with_async_success() {
+        // Test that async work followed by success is handled correctly
+        let handle = spawn_monitored_result("async_success_task", async {
+            sleep(Duration::from_millis(5)).await;
+            Ok::<(), String>(())
+        });
+
+        let result = handle.await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_task_health_check_running_task() {
+        // Test that check_health doesn't warn for running tasks
+        let health = TaskHealth::spawn("long_running", async {
+            sleep(Duration::from_millis(100)).await;
+        });
+
+        // Task should be running
+        assert!(health.is_running());
+
+        // check_health should not set warned flag for running task
+        health.check_health();
+        assert!(!health.warned.load(Ordering::SeqCst));
+
+        // Clean up
+        health.abort();
+    }
+
+    #[test]
+    fn test_task_health_debug() {
+        let handle = tokio::runtime::Runtime::new()
+            .unwrap()
+            .spawn(async {});
+        let health = TaskHealth::new("debug_test", handle);
+
+        let debug_str = format!("{:?}", health);
+        assert!(debug_str.contains("TaskHealth"));
+        assert!(debug_str.contains("debug_test"));
+    }
 }
