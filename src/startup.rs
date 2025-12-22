@@ -131,6 +131,7 @@ pub fn spawn_http_bridge(bridge: PluginBridge, bind_addr: String) -> JoinHandle<
 ///
 /// # Returns
 /// `Ok(SocketAddr)` if valid, `Err` with the parse error otherwise
+#[allow(dead_code)] // Utility function available for future use
 pub fn parse_socket_addr(addr: &str) -> Result<std::net::SocketAddr, std::net::AddrParseError> {
     addr.parse()
 }
@@ -144,12 +145,24 @@ pub fn log_startup_info(project_root: &std::path::Path) {
     info!("Project root: {}", project_root.display());
 }
 
-/// Create the shared plugin bridge
+/// Create the shared plugin bridge without metrics
 ///
 /// # Returns
 /// An Arc-wrapped PluginBridge instance
+#[allow(dead_code)] // Available for simple use cases without metrics
 pub fn create_bridge() -> Arc<PluginBridge> {
     Arc::new(PluginBridge::new())
+}
+
+/// Create the shared plugin bridge with metrics for late result tracking
+///
+/// # Arguments
+/// * `metrics` - Shared metrics instance for tracking late results and unknown commands
+///
+/// # Returns
+/// An Arc-wrapped PluginBridge instance with metrics enabled
+pub fn create_bridge_with_metrics(metrics: Arc<crate::metrics::ServerMetrics>) -> Arc<PluginBridge> {
+    Arc::new(PluginBridge::with_metrics(metrics))
 }
 
 #[cfg(test)]
@@ -254,6 +267,23 @@ mod tests {
         // Each call should create a new independent bridge
         assert_eq!(Arc::strong_count(&bridge1), 1);
         assert_eq!(Arc::strong_count(&bridge2), 1);
+    }
+
+    #[test]
+    fn test_create_bridge_with_metrics_returns_arc() {
+        let metrics = Arc::new(crate::metrics::ServerMetrics::new());
+        let bridge = create_bridge_with_metrics(metrics.clone());
+        // Verify we can clone the Arc (basic functionality check)
+        let _bridge2 = bridge.clone();
+        assert!(Arc::strong_count(&bridge) >= 1);
+    }
+
+    #[test]
+    fn test_create_bridge_with_metrics_shares_metrics() {
+        let metrics = Arc::new(crate::metrics::ServerMetrics::new());
+        let _bridge = create_bridge_with_metrics(metrics.clone());
+        // Metrics should have 2 references: original + inside bridge
+        assert!(Arc::strong_count(&metrics) >= 2);
     }
 
     // ========================================
