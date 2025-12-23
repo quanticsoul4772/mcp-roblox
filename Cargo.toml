@@ -7,6 +7,10 @@ authors = ["Russ <your.email@example.com>"]
 description = "High-performance Rust MCP server for Roblox Studio with fast-failure error handling"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = []
+ai = ["dep:neo4rs", "dep:sha2", "dep:hex"]
+
 [dependencies]
 # MCP
 rmcp = { version = "0.8.0", features = ["server", "transport-io", "macros", "schemars"] }
@@ -61,6 +65,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 regex = "1"
 walkdir = "2"
+
+# AI feature dependencies (optional)
+neo4rs = { version = "0.8", optional = true }
+sha2 = { version = "0.10", optional = true }
+hex = { version = "0.4", optional = true }
 
 [dev-dependencies]
 dirs = "6.0.0"

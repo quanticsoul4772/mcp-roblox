@@ -12,6 +12,9 @@ mod tasks;
 mod tools;
 mod watcher;
 
+#[cfg(feature = "ai")]
+mod ai;
+
 use std::sync::Arc;
 
 use anyhow::Result;
