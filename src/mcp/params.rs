@@ -154,6 +154,16 @@ pub struct StudioGetBoundsParams {
     pub path: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StudioInsertR15RigParams {
+    #[schemars(description = "Parent path for the rig (e.g., 'game.ReplicatedStorage.NPCModels')")]
+    pub parent: String,
+    #[schemars(description = "Name for the created rig model")]
+    pub name: String,
+    #[schemars(description = "Record undo waypoint (default: true)")]
+    pub record_undo: Option<bool>,
+}
+
 // === CLOUD PARAMS ===
 // These parameter structs define the JSON schema for Open Cloud MCP tools
 // All Cloud tools require ROBLOX_OPEN_CLOUD_API_KEY environment variable
@@ -571,6 +581,24 @@ mod tests {
         let params: StudioFindInstancesParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.class_name, "Part");
         assert!(params.root.is_none());
+    }
+
+    #[test]
+    fn test_studio_insert_r15_rig_params_full() {
+        let json = r#"{"parent": "game.ReplicatedStorage.NPCModels", "name": "TestRig", "record_undo": true}"#;
+        let params: StudioInsertR15RigParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.parent, "game.ReplicatedStorage.NPCModels");
+        assert_eq!(params.name, "TestRig");
+        assert_eq!(params.record_undo, Some(true));
+    }
+
+    #[test]
+    fn test_studio_insert_r15_rig_params_minimal() {
+        let json = r#"{"parent": "game.Workspace", "name": "NPC"}"#;
+        let params: StudioInsertR15RigParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.parent, "game.Workspace");
+        assert_eq!(params.name, "NPC");
+        assert!(params.record_undo.is_none());
     }
 
     // === CLOUD PARAMS TESTS ===

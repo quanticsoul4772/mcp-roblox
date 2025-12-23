@@ -200,3 +200,19 @@ Key patterns from the production guide:
 - **Security**: Never trust client; validate types, NaN, sanity limits, cooldowns on every RemoteEvent
 - **DataStore**: Use `UpdateAsync()` not `SetAsync()`; wrap in `pcall()`; implement `BindToClose()`
 - **Toolchain**: Rojo + Wally + Selene + StyLua + Luau LSP
+
+## R15 NPC Patterns (Critical)
+
+### Animation Requirements
+- **Never add WeldConstraints to body parts** - They override Motor6D transforms, causing T-pose
+- R15 rigs use 15 Motor6D joints that animations transform - welds lock these
+- Only `HumanoidRootPart` needs `CanCollide = true`; other parts use Motor6D to stay connected
+
+### Clothing for MeshPart Avatars
+- **Shirt/Pants instances don't work** on `CreateHumanoidModelFromDescription()` avatars
+- Must set clothing via `HumanoidDescription.Shirt` and `.Pants` properties (asset IDs as numbers)
+
+### Server-Spawned NPC Animation
+- LocalScripts fail (no `LocalPlayer` for NPCs)
+- Use client-side animation handler in `StarterPlayerScripts` that scans for NPCs
+- Check `Players:GetPlayerFromCharacter(model)` returns nil to identify NPCs

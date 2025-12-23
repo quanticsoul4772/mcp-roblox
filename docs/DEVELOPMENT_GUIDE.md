@@ -1147,6 +1147,160 @@ local floors = rng.NextInteger(lot.minFloors, lot.maxFloors)
 
 ---
 
+## R15 NPC Systems
+
+Creating animated NPCs with clothing requires understanding how R15 rigs work internally.
+
+### Motor6D Joints - Never Add Welds
+
+R15 humanoid rigs use **15 Motor6D joints** to connect 16 MeshParts. Animations work by modifying the `Transform` property of each Motor6D.
+
+**Critical mistake:** Adding WeldConstraints to "stabilize" NPCs that fall through the ground. Welds override Motor6D transforms, resulting in T-pose even though animations report `IsPlaying = true`.
+
+```lua
+-- WRONG: Welds break animations
+local function weldNPCParts(model)
+    for _, part in model:GetDescendants() do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = model.HumanoidRootPart
+            weld.Part1 = part
+            weld.Parent = part
+        end
+    end
+end
+
+-- CORRECT: Only HumanoidRootPart needs collision
+local function setupNPCCollision(model)
+    for _, part in model:GetDescendants() do
+        if part:IsA("BasePart") then
+            if part.Name == "HumanoidRootPart" then
+                part.CanCollide = true
+            else
+                part.CanCollide = false  -- Motor6D keeps parts connected
+            end
+        end
+    end
+end
+```
+
+### Clothing with HumanoidDescription
+
+**Classic Shirt/Pants instances don't work** on MeshPart-based R15 avatars created via `CreateHumanoidModelFromDescription()`. You must set clothing via HumanoidDescription properties:
+
+```lua
+local function createNPCWithClothing()
+    local description = Instance.new("HumanoidDescription")
+    description.Shirt = 6536082026      -- Asset ID as number (not rbxassetid://)
+    description.Pants = 6536084832
+
+    -- Skin tone
+    local skinTone = Color3.fromRGB(180, 128, 92)
+    description.HeadColor = skinTone
+    description.LeftArmColor = skinTone
+    description.RightArmColor = skinTone
+    description.LeftLegColor = skinTone
+    description.RightLegColor = skinTone
+    description.TorsoColor = skinTone
+
+    local model = Players:CreateHumanoidModelFromDescription(
+        description,
+        Enum.HumanoidRigType.R15
+    )
+    model.Name = "CrowdNPC"
+    return model
+end
+```
+
+### Server-Spawned NPC Animation
+
+LocalScripts rely on `game.Players.LocalPlayer` which doesn't exist for server-spawned NPCs. Use a client-side animation handler in `StarterPlayerScripts`:
+
+```lua
+-- StarterPlayerScripts/NPCAnimationClient.luau
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local ANIMATIONS = {
+    idle = "rbxassetid://507766388",
+    walk = "rbxassetid://507777826",
+}
+
+local function setupNPCAnimation(npcModel)
+    local humanoid = npcModel:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if not animator then return end
+
+    local idleAnim = Instance.new("Animation")
+    idleAnim.AnimationId = ANIMATIONS.idle
+    local walkAnim = Instance.new("Animation")
+    walkAnim.AnimationId = ANIMATIONS.walk
+
+    local idleTrack = animator:LoadAnimation(idleAnim)
+    local walkTrack = animator:LoadAnimation(walkAnim)
+    idleTrack:Play()
+
+    RunService.Heartbeat:Connect(function()
+        local velocity = npcModel.PrimaryPart.AssemblyLinearVelocity
+        local speed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+
+        if speed > 0.5 then
+            if not walkTrack.IsPlaying then
+                idleTrack:Stop()
+                walkTrack:Play()
+            end
+        else
+            if not idleTrack.IsPlaying then
+                walkTrack:Stop()
+                idleTrack:Play()
+            end
+        end
+    end)
+end
+
+-- Detect NPCs (humanoids without a player)
+workspace.ChildAdded:Connect(function(child)
+    if child:FindFirstChild("Humanoid") and not Players:GetPlayerFromCharacter(child) then
+        task.wait(0.1)  -- Wait for model to fully load
+        setupNPCAnimation(child)
+    end
+end)
+```
+
+### Debugging Animation Issues
+
+When NPCs are in T-pose despite animations "playing":
+
+1. **Check Motor6D count** - Should be 15 for R15:
+```lua
+local joints = 0
+for _, d in model:GetDescendants() do
+    if d:IsA("Motor6D") then joints += 1 end
+end
+print("Joints:", joints)  -- Should be 15
+```
+
+2. **Check for interfering constraints:**
+```lua
+for _, d in model:GetDescendants() do
+    if d:IsA("WeldConstraint") or d:IsA("Weld") then
+        warn("Found interfering constraint:", d:GetFullName())
+    end
+end
+```
+
+3. **Verify animation loaded:**
+```lua
+local track = animator:LoadAnimation(animation)
+print("Length:", track.Length)  -- Should be > 0
+track:Play()
+task.wait(0.1)
+print("IsPlaying:", track.IsPlaying, "TimePos:", track.TimePosition)
+```
+
+---
+
 ## Troubleshooting
 
 ### Plugin Won't Connect

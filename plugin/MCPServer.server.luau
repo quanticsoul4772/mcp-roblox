@@ -649,6 +649,95 @@ local function executeCommand(action, params)
         end
 
         return result
+
+    elseif action == "insertR15Rig" then
+        -- Create a complete R15 humanoid rig using Players service for proper mesh parts
+        local Players = game:GetService("Players")
+
+        local parent = resolveInstancePath(params.parent) or game:FindFirstChild(params.parent, true)
+        if not parent then
+            error("Parent not found: " .. params.parent)
+        end
+
+        if not params.name then
+            error("Rig name is required")
+        end
+
+        -- Create a HumanoidDescription for a default avatar
+        local description = Instance.new("HumanoidDescription")
+
+        -- Use default Roblox body parts (these are the standard R15 mesh IDs)
+        description.Head = 0  -- Default head
+        description.Torso = 0
+        description.LeftArm = 0
+        description.RightArm = 0
+        description.LeftLeg = 0
+        description.RightLeg = 0
+
+        -- Create the model using Players service
+        local success, model = pcall(function()
+            return Players:CreateHumanoidModelFromDescription(description, Enum.HumanoidRigType.R15)
+        end)
+
+        if not success or not model then
+            -- Fallback: Try creating from user ID 1 (Roblox)
+            success, model = pcall(function()
+                return Players:CreateHumanoidModelFromUserId(1)
+            end)
+        end
+
+        if not success or not model then
+            error("Failed to create R15 rig: " .. tostring(model))
+        end
+
+        -- Rename and configure the model
+        model.Name = params.name
+
+        -- Remove accessories and clothing for a clean NPC
+        for _, child in ipairs(model:GetDescendants()) do
+            if child:IsA("Accessory") or child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") then
+                child:Destroy()
+            end
+        end
+
+        -- Set body colors to a neutral tone
+        local bodyColors = model:FindFirstChildOfClass("BodyColors")
+        if not bodyColors then
+            bodyColors = Instance.new("BodyColors")
+            bodyColors.Parent = model
+        end
+        local skinColor = BrickColor.new("Light orange")
+        bodyColors.HeadColor = skinColor
+        bodyColors.TorsoColor = skinColor
+        bodyColors.LeftArmColor = skinColor
+        bodyColors.RightArmColor = skinColor
+        bodyColors.LeftLegColor = skinColor
+        bodyColors.RightLegColor = skinColor
+
+        -- Make sure Humanoid has an Animator
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if not humanoid:FindFirstChildOfClass("Animator") then
+                local animator = Instance.new("Animator")
+                animator.Parent = humanoid
+            end
+        end
+
+        -- Parent model to target
+        model.Parent = parent
+
+        -- Cleanup the description
+        description:Destroy()
+
+        if params.recordUndo ~= false then
+            ChangeHistoryService:SetWaypoint("MCP Insert R15 Rig")
+        end
+
+        return {
+            success = true,
+            path = model:GetFullName(),
+            method = "HumanoidDescription"
+        }
     end
 
     error("Unknown action: " .. action)

@@ -60,6 +60,7 @@ use crate::mcp::params::{
     StudioGetOutputParams,
     StudioGetPropertiesParams,
     StudioGetScriptSourceParams,
+    StudioInsertR15RigParams,
     StudioModifyScriptParams,
     StudioSetPropertyParams,
     StyluaFormatParams,
@@ -1250,6 +1251,41 @@ impl<
                     "parent": params.parent,
                     "name": params.name,
                     "properties": params.properties,
+                    "recordUndo": params.record_undo.unwrap_or(true)
+                }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Insert a complete R15 humanoid rig with proper Motor6D joints. Creates a fully-functional R15 character model with Humanoid and Animator ready for animation."
+    )]
+    async fn studio_insert_r15_rig(
+        &self,
+        Parameters(params): Parameters<StudioInsertR15RigParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_insert_r15_rig");
+        let result = self.studio_insert_r15_rig_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    async fn studio_insert_r15_rig_impl(
+        &self,
+        params: StudioInsertR15RigParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self
+            .bridge
+            .execute_command(
+                "insertR15Rig",
+                json!({
+                    "parent": params.parent,
+                    "name": params.name,
                     "recordUndo": params.record_undo.unwrap_or(true)
                 }),
             )

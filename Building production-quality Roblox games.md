@@ -110,6 +110,164 @@ The most valuable learning resources for serious Roblox developers combine offic
 - RoDevs (131,000+): Hiring, marketplace, technical discussion
 - Roblox Studio Community (117,000+): Skill sharing
 
+## R15 NPC systems require understanding Motor6D joints and HumanoidDescription
+
+Creating animated NPCs with clothing is deceptively complex. The two most common pitfalls—broken animations and missing clothing—stem from misunderstanding how R15 rigs work internally.
+
+### Motor6D joints are sacred—never add WeldConstraints to body parts
+
+R15 humanoid rigs consist of 16 MeshParts connected by **15 Motor6D joints**. These joints don't just hold the body together—they're the transformation targets for animations. When an animation plays, it modifies the `Transform` property of each Motor6D to pose the character.
+
+**Critical mistake**: Adding WeldConstraints to "stabilize" NPCs that fall through the ground. WeldConstraints override Motor6D transforms, resulting in a T-posed character even though animations report `IsPlaying = true` and `TimePosition` advances normally.
+
+| Constraint Type | Effect on Animation | Use Case |
+|-----------------|---------------------|----------|
+| Motor6D | ✅ Animated by Animator | Standard R15 rig joints |
+| WeldConstraint | ❌ Locks relative position | Attaching accessories, tools |
+| Weld | ❌ Locks relative position | Legacy attachment method |
+| RigidConstraint | ❌ Locks position | Physics assemblies |
+
+**Correct collision setup for humanoid NPCs:**
+```lua
+-- Only HumanoidRootPart needs collision - body parts stay connected via Motor6D
+local function setupNPCCollision(model)
+    for _, part in ipairs(model:GetDescendants()) do
+        if part:IsA("BasePart") then
+            if part.Name == "HumanoidRootPart" then
+                part.CanCollide = true
+            else
+                part.CanCollide = false  -- Other parts don't need collision
+            end
+        end
+    end
+end
+```
+
+If NPCs fall through the ground with this setup, the issue is spawn position or physics groups—not missing welds.
+
+### Clothing requires HumanoidDescription, not Shirt/Pants instances
+
+R15 avatars created via `Players:CreateHumanoidModelFromDescription()` use MeshParts with baked appearance data. **Classic Shirt and Pants instances do not apply to these MeshParts**—they only work with legacy Part-based characters.
+
+| Character Type | Clothing Method | Works? |
+|----------------|-----------------|--------|
+| Classic R6/R15 (Parts) | Shirt/Pants instances | ✅ Yes |
+| HumanoidDescription R15 (MeshParts) | Shirt/Pants instances | ❌ No |
+| HumanoidDescription R15 (MeshParts) | HumanoidDescription.Shirt/.Pants | ✅ Yes |
+
+**Correct NPC spawning with clothing:**
+```lua
+local function createNPCWithClothing()
+    local description = Instance.new("HumanoidDescription")
+    description.Shirt = 6536082026      -- Asset ID (not rbxassetid:// format)
+    description.Pants = 6536084832
+
+    -- Skin tone
+    local skinTone = Color3.fromRGB(180, 128, 92)
+    description.HeadColor = skinTone
+    description.LeftArmColor = skinTone
+    description.RightArmColor = skinTone
+    description.LeftLegColor = skinTone
+    description.RightLegColor = skinTone
+    description.TorsoColor = skinTone
+
+    local model = Players:CreateHumanoidModelFromDescription(
+        description,
+        Enum.HumanoidRigType.R15
+    )
+    return model
+end
+```
+
+### LocalScripts don't work for server-spawned NPCs
+
+LocalScripts in characters rely on `game.Players.LocalPlayer` for context. Server-spawned NPCs have no associated player, so standard Animate scripts fail silently.
+
+**Two approaches for NPC animation:**
+
+1. **Server-side animation** (simpler but less smooth):
+```lua
+-- In server Script
+local animator = humanoid:FindFirstChildOfClass("Animator")
+local idleAnim = animator:LoadAnimation(idleAnimationInstance)
+idleAnim:Play()
+```
+
+2. **Client-side animation handler** (recommended for smoothness):
+```lua
+-- LocalScript in StarterPlayerScripts
+local function setupNPCAnimation(npcModel)
+    local humanoid = npcModel:FindFirstChildOfClass("Humanoid")
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+
+    local idleTrack = animator:LoadAnimation(idleAnimation)
+    local walkTrack = animator:LoadAnimation(walkAnimation)
+
+    idleTrack:Play()
+
+    RunService.Heartbeat:Connect(function()
+        local velocity = npcModel.PrimaryPart.AssemblyLinearVelocity
+        local speed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+
+        if speed > 0.5 then
+            if not walkTrack.IsPlaying then
+                idleTrack:Stop()
+                walkTrack:Play()
+            end
+        else
+            if not idleTrack.IsPlaying then
+                walkTrack:Stop()
+                idleTrack:Play()
+            end
+        end
+    end)
+end
+
+-- Scan workspace for NPCs and set them up
+workspace.ChildAdded:Connect(function(child)
+    if child:FindFirstChild("Humanoid") and not Players:GetPlayerFromCharacter(child) then
+        setupNPCAnimation(child)
+    end
+end)
+```
+
+### Debugging animation issues systematically
+
+When NPCs appear in T-pose despite animations "playing":
+
+1. **Check Motor6D joints exist**: Should have 15 for R15 rig
+   ```lua
+   local jointCount = 0
+   for _, desc in model:GetDescendants() do
+       if desc:IsA("Motor6D") then jointCount += 1 end
+   end
+   print("Joint count:", jointCount)  -- Should be 15
+   ```
+
+2. **Check for interfering constraints**: WeldConstraints, Welds, RigidConstraints on body parts
+   ```lua
+   for _, desc in model:GetDescendants() do
+       if desc:IsA("WeldConstraint") or desc:IsA("Weld") or desc:IsA("RigidConstraint") then
+           warn("Found interfering constraint:", desc:GetFullName())
+       end
+   end
+   ```
+
+3. **Verify animation loads correctly**:
+   ```lua
+   local track = animator:LoadAnimation(animation)
+   print("Animation length:", track.Length)  -- Should be > 0
+   track:Play()
+   task.wait(0.1)
+   print("IsPlaying:", track.IsPlaying)      -- Should be true
+   print("TimePosition:", track.TimePosition) -- Should advance
+   ```
+
+4. **Check Humanoid.RigType**: Must match animation type
+   ```lua
+   print("RigType:", humanoid.RigType)  -- Should be Enum.HumanoidRigType.R15
+   ```
+
 ## Conclusion: engineering discipline separates professionals from amateurs
 
 Building a professional Roblox game requires treating it as real software engineering. The technical differentiators—modular architecture, server-authoritative design, performance profiling, automated testing, and defensive data handling—are the same practices that distinguish professional software development in any domain.
