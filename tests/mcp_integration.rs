@@ -2,14 +2,34 @@
 //!
 //! Tests the STDIO transport end-to-end by spawning the server process
 //! and sending JSON-RPC messages according to MCP protocol spec (2024-11-05).
+//!
+//! These tests automatically build the binary before running - no manual steps required.
+//! Run with: `cargo test --test mcp_integration`
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::Once;
 use std::time::Duration;
 use tempfile::TempDir;
+
+// Build the binary once before any tests run
+static BUILD_BINARY: Once = Once::new();
+
+fn ensure_binary_built() {
+    BUILD_BINARY.call_once(|| {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let status = Command::new("cargo")
+            .args(["build", "--bin", "roblox-studio-mcp"])
+            .current_dir(manifest_dir)
+            .status()
+            .expect("Failed to run cargo build");
+
+        assert!(status.success(), "Failed to build binary");
+    });
+}
 
 /// JSON-RPC 2.0 Request structure
 #[derive(Debug, Serialize)]
@@ -63,6 +83,9 @@ struct McpTestClient {
 impl McpTestClient {
     /// Spawn the server in the given temp directory
     fn spawn() -> Result<Self, Box<dyn std::error::Error>> {
+        // Ensure binary is built before trying to spawn
+        ensure_binary_built();
+
         let temp_dir = TempDir::new()?;
 
         // Build path to the binary
@@ -257,7 +280,6 @@ impl Drop for McpTestClient {
 // ============================================================================
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_mcp_initialize_handshake() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -293,7 +315,6 @@ fn test_mcp_initialize_handshake() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_tools_list_returns_filesystem_tools() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -383,7 +404,6 @@ fn test_tools_list_returns_filesystem_tools() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_fs_get_tree_tool() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -457,7 +477,6 @@ fn test_fs_get_tree_tool() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_fs_read_script_tool() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -509,7 +528,6 @@ fn test_fs_read_script_tool() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_fs_write_script_tool() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -551,7 +569,6 @@ fn test_fs_write_script_tool() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_fs_search_content_tool() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -607,7 +624,6 @@ fn test_fs_search_content_tool() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_fs_delete_script_tool() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -648,7 +664,6 @@ fn test_fs_delete_script_tool() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_path_traversal_protection() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -698,7 +713,6 @@ fn test_path_traversal_protection() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_non_luau_file_rejection() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -745,7 +759,6 @@ fn test_non_luau_file_rejection() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_studio_tool_returns_timeout_when_plugin_not_connected() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
@@ -795,7 +808,6 @@ fn test_studio_tool_returns_timeout_when_plugin_not_connected() {
 }
 
 #[test]
-#[ignore = "Requires compiled binary - run with: cargo test --test mcp_integration -- --ignored"]
 fn test_server_bootstrap_and_tool_count() {
     let mut client = McpTestClient::spawn().expect("Failed to spawn server");
 
