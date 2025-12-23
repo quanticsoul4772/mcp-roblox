@@ -24,6 +24,9 @@
 //! - `NEO4J_USERNAME`: Neo4j username (default: `neo4j`)
 //! - `NEO4J_DATABASE`: Neo4j database name (default: `neo4j`)
 
+// This module exports types for external use - they're intentionally not used within the crate itself
+#![allow(unused)]
+
 mod auto_indexer;
 mod config;
 mod embedder;

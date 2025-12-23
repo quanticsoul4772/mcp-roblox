@@ -378,8 +378,10 @@ pub struct FsWatchChangesParams {
 // === AI PARAMS ===
 // These parameter structs define the JSON schema for AI-powered code search tools
 // Requires the 'ai' feature flag and configured Neo4j + Voyage AI credentials
+// Fields are used via JSON deserialization in MCP tools
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)] // Fields used via JSON deserialization
 pub struct AiSearchCodebaseParams {
     #[schemars(description = "Natural language query describing what you're looking for")]
     pub query: String,
@@ -390,6 +392,7 @@ pub struct AiSearchCodebaseParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)] // Fields used via JSON deserialization
 pub struct AiFindRelatedParams {
     #[schemars(description = "File path to find related scripts for")]
     pub path: String,
@@ -398,6 +401,7 @@ pub struct AiFindRelatedParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)] // Fields used via JSON deserialization
 pub struct AiGetContextParams {
     #[schemars(description = "Task description to find relevant context for")]
     pub task: String,
@@ -406,6 +410,7 @@ pub struct AiGetContextParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[allow(dead_code)] // Fields used via JSON deserialization
 pub struct AiIndexProjectParams {
     #[schemars(description = "Root directory to index (defaults to project root)")]
     pub path: Option<String>,

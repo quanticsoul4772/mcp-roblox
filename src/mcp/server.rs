@@ -14,7 +14,9 @@ use serde_json::json;
 use tokio::fs;
 use walkdir::WalkDir;
 
-use tracing::{info, warn};
+use tracing::warn;
+#[cfg(feature = "ai")]
+use tracing::info;
 
 use crate::bridge::http::PluginBridge;
 use crate::bridge::StudioBridge;
@@ -165,6 +167,7 @@ pub struct RobloxMcpServer<
     /// Auto-indexer handle for background indexing (optional - requires file_watcher + knowledge_graph)
     /// Wrapped in Arc<Mutex<>> to allow Clone (handles are shared between clones)
     #[cfg(feature = "ai")]
+    #[allow(dead_code)] // Public API for external use
     auto_indexer_handle: Arc<tokio::sync::Mutex<Option<AutoIndexerHandle>>>,
 }
 
@@ -434,6 +437,7 @@ impl<
     /// let server = RobloxMcpServer::new(bridge, root).with_knowledge_graph(kg);
     /// ```
     #[cfg(feature = "ai")]
+    #[allow(dead_code)] // Public API for external use
     pub fn with_knowledge_graph(mut self, kg: Arc<dyn KnowledgeGraph>) -> Self {
         self.knowledge_graph = Some(kg);
         self
@@ -474,6 +478,7 @@ impl<
     /// server.start_auto_indexing().await;
     /// ```
     #[cfg(feature = "ai")]
+    #[allow(dead_code)] // Public API for external use
     pub async fn start_auto_indexing(&self) {
         // Check if we have both file_watcher and knowledge_graph
         let file_watcher = match &self.file_watcher {
@@ -506,6 +511,7 @@ impl<
 
     /// Check if auto-indexing is currently running.
     #[cfg(feature = "ai")]
+    #[allow(dead_code)] // Public API for external use
     pub async fn is_auto_indexing(&self) -> bool {
         let guard = self.auto_indexer_handle.lock().await;
         guard.as_ref().map(|h| h.is_running()).unwrap_or(false)
