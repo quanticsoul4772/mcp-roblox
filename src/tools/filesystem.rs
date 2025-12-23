@@ -95,9 +95,9 @@ pub fn validate_path(requested: &Path, project_root: &Path) -> Result<PathBuf, R
     }
 
     // Canonicalize the existing ancestor
-    let canonical_ancestor = existing_ancestor.canonicalize().map_err(|e| {
-        RobloxMcpError::InvalidPath(format!("Cannot canonicalize ancestor: {e}"))
-    })?;
+    let canonical_ancestor = existing_ancestor
+        .canonicalize()
+        .map_err(|e| RobloxMcpError::InvalidPath(format!("Cannot canonicalize ancestor: {e}")))?;
 
     // Verify ancestor is within project root
     if !canonical_ancestor.starts_with(&canonical_root) {
@@ -300,8 +300,8 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
         }
 
         // Sort: directories first, then files, alphabetically within each group
-        child_entries.sort_by(|(a, a_is_file), (b, b_is_file)| {
-            match (a_is_file, b_is_file) {
+        child_entries.sort_by(
+            |(a, a_is_file), (b, b_is_file)| match (a_is_file, b_is_file) {
                 (false, true) => std::cmp::Ordering::Less,
                 (true, false) => std::cmp::Ordering::Greater,
                 _ => {
@@ -309,8 +309,8 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
                     let b_name = b.file_name().map(|n| n.to_string_lossy().to_lowercase());
                     a_name.cmp(&b_name)
                 }
-            }
-        });
+            },
+        );
 
         let mut child_indices = vec![];
 
@@ -390,7 +390,11 @@ pub fn build_tree_sync(root: &Path, max_depth: usize) -> Result<TreeBuildResult>
         tree: trees.into_iter().next().unwrap(),
         skipped: all_skipped,
         truncated,
-        limit: if truncated { Some(MAX_TREE_ENTRIES) } else { None },
+        limit: if truncated {
+            Some(MAX_TREE_ENTRIES)
+        } else {
+            None
+        },
         total_entries: if truncated { Some(total_entries) } else { None },
     })
 }
@@ -1382,7 +1386,10 @@ mod tests {
             let sibling_file = sibling_dir.join("file.luau");
             if std::fs::write(&sibling_file, "-- outside project").is_ok() {
                 let result = validate_path(&sibling_file, &project_root);
-                assert!(result.is_err(), "File outside project root should be rejected");
+                assert!(
+                    result.is_err(),
+                    "File outside project root should be rejected"
+                );
                 // Clean up
                 let _ = std::fs::remove_dir_all(&sibling_dir);
             }
@@ -1397,7 +1404,11 @@ mod tests {
         // Try various traversal patterns in path components
         let traversal_patterns = [
             project_root.join("..").join("script.luau"),
-            project_root.join("src").join("..").join("..").join("script.luau"),
+            project_root
+                .join("src")
+                .join("..")
+                .join("..")
+                .join("script.luau"),
             project_root.join(".").join("..").join("script.luau"),
         ];
 
@@ -1453,8 +1464,11 @@ mod tests {
 
         // Create more than a few files but not exceeding test limits
         for i in 0..20 {
-            std::fs::write(project_root.join(format!("file{}.luau", i)), format!("-- file {}", i))
-                .unwrap();
+            std::fs::write(
+                project_root.join(format!("file{}.luau", i)),
+                format!("-- file {}", i),
+            )
+            .unwrap();
         }
 
         // Build tree - should not panic or hang
@@ -1710,7 +1724,10 @@ mod tests {
 
         let result = validate_path(&outside_path, project_root);
         // Path exists at root level but is outside project - should fail
-        assert!(result.is_err(), "Path outside project root should fail validation");
+        assert!(
+            result.is_err(),
+            "Path outside project root should fail validation"
+        );
     }
 
     #[cfg(unix)]
@@ -1757,7 +1774,10 @@ mod tests {
         // Should succeed because walking up eventually reaches project_root
         let result = validate_path(&deep_path, project_root);
         // This should succeed because it walks up to project_root
-        assert!(result.is_ok(), "Deep nested path should be valid if it walks up to project root");
+        assert!(
+            result.is_ok(),
+            "Deep nested path should be valid if it walks up to project root"
+        );
     }
 
     #[test]
@@ -1774,7 +1794,10 @@ mod tests {
         let new_file = subdir.join("new_file.luau");
 
         let result = validate_path(&new_file, project_root);
-        assert!(result.is_ok(), "Non-existent file in existing directory should be valid");
+        assert!(
+            result.is_ok(),
+            "Non-existent file in existing directory should be valid"
+        );
     }
 
     #[test]

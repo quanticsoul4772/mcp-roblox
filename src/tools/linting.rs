@@ -333,17 +333,19 @@ pub async fn lint_script(
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     // Execute with timeout protection to prevent hanging
-    let output = execute_with_timeout(cmd, "selene", None).await.map_err(|e| {
-        // Convert ToolExecutionError to a more user-friendly error
-        if e.to_string().contains("timed out") {
-            e
-        } else {
-            RobloxMcpError::ToolNotInstalled {
-                tool: "selene".to_string(),
-                install_hint: "Install with: cargo install selene".to_string(),
+    let output = execute_with_timeout(cmd, "selene", None)
+        .await
+        .map_err(|e| {
+            // Convert ToolExecutionError to a more user-friendly error
+            if e.to_string().contains("timed out") {
+                e
+            } else {
+                RobloxMcpError::ToolNotInstalled {
+                    tool: "selene".to_string(),
+                    install_hint: "Install with: cargo install selene".to_string(),
+                }
             }
-        }
-    })?;
+        })?;
 
     parse_selene_output(&output.stdout, &output.stderr, file_path)
 }

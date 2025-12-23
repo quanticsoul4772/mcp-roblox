@@ -107,16 +107,18 @@ async fn install_packages(project_path: &Path) -> Result<WallyInstallResult, Rob
         .stderr(Stdio::piped());
 
     // Execute with timeout protection
-    let output = execute_with_timeout(cmd, "wally", None).await.map_err(|e| {
-        if e.to_string().contains("timed out") {
-            e
-        } else {
-            RobloxMcpError::ToolNotInstalled {
-                tool: "wally".to_string(),
-                install_hint: "Install via: aftman install UpliftGames/wally".to_string(),
+    let output = execute_with_timeout(cmd, "wally", None)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("timed out") {
+                e
+            } else {
+                RobloxMcpError::ToolNotInstalled {
+                    tool: "wally".to_string(),
+                    install_hint: "Install via: aftman install UpliftGames/wally".to_string(),
+                }
             }
-        }
-    })?;
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -154,16 +156,18 @@ async fn update_packages(project_path: &Path) -> Result<WallyUpdateResult, Roblo
         .stderr(Stdio::piped());
 
     // Execute with timeout protection
-    let output = execute_with_timeout(cmd, "wally", None).await.map_err(|e| {
-        if e.to_string().contains("timed out") {
-            e
-        } else {
-            RobloxMcpError::ToolNotInstalled {
-                tool: "wally".to_string(),
-                install_hint: "Install via: aftman install UpliftGames/wally".to_string(),
+    let output = execute_with_timeout(cmd, "wally", None)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("timed out") {
+                e
+            } else {
+                RobloxMcpError::ToolNotInstalled {
+                    tool: "wally".to_string(),
+                    install_hint: "Install via: aftman install UpliftGames/wally".to_string(),
+                }
             }
-        }
-    })?;
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -225,10 +229,7 @@ pub mod mock {
         }
 
         /// Queue an install response
-        pub fn queue_install_response(
-            &self,
-            response: Result<WallyInstallResult, RobloxMcpError>,
-        ) {
+        pub fn queue_install_response(&self, response: Result<WallyInstallResult, RobloxMcpError>) {
             self.state
                 .lock()
                 .unwrap()
@@ -278,9 +279,7 @@ pub mod mock {
     impl WallyRunner for MockWallyRunner {
         async fn install(&self, project_path: &Path) -> Result<WallyInstallResult, RobloxMcpError> {
             let mut state = self.state.lock().unwrap();
-            state
-                .install_calls
-                .push(project_path.display().to_string());
+            state.install_calls.push(project_path.display().to_string());
 
             state.install_responses.pop_front().unwrap_or_else(|| {
                 Err(RobloxMcpError::ConfigError(

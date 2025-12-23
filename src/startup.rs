@@ -3,7 +3,6 @@
 //! Extracts startup logic from main.rs to enable unit testing
 //! of server initialization, HTTP bridge spawning, and error handling.
 
-
 use std::sync::Arc;
 
 use tokio::task::JoinHandle;
@@ -121,7 +120,11 @@ pub async fn run_http_bridge(bridge: PluginBridge, bind_addr: &str, token: AuthT
 ///
 /// # Returns
 /// A JoinHandle for the spawned task
-pub fn spawn_http_bridge(bridge: PluginBridge, bind_addr: String, token: AuthToken) -> JoinHandle<()> {
+pub fn spawn_http_bridge(
+    bridge: PluginBridge,
+    bind_addr: String,
+    token: AuthToken,
+) -> JoinHandle<()> {
     spawn_monitored("http_bridge", async move {
         run_http_bridge(bridge, &bind_addr, token).await
     })
@@ -179,7 +182,9 @@ pub fn create_bridge() -> Arc<PluginBridge> {
 ///
 /// # Returns
 /// An Arc-wrapped PluginBridge instance with metrics enabled
-pub fn create_bridge_with_metrics(metrics: Arc<crate::metrics::ServerMetrics>) -> Arc<PluginBridge> {
+pub fn create_bridge_with_metrics(
+    metrics: Arc<crate::metrics::ServerMetrics>,
+) -> Arc<PluginBridge> {
     Arc::new(PluginBridge::with_metrics(metrics))
 }
 
@@ -405,10 +410,7 @@ mod tests {
         let handle = spawn_http_bridge(bridge, "invalid:not_a_port".to_string(), token);
 
         // The task should complete without panicking
-        let result = tokio::time::timeout(
-            tokio::time::Duration::from_millis(100),
-            handle
-        ).await;
+        let result = tokio::time::timeout(tokio::time::Duration::from_millis(100), handle).await;
 
         // Should either complete (Ok) or timeout (Err) - both are acceptable
         // The important thing is no panic

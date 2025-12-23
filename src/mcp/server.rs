@@ -18,11 +18,11 @@ use tracing::warn;
 
 use crate::bridge::http::PluginBridge;
 use crate::bridge::StudioBridge;
-use crate::limits::{MAX_FILE_ENTRIES, MAX_SEARCH_RESULTS, MAX_TREE_ENTRIES};
 use crate::cloud::AssetType;
 use crate::cloud::CloudClient;
 use crate::cloud::OpenCloudClient;
 use crate::cloud::OrderedDataStoreListParams;
+use crate::limits::{MAX_FILE_ENTRIES, MAX_SEARCH_RESULTS, MAX_TREE_ENTRIES};
 use crate::mcp::instrumentation::InstrumentedCall;
 use crate::mcp::params::{
     // Cloud params
@@ -50,9 +50,6 @@ use crate::mcp::params::{
     MoonwaveBuildParams,
     RojoBuildParams,
     RojoSourcemapParams,
-    StyluaFormatParams,
-    WallyInstallParams,
-    WallyUpdateParams,
     // Studio params
     StudioCreateInstanceParams,
     StudioDeleteInstanceParams,
@@ -65,15 +62,18 @@ use crate::mcp::params::{
     StudioGetScriptSourceParams,
     StudioModifyScriptParams,
     StudioSetPropertyParams,
+    StyluaFormatParams,
+    WallyInstallParams,
+    WallyUpdateParams,
 };
 use crate::metrics::ServerMetrics;
+use crate::regex_safety::validate_regex_safety;
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
 use crate::tools::formatting::{Formatter, StyLuaFormatter};
 use crate::tools::linting::{Linter, SeleneLinter};
 use crate::tools::moonwave::{DefaultMoonwaveRunner, MoonwaveRunner};
 use crate::tools::rojo::{DefaultRojoRunner, RojoRunner};
 use crate::tools::wally::{DefaultWallyRunner, WallyRunner};
-use crate::regex_safety::validate_regex_safety;
 use crate::watcher::FileWatcher;
 
 /// Roblox MCP Server with injectable dependencies
@@ -866,7 +866,10 @@ impl<
         if truncated {
             response["truncated"] = json!(true);
             response["limit"] = json!(MAX_FILE_ENTRIES);
-            response["message"] = json!(format!("File list truncated at {} entries. Consider using a more specific path.", MAX_FILE_ENTRIES));
+            response["message"] = json!(format!(
+                "File list truncated at {} entries. Consider using a more specific path.",
+                MAX_FILE_ENTRIES
+            ));
         }
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -1957,7 +1960,10 @@ impl<
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         // Parse optional output path
-        let output_path = params.output_path.as_ref().map(|p| Path::new(p).to_path_buf());
+        let output_path = params
+            .output_path
+            .as_ref()
+            .map(|p| Path::new(p).to_path_buf());
 
         // Run rojo sourcemap
         let result = self
@@ -3224,11 +3230,19 @@ mod tests {
         };
 
         let result = server.cloud_publish_place(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_publish_place should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_publish_place should succeed: {:?}",
+            result
+        );
 
         let call_result = result.unwrap();
         if let RawContent::Text(text_content) = &*call_result.content[0] {
-            assert!(text_content.text.contains("42"), "Should contain version: {}", text_content.text);
+            assert!(
+                text_content.text.contains("42"),
+                "Should contain version: {}",
+                text_content.text
+            );
         } else {
             panic!("Expected text content");
         }
@@ -3257,11 +3271,19 @@ mod tests {
         };
 
         let result = server.cloud_datastore_get(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_datastore_get should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_datastore_get should succeed: {:?}",
+            result
+        );
 
         let call_result = result.unwrap();
         if let RawContent::Text(text_content) = &*call_result.content[0] {
-            assert!(text_content.text.contains("coins"), "Should contain data: {}", text_content.text);
+            assert!(
+                text_content.text.contains("coins"),
+                "Should contain data: {}",
+                text_content.text
+            );
         } else {
             panic!("Expected text content");
         }
@@ -3291,7 +3313,11 @@ mod tests {
         };
 
         let result = server.cloud_datastore_set(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_datastore_set should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_datastore_set should succeed: {:?}",
+            result
+        );
     }
 
     #[tokio::test]
@@ -3311,7 +3337,11 @@ mod tests {
         };
 
         let result = server.cloud_messaging_publish(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_messaging_publish should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_messaging_publish should succeed: {:?}",
+            result
+        );
     }
 
     #[tokio::test]
@@ -3339,7 +3369,11 @@ mod tests {
         };
 
         let result = server.cloud_upload_asset(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_upload_asset should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_upload_asset should succeed: {:?}",
+            result
+        );
     }
 
     // Tests for ordered datastore tools
@@ -3380,8 +3414,14 @@ mod tests {
             filter: None,
         };
 
-        let result = server.cloud_ordered_datastore_list(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_ordered_datastore_list should succeed: {:?}", result);
+        let result = server
+            .cloud_ordered_datastore_list(Parameters(params))
+            .await;
+        assert!(
+            result.is_ok(),
+            "cloud_ordered_datastore_list should succeed: {:?}",
+            result
+        );
     }
 
     #[tokio::test]
@@ -3407,7 +3447,11 @@ mod tests {
         };
 
         let result = server.cloud_ordered_datastore_set(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_ordered_datastore_set should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_ordered_datastore_set should succeed: {:?}",
+            result
+        );
     }
 
     #[tokio::test]
@@ -3432,8 +3476,14 @@ mod tests {
             increment: 50,
         };
 
-        let result = server.cloud_ordered_datastore_increment(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_ordered_datastore_increment should succeed: {:?}", result);
+        let result = server
+            .cloud_ordered_datastore_increment(Parameters(params))
+            .await;
+        assert!(
+            result.is_ok(),
+            "cloud_ordered_datastore_increment should succeed: {:?}",
+            result
+        );
     }
 
     #[tokio::test]
@@ -3453,8 +3503,14 @@ mod tests {
             entry_id: "player1".to_string(),
         };
 
-        let result = server.cloud_ordered_datastore_delete(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_ordered_datastore_delete should succeed: {:?}", result);
+        let result = server
+            .cloud_ordered_datastore_delete(Parameters(params))
+            .await;
+        assert!(
+            result.is_ok(),
+            "cloud_ordered_datastore_delete should succeed: {:?}",
+            result
+        );
     }
 
     // Tests for universe management tools
@@ -3490,7 +3546,11 @@ mod tests {
         };
 
         let result = server.cloud_get_universe(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_get_universe should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_get_universe should succeed: {:?}",
+            result
+        );
     }
 
     #[tokio::test]
@@ -3508,7 +3568,11 @@ mod tests {
         };
 
         let result = server.cloud_restart_servers(Parameters(params)).await;
-        assert!(result.is_ok(), "cloud_restart_servers should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cloud_restart_servers should succeed: {:?}",
+            result
+        );
     }
 
     // Tests for when cloud client is not configured
@@ -3528,7 +3592,9 @@ mod tests {
             filter: None,
         };
 
-        let result = server.cloud_ordered_datastore_list(Parameters(params)).await;
+        let result = server
+            .cloud_ordered_datastore_list(Parameters(params))
+            .await;
         assert!(result.is_err());
     }
 
@@ -5101,13 +5167,13 @@ mod tests {
 
     use crate::tools::formatting::mock::MockFormatter;
     use crate::tools::formatting::FormatResult;
+    use crate::tools::linting::mock::MockLinter;
+    use crate::tools::moonwave::mock::MockMoonwaveRunner;
+    use crate::tools::moonwave::MoonwaveBuildResult;
     use crate::tools::rojo::mock::MockRojoRunner;
     use crate::tools::rojo::{RojoBuildResult, RojoSourcemapResult};
     use crate::tools::wally::mock::MockWallyRunner;
     use crate::tools::wally::{WallyInstallResult, WallyUpdateResult};
-    use crate::tools::moonwave::mock::MockMoonwaveRunner;
-    use crate::tools::moonwave::MoonwaveBuildResult;
-    use crate::tools::linting::mock::MockLinter;
 
     #[tokio::test]
     async fn test_stylua_format_success() {

@@ -114,16 +114,18 @@ async fn format_script(
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         // Execute with timeout protection
-        let output = execute_with_timeout(cmd, "stylua", None).await.map_err(|e| {
-            if e.to_string().contains("timed out") {
-                e
-            } else {
-                RobloxMcpError::ToolNotInstalled {
-                    tool: "stylua".to_string(),
-                    install_hint: "Install via: cargo install stylua".to_string(),
+        let output = execute_with_timeout(cmd, "stylua", None)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("timed out") {
+                    e
+                } else {
+                    RobloxMcpError::ToolNotInstalled {
+                        tool: "stylua".to_string(),
+                        install_hint: "Install via: cargo install stylua".to_string(),
+                    }
                 }
-            }
-        })?;
+            })?;
 
         // stylua --check exits 0 if already formatted, non-zero if changes needed
         let needs_formatting = !output.status.success();
@@ -146,16 +148,18 @@ async fn format_script(
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         // Execute with timeout protection
-        let output = execute_with_timeout(cmd, "stylua", None).await.map_err(|e| {
-            if e.to_string().contains("timed out") {
-                e
-            } else {
-                RobloxMcpError::ToolNotInstalled {
-                    tool: "stylua".to_string(),
-                    install_hint: "Install via: cargo install stylua".to_string(),
+        let output = execute_with_timeout(cmd, "stylua", None)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("timed out") {
+                    e
+                } else {
+                    RobloxMcpError::ToolNotInstalled {
+                        tool: "stylua".to_string(),
+                        install_hint: "Install via: cargo install stylua".to_string(),
+                    }
                 }
-            }
-        })?;
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();

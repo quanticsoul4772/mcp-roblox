@@ -20,15 +20,10 @@ const MAX_REGEX_SIZE: usize = 1_000_000;
 /// - `(a|aa)+` - alternation causing backtracking
 /// - `(a|a?)+` - optional alternation causing backtracking
 const DANGEROUS_PATTERNS: &[&str] = &[
-    "(.*)*",
-    "(.+)+",
-    "(a+)+",
-    "(a*)*",
-    "(a|aa)+",
-    "(a|a?)+",
+    "(.*)*", "(.+)+", "(a+)+", "(a*)*", "(a|aa)+", "(a|a?)+",
     // More general patterns that can cause issues
-    "(.*)\\1",   // backreference with greedy quantifier
-    "(.+)\\1+",  // backreference with nested quantifier
+    "(.*)\\1",  // backreference with greedy quantifier
+    "(.+)\\1+", // backreference with nested quantifier
 ];
 
 /// Validate that a regex pattern is safe to compile and execute

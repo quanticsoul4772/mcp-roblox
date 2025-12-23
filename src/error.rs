@@ -89,7 +89,9 @@ impl From<RobloxMcpError> for ErrorData {
             | RobloxMcpError::FileSystemError { .. }
             | RobloxMcpError::SerializationError(_)
             | RobloxMcpError::WatcherError(_)
-            | RobloxMcpError::ToolExecutionError { .. } => Self::internal_error(err.to_string(), None),
+            | RobloxMcpError::ToolExecutionError { .. } => {
+                Self::internal_error(err.to_string(), None)
+            }
 
             // Tool not installed → Custom server error (tool dependency issue)
             RobloxMcpError::ToolNotInstalled { .. } => {

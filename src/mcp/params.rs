@@ -635,7 +635,8 @@ mod tests {
 
     #[test]
     fn test_stylua_format_params_full() {
-        let json = r#"{"file_path": "src/main.luau", "config_path": "stylua.toml", "check_only": true}"#;
+        let json =
+            r#"{"file_path": "src/main.luau", "config_path": "stylua.toml", "check_only": true}"#;
         let params: StyluaFormatParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.file_path, "src/main.luau");
         assert_eq!(params.config_path, Some("stylua.toml".to_string()));

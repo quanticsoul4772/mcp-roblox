@@ -166,8 +166,14 @@ fn clear_wally_index_locks() {
     // Try multiple possible wally index locations
     let possible_paths = [
         home.join(".wally").join("index"),
-        home.join(".local").join("share").join("wally").join("index"),
-        home.join("AppData").join("Local").join("wally").join("index"), // Windows
+        home.join(".local")
+            .join("share")
+            .join("wally")
+            .join("index"),
+        home.join("AppData")
+            .join("Local")
+            .join("wally")
+            .join("index"), // Windows
     ];
 
     for index_path in &possible_paths {
@@ -191,7 +197,6 @@ fn clear_wally_index_locks() {
 
 #[test]
 fn test_stylua_format_unformatted_script() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let unformatted = r#"local x=1
@@ -219,7 +224,6 @@ print(z)"#;
 
 #[test]
 fn test_stylua_check_mode_detects_unformatted() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let unformatted = "local x=1\nlocal y=2";
@@ -241,7 +245,6 @@ fn test_stylua_check_mode_detects_unformatted() {
 
 #[test]
 fn test_stylua_check_mode_passes_formatted() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let formatted = "local x = 1\nlocal y = 2\n";
@@ -262,7 +265,6 @@ fn test_stylua_check_mode_passes_formatted() {
 
 #[test]
 fn test_stylua_with_config() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
 
@@ -298,7 +300,6 @@ indent_width = 4
 
 #[test]
 fn test_stylua_handles_syntax_error() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let invalid_syntax = "local x = \nfunction end";
@@ -323,7 +324,6 @@ fn test_stylua_handles_syntax_error() {
 
 #[test]
 fn test_rojo_build_project() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let project_path = create_rojo_project(temp.path());
@@ -349,7 +349,6 @@ fn test_rojo_build_project() {
 
 #[test]
 fn test_rojo_build_model() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let project_path = create_rojo_project(temp.path());
@@ -374,7 +373,6 @@ fn test_rojo_build_model() {
 
 #[test]
 fn test_rojo_sourcemap() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let project_path = create_rojo_project(temp.path());
@@ -406,7 +404,6 @@ fn test_rojo_sourcemap() {
 
 #[test]
 fn test_rojo_sourcemap_stdout() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let project_path = create_rojo_project(temp.path());
@@ -433,7 +430,6 @@ fn test_rojo_sourcemap_stdout() {
 
 #[test]
 fn test_rojo_invalid_project() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let invalid_project = temp.path().join("invalid.project.json");
@@ -541,7 +537,6 @@ fn test_wally_invalid_manifest() {
 
 #[test]
 fn test_selene_lint_clean_script() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     create_selene_config(temp.path());
@@ -574,7 +569,6 @@ Players.PlayerAdded:Connect(onPlayerAdded)
 
 #[test]
 fn test_selene_lint_with_warnings() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     create_selene_config(temp.path());
@@ -602,7 +596,6 @@ print("hello")
 
 #[test]
 fn test_selene_with_config() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
 
@@ -642,7 +635,6 @@ unused_variable = "allow"
 
 #[test]
 fn test_format_then_lint_workflow() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     create_selene_config(temp.path());
@@ -678,13 +670,16 @@ end)"#;
 
 #[test]
 fn test_rojo_build_with_formatted_scripts() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
     let project_path = create_rojo_project(temp.path());
 
     // Get the script path from the project
-    let script_path = temp.path().join("src").join("server").join("Main.server.luau");
+    let script_path = temp
+        .path()
+        .join("src")
+        .join("server")
+        .join("Main.server.luau");
 
     // Format the script first
     let format_output = Command::new(tool_path("stylua"))
@@ -716,7 +711,6 @@ fn test_rojo_build_with_formatted_scripts() {
 
 #[test]
 fn test_stylua_large_file() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
 
@@ -741,10 +735,7 @@ fn test_stylua_large_file() {
         .expect("Failed to run stylua");
     let duration = start.elapsed();
 
-    assert!(
-        output.status.success(),
-        "stylua should handle large files"
-    );
+    assert!(output.status.success(), "stylua should handle large files");
     assert!(
         duration.as_secs() < 30,
         "stylua should complete within 30 seconds for large file"
@@ -753,7 +744,6 @@ fn test_stylua_large_file() {
 
 #[test]
 fn test_rojo_nested_project_structure() {
-
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
 

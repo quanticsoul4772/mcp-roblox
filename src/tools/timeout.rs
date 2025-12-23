@@ -124,8 +124,7 @@ mod tests {
     async fn test_command_not_found() {
         let cmd = Command::new("this_command_definitely_does_not_exist_xyz123");
 
-        let result =
-            execute_with_timeout(cmd, "nonexistent", Some(Duration::from_secs(5))).await;
+        let result = execute_with_timeout(cmd, "nonexistent", Some(Duration::from_secs(5))).await;
         assert!(result.is_err());
 
         match result.unwrap_err() {
@@ -156,8 +155,7 @@ mod tests {
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         // Even with a very short timeout, fast commands should succeed
-        let result =
-            execute_with_timeout(cmd, "quick", Some(Duration::from_millis(5000))).await;
+        let result = execute_with_timeout(cmd, "quick", Some(Duration::from_millis(5000))).await;
         assert!(result.is_ok());
     }
 

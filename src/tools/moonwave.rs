@@ -100,16 +100,18 @@ async fn build_docs(
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     // Execute with timeout protection
-    let output = execute_with_timeout(cmd, "moonwave", None).await.map_err(|e| {
-        if e.to_string().contains("timed out") {
-            e
-        } else {
-            RobloxMcpError::ToolNotInstalled {
-                tool: "moonwave".to_string(),
-                install_hint: "Install via: npm install -g moonwave".to_string(),
+    let output = execute_with_timeout(cmd, "moonwave", None)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("timed out") {
+                e
+            } else {
+                RobloxMcpError::ToolNotInstalled {
+                    tool: "moonwave".to_string(),
+                    install_hint: "Install via: npm install -g moonwave".to_string(),
+                }
             }
-        }
-    })?;
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
