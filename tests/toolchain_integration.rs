@@ -15,6 +15,7 @@
 //! - `aftman install` (installs StyLua, Rojo, Wally from aftman.toml)
 //! - `cargo install selene` (linter)
 
+use serial_test::serial;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
@@ -153,6 +154,35 @@ fn create_selene_config(dir: &Path) -> std::path::PathBuf {
 "#;
     std::fs::write(&selene_toml, content).expect("Failed to write selene.toml");
     selene_toml
+}
+
+/// Clear stale wally index lock files that can cause "index is locked" errors
+///
+/// Wally uses a global index at ~/.wally/index (or ~/.local/share/wally on some systems)
+/// that can get locked if a previous wally process crashed or tests run concurrently.
+fn clear_wally_index_locks() {
+    let home = dirs::home_dir().expect("Failed to get home directory");
+
+    // Try multiple possible wally index locations
+    let possible_paths = [
+        home.join(".wally").join("index"),
+        home.join(".local").join("share").join("wally").join("index"),
+        home.join("AppData").join("Local").join("wally").join("index"), // Windows
+    ];
+
+    for index_path in &possible_paths {
+        if index_path.exists() {
+            // Look for .git/index.lock files in subdirectories
+            if let Ok(entries) = std::fs::read_dir(index_path) {
+                for entry in entries.flatten() {
+                    let lock_file = entry.path().join(".git").join("index.lock");
+                    if lock_file.exists() {
+                        let _ = std::fs::remove_file(&lock_file);
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -429,7 +459,9 @@ fn test_rojo_invalid_project() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_wally_manifest_validation() {
+    clear_wally_index_locks();
 
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -451,7 +483,9 @@ fn test_wally_manifest_validation() {
 }
 
 #[test]
+#[serial]
 fn test_wally_install_dependencies() {
+    clear_wally_index_locks();
 
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -480,7 +514,9 @@ fn test_wally_install_dependencies() {
 }
 
 #[test]
+#[serial]
 fn test_wally_invalid_manifest() {
+    clear_wally_index_locks();
 
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());

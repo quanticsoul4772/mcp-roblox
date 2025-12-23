@@ -65,6 +65,7 @@ walkdir = "2"
 [dev-dependencies]
 dirs = "6.0.0"
 mockito = "1"
+serial_test = "3.2.0"
 tempfile = "3"
 tokio-test = "0.4"
 
