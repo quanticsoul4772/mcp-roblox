@@ -76,6 +76,38 @@ use crate::tools::rojo::{DefaultRojoRunner, RojoRunner};
 use crate::tools::wally::{DefaultWallyRunner, WallyRunner};
 use crate::watcher::FileWatcher;
 
+/// Configuration struct for creating a fully-mocked test server
+///
+/// Bundles all injectable dependencies to avoid too many function arguments.
+/// Used by `RobloxMcpServer::with_all_mocks()` for comprehensive test setups.
+#[allow(dead_code)] // Only constructed in tests, but must be public for the API
+pub struct MockServerConfig<B, L, F, R, W, M>
+where
+    B: StudioBridge + Clone,
+    L: Linter + Clone,
+    F: Formatter + Clone,
+    R: RojoRunner + Clone,
+    W: WallyRunner + Clone,
+    M: MoonwaveRunner + Clone,
+{
+    /// Studio bridge for plugin communication
+    pub bridge: Arc<B>,
+    /// Project root directory
+    pub project_root: PathBuf,
+    /// Optional cloud client for Open Cloud API
+    pub cloud_client: Option<Arc<dyn CloudClient>>,
+    /// Linter implementation
+    pub linter: L,
+    /// Formatter implementation
+    pub formatter: F,
+    /// Rojo runner implementation
+    pub rojo: R,
+    /// Wally runner implementation
+    pub wally: W,
+    /// Moonwave runner implementation
+    pub moonwave: M,
+}
+
 /// Roblox MCP Server with injectable dependencies
 ///
 /// Generic over:
@@ -290,28 +322,35 @@ impl<
     /// Create a test server with all mock toolchain components
     ///
     /// This constructor allows injecting mocks for all toolchain tools.
-    pub fn with_all_mocks(
-        bridge: Arc<B>,
-        project_root: PathBuf,
-        cloud_client: Option<Arc<dyn CloudClient>>,
-        linter: L,
-        formatter: F,
-        rojo: R,
-        wally: W,
-        moonwave: M,
-    ) -> Self {
+    /// Uses `MockServerConfig` to bundle all dependencies and avoid too many arguments.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let config = MockServerConfig {
+    ///     bridge: Arc::new(MockBridge::new()),
+    ///     project_root: PathBuf::from("/tmp/test"),
+    ///     cloud_client: Some(Arc::new(MockCloudClient::new())),
+    ///     linter: MockLinter::new(),
+    ///     formatter: MockFormatter::new(),
+    ///     rojo: MockRojoRunner::new(),
+    ///     wally: MockWallyRunner::new(),
+    ///     moonwave: MockMoonwaveRunner::new(),
+    /// };
+    /// let server = RobloxMcpServer::with_all_mocks(config);
+    /// ```
+    pub fn with_all_mocks(config: MockServerConfig<B, L, F, R, W, M>) -> Self {
         Self {
             tool_router: Self::tool_router(),
-            bridge,
-            project_root,
-            cloud_client,
+            bridge: config.bridge,
+            project_root: config.project_root,
+            cloud_client: config.cloud_client,
             file_watcher: None,
             metrics: Arc::new(ServerMetrics::new()),
-            linter,
-            formatter,
-            rojo,
-            wally,
-            moonwave,
+            linter: config.linter,
+            formatter: config.formatter,
+            rojo: config.rojo,
+            wally: config.wally,
+            moonwave: config.moonwave,
         }
     }
 }
@@ -5196,16 +5235,16 @@ mod tests {
         let mock_wally = MockWallyRunner::new();
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
             project_root,
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = StyluaFormatParams {
             file_path: script_path.display().to_string(),
@@ -5238,16 +5277,16 @@ mod tests {
         let mock_wally = MockWallyRunner::new();
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
             project_root,
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = StyluaFormatParams {
             file_path: script_path.display().to_string(),
@@ -5273,16 +5312,16 @@ mod tests {
         let mock_wally = MockWallyRunner::new();
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
             project_root,
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = StyluaFormatParams {
             file_path: txt_path.display().to_string(),
@@ -5315,16 +5354,16 @@ mod tests {
         let mock_wally = MockWallyRunner::new();
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
             project_root,
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = RojoBuildParams {
             project_path: project_json.display().to_string(),
@@ -5354,16 +5393,16 @@ mod tests {
         let mock_wally = MockWallyRunner::new();
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
             project_root,
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = RojoSourcemapParams {
             project_path: project_json.display().to_string(),
@@ -5394,16 +5433,16 @@ mod tests {
         }));
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
-            project_root.clone(),
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
+            project_root: project_root.clone(),
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = WallyInstallParams {
             project_path: project_root.display().to_string(),
@@ -5432,16 +5471,16 @@ mod tests {
         }));
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
-            project_root.clone(),
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
+            project_root: project_root.clone(),
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = WallyUpdateParams {
             project_path: project_root.display().to_string(),
@@ -5471,16 +5510,16 @@ mod tests {
             stderr: None,
         }));
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
-            project_root.clone(),
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
+            project_root: project_root.clone(),
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = MoonwaveBuildParams {
             project_path: project_root.display().to_string(),
@@ -5512,16 +5551,16 @@ mod tests {
             stderr: None,
         }));
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
-            project_root.clone(),
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
+            project_root: project_root.clone(),
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = MoonwaveBuildParams {
             project_path: project_root.display().to_string(),
@@ -5555,16 +5594,16 @@ mod tests {
         let mock_wally = MockWallyRunner::new();
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
             project_root,
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = StyluaFormatParams {
             file_path: script_path.display().to_string(),
@@ -5596,16 +5635,16 @@ mod tests {
         let mock_wally = MockWallyRunner::new();
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
             project_root,
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = RojoSourcemapParams {
             project_path: project_json.display().to_string(),
@@ -5634,16 +5673,16 @@ mod tests {
         let mock_wally = MockWallyRunner::new();
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
             project_root,
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         let params = StyluaFormatParams {
             file_path: script_path.display().to_string(),
@@ -5667,16 +5706,16 @@ mod tests {
         let mock_wally = MockWallyRunner::new();
         let mock_moonwave = MockMoonwaveRunner::new();
 
-        let server = RobloxMcpServer::with_all_mocks(
-            mock_bridge,
+        let server = RobloxMcpServer::with_all_mocks(MockServerConfig {
+            bridge: mock_bridge,
             project_root,
-            None,
-            mock_linter,
-            mock_formatter,
-            mock_rojo,
-            mock_wally,
-            mock_moonwave,
-        );
+            cloud_client: None,
+            linter: mock_linter,
+            formatter: mock_formatter,
+            rojo: mock_rojo,
+            wally: mock_wally,
+            moonwave: mock_moonwave,
+        });
 
         // Verify construction by calling get_info
         let info = server.get_info();
