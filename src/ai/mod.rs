@@ -24,12 +24,14 @@
 //! - `NEO4J_USERNAME`: Neo4j username (default: `neo4j`)
 //! - `NEO4J_DATABASE`: Neo4j database name (default: `neo4j`)
 
+mod auto_indexer;
 mod config;
 mod embedder;
 mod knowledge_graph;
 mod mock;
 mod parser;
 
+pub use auto_indexer::{AutoIndexer, AutoIndexerConfig, AutoIndexerHandle};
 pub use config::{Neo4jConfig, VoyageConfig};
 pub use embedder::{EmbeddingProvider, VoyageEmbedder};
 pub use knowledge_graph::{

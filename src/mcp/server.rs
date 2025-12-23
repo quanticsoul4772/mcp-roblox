@@ -14,7 +14,7 @@ use serde_json::json;
 use tokio::fs;
 use walkdir::WalkDir;
 
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::bridge::http::PluginBridge;
 use crate::bridge::StudioBridge;
@@ -75,7 +75,7 @@ use crate::mcp::params::{
 
 // AI module imports (feature-gated)
 #[cfg(feature = "ai")]
-use crate::ai::KnowledgeGraph;
+use crate::ai::{AutoIndexer, AutoIndexerConfig, AutoIndexerHandle, KnowledgeGraph};
 use crate::metrics::ServerMetrics;
 use crate::regex_safety::validate_regex_safety;
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
@@ -162,6 +162,10 @@ pub struct RobloxMcpServer<
     /// Knowledge graph for AI-powered code search (optional - requires 'ai' feature)
     #[cfg(feature = "ai")]
     knowledge_graph: Option<Arc<dyn KnowledgeGraph>>,
+    /// Auto-indexer handle for background indexing (optional - requires file_watcher + knowledge_graph)
+    /// Wrapped in Arc<Mutex<>> to allow Clone (handles are shared between clones)
+    #[cfg(feature = "ai")]
+    auto_indexer_handle: Arc<tokio::sync::Mutex<Option<AutoIndexerHandle>>>,
 }
 
 /// Production constructor for RobloxMcpServer with all default implementations
@@ -227,6 +231,8 @@ impl
             moonwave,
             #[cfg(feature = "ai")]
             knowledge_graph: None, // Must be set separately with with_knowledge_graph()
+            #[cfg(feature = "ai")]
+            auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)), // Started with start_auto_indexing()
         }
     }
 }
@@ -262,6 +268,8 @@ impl<B: StudioBridge + Clone + 'static>
             moonwave: DefaultMoonwaveRunner::new(),
             #[cfg(feature = "ai")]
             knowledge_graph: None,
+            #[cfg(feature = "ai")]
+            auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 }
@@ -297,6 +305,8 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static>
             moonwave: DefaultMoonwaveRunner::new(),
             #[cfg(feature = "ai")]
             knowledge_graph: None,
+            #[cfg(feature = "ai")]
+            auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -325,6 +335,8 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static>
             moonwave: DefaultMoonwaveRunner::new(),
             #[cfg(feature = "ai")]
             knowledge_graph: None,
+            #[cfg(feature = "ai")]
+            auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 }
@@ -374,6 +386,8 @@ impl<
             moonwave: config.moonwave,
             #[cfg(feature = "ai")]
             knowledge_graph: None,
+            #[cfg(feature = "ai")]
+            auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 }
@@ -441,6 +455,60 @@ impl<
                 None,
             )
         })
+    }
+
+    /// Start auto-indexing of Luau files.
+    ///
+    /// Requires both file_watcher and knowledge_graph to be configured.
+    /// When started, the auto-indexer will automatically index new/modified files
+    /// and remove deleted files from the knowledge graph.
+    ///
+    /// # Panics
+    /// This method will log errors but NOT panic if auto-indexing cannot be started.
+    /// It fails LOUDLY with error logs - no silent fallbacks.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let server = RobloxMcpServer::new(bridge, root)
+    ///     .with_knowledge_graph(kg);
+    /// server.start_auto_indexing().await;
+    /// ```
+    #[cfg(feature = "ai")]
+    pub async fn start_auto_indexing(&self) {
+        // Check if we have both file_watcher and knowledge_graph
+        let file_watcher = match &self.file_watcher {
+            Some(fw) => fw.clone(),
+            None => {
+                warn!("AUTO-INDEXING NOT STARTED: File watcher not available. Real-time indexing disabled.");
+                return;
+            }
+        };
+
+        let knowledge_graph = match &self.knowledge_graph {
+            Some(kg) => kg.clone(),
+            None => {
+                warn!("AUTO-INDEXING NOT STARTED: Knowledge graph not configured. Set up with with_knowledge_graph() first.");
+                return;
+            }
+        };
+
+        // Create and start the auto-indexer
+        let config = AutoIndexerConfig::with_project_root(self.project_root.clone());
+        let auto_indexer = AutoIndexer::new(file_watcher, knowledge_graph, config);
+        let handle = auto_indexer.start();
+
+        info!("Auto-indexing started for project: {}", self.project_root.display());
+
+        // Store the handle in the Arc<Mutex<Option<>>>
+        let mut guard = self.auto_indexer_handle.lock().await;
+        *guard = Some(handle);
+    }
+
+    /// Check if auto-indexing is currently running.
+    #[cfg(feature = "ai")]
+    pub async fn is_auto_indexing(&self) -> bool {
+        let guard = self.auto_indexer_handle.lock().await;
+        guard.as_ref().map(|h| h.is_running()).unwrap_or(false)
     }
 
     #[cfg(test)]
