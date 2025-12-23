@@ -1223,9 +1223,17 @@ fn test_rojo_project_paths_are_relative() {
 fn test_wally_manifest_format_consistency() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     
-    let basic = create_wally_project(temp.path().join("basic"));
-    let with_deps = create_wally_project_with_deps(temp.path().join("deps"));
-    let invalid = create_invalid_wally_project(temp.path().join("invalid"));
+    // Create subdirectories
+    let basic_dir = temp.path().join("basic");
+    let deps_dir = temp.path().join("deps");
+    let invalid_dir = temp.path().join("invalid");
+    std::fs::create_dir(&basic_dir).expect("Failed to create basic dir");
+    std::fs::create_dir(&deps_dir).expect("Failed to create deps dir");
+    std::fs::create_dir(&invalid_dir).expect("Failed to create invalid dir");
+    
+    let basic = create_wally_project(&basic_dir);
+    let with_deps = create_wally_project_with_deps(&deps_dir);
+    let invalid = create_invalid_wally_project(&invalid_dir);
     
     // All should create wally.toml
     assert!(basic.ends_with("wally.toml"));

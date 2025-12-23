@@ -1735,9 +1735,6 @@ mod tests {
     fn test_validate_path_dotdot_escape_attempt() {
         // Test that a path attempting to escape via .. is rejected
         // This uses a manually constructed OsString to ensure .. isn't normalized
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
-
         let temp_dir = TempDir::new().unwrap();
         let project_root = temp_dir.path();
 
