@@ -143,15 +143,20 @@ impl PluginBridge {
 }
 
 use axum::{
-    body::Body,
     extract::State,
-    http::{Request, StatusCode},
-    middleware::{self, Next},
-    response::Response,
     routing::{get, post},
     Json, Router,
 };
 
+#[cfg(test)]
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+    middleware::{self, Next},
+    response::Response,
+};
+
+#[cfg(test)]
 use super::auth::AuthToken;
 
 /// HTTP endpoint: Plugin polls for pending commands
@@ -238,6 +243,8 @@ async fn health_handler(State(bridge): State<PluginBridge>) -> Json<HealthStatus
 ///
 /// Validates the Authorization header contains a valid Bearer token.
 /// Skips authentication for the /health endpoint (monitoring).
+/// Note: Currently only used in tests since production uses unauthenticated router.
+#[cfg(test)]
 async fn auth_middleware(
     State(token): State<AuthToken>,
     request: Request<Body>,
@@ -263,8 +270,7 @@ async fn auth_middleware(
 
 /// Create the Axum router for the plugin bridge (without authentication)
 ///
-/// Use `create_authenticated_router` for production with token authentication.
-#[allow(dead_code)]
+/// This is the production router - no authentication required for localhost.
 pub fn create_router(bridge: PluginBridge) -> Router {
     Router::new()
         .route("/poll", get(poll_handler))
@@ -277,6 +283,8 @@ pub fn create_router(bridge: PluginBridge) -> Router {
 ///
 /// All endpoints except /health require a valid Bearer token in the
 /// Authorization header. The token should be obtained from server startup logs.
+/// Note: Currently only used in tests since production uses unauthenticated router.
+#[cfg(test)]
 pub fn create_authenticated_router(bridge: PluginBridge, token: AuthToken) -> Router {
     // Create routes that need bridge state
     let bridge_routes = Router::new()

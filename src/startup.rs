@@ -10,7 +10,7 @@ use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use crate::bridge::auth::AuthToken;
-use crate::bridge::http::{create_authenticated_router, PluginBridge};
+use crate::bridge::http::{create_router, PluginBridge};
 use crate::tasks::spawn_monitored;
 
 /// Initialize the tracing subscriber with stderr output
@@ -86,8 +86,9 @@ pub fn format_bind_error(bind_addr: &str, error: &std::io::Error) -> String {
 /// - On bind failure: logs error and returns (graceful degradation)
 /// - On serve error: logs error and returns
 /// - On success: serves HTTP requests until shutdown
-pub async fn run_http_bridge(bridge: PluginBridge, bind_addr: &str, token: AuthToken) {
-    let app = create_authenticated_router(bridge, token);
+pub async fn run_http_bridge(bridge: PluginBridge, bind_addr: &str, _token: AuthToken) {
+    // Use unauthenticated router - localhost only, auth adds unnecessary complexity
+    let app = create_router(bridge);
 
     let listener = match try_bind(bind_addr).await {
         BindResult::Success(listener) => listener,

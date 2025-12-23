@@ -18,7 +18,8 @@ const TOKEN_BYTES: usize = 32;
 pub struct AuthToken {
     /// Base64-encoded token string
     token: String,
-    /// Raw bytes for constant-time comparison
+    /// Raw bytes for constant-time comparison (used in validate())
+    #[cfg_attr(not(test), allow(dead_code))]
     token_bytes: Vec<u8>,
 }
 
@@ -47,6 +48,7 @@ impl AuthToken {
     ///
     /// Returns true if the candidate matches the stored token.
     /// Uses constant-time comparison to prevent timing attacks.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn validate(&self, candidate: &str) -> bool {
         let candidate_bytes = candidate.as_bytes();
         // Constant-time comparison prevents timing attacks
