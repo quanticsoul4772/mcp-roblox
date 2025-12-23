@@ -375,6 +375,44 @@ pub struct FsWatchChangesParams {
     pub limit: Option<usize>,
 }
 
+// === AI PARAMS ===
+// These parameter structs define the JSON schema for AI-powered code search tools
+// Requires the 'ai' feature flag and configured Neo4j + Voyage AI credentials
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AiSearchCodebaseParams {
+    #[schemars(description = "Natural language query describing what you're looking for")]
+    pub query: String,
+    #[schemars(description = "Maximum number of results to return (default: 10)")]
+    pub limit: Option<usize>,
+    #[schemars(description = "Minimum similarity score 0.0-1.0 (default: 0.5)")]
+    pub min_similarity: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AiFindRelatedParams {
+    #[schemars(description = "File path to find related scripts for")]
+    pub path: String,
+    #[schemars(description = "Maximum graph traversal depth (default: 2)")]
+    pub max_depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AiGetContextParams {
+    #[schemars(description = "Task description to find relevant context for")]
+    pub task: String,
+    #[schemars(description = "Maximum tokens worth of context to return (default: 4000)")]
+    pub token_budget: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AiIndexProjectParams {
+    #[schemars(description = "Root directory to index (defaults to project root)")]
+    pub path: Option<String>,
+    #[schemars(description = "Force reindex even if content unchanged (default: false)")]
+    pub force: Option<bool>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,5 +831,73 @@ mod tests {
         let debug = format!("{:?}", params);
         assert!(debug.contains("CloudPublishPlaceParams"));
         assert!(debug.contains("123"));
+    }
+
+    // === AI PARAMS TESTS ===
+
+    #[test]
+    fn test_ai_search_codebase_params_full() {
+        let json = r#"{"query": "damage calculation", "limit": 5, "min_similarity": 0.7}"#;
+        let params: AiSearchCodebaseParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.query, "damage calculation");
+        assert_eq!(params.limit, Some(5));
+        assert_eq!(params.min_similarity, Some(0.7));
+    }
+
+    #[test]
+    fn test_ai_search_codebase_params_minimal() {
+        let json = r#"{"query": "player data"}"#;
+        let params: AiSearchCodebaseParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.query, "player data");
+        assert!(params.limit.is_none());
+        assert!(params.min_similarity.is_none());
+    }
+
+    #[test]
+    fn test_ai_find_related_params_full() {
+        let json = r#"{"path": "src/combat/damage.luau", "max_depth": 3}"#;
+        let params: AiFindRelatedParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.path, "src/combat/damage.luau");
+        assert_eq!(params.max_depth, Some(3));
+    }
+
+    #[test]
+    fn test_ai_find_related_params_minimal() {
+        let json = r#"{"path": "src/main.luau"}"#;
+        let params: AiFindRelatedParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.path, "src/main.luau");
+        assert!(params.max_depth.is_none());
+    }
+
+    #[test]
+    fn test_ai_get_context_params_full() {
+        let json = r#"{"task": "fix the combat system", "token_budget": 8000}"#;
+        let params: AiGetContextParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.task, "fix the combat system");
+        assert_eq!(params.token_budget, Some(8000));
+    }
+
+    #[test]
+    fn test_ai_get_context_params_minimal() {
+        let json = r#"{"task": "add player respawn"}"#;
+        let params: AiGetContextParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.task, "add player respawn");
+        assert!(params.token_budget.is_none());
+    }
+
+    #[test]
+    fn test_ai_index_project_params_full() {
+        let json = r#"{"path": "src/server", "force": true}"#;
+        let params: AiIndexProjectParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.path, Some("src/server".to_string()));
+        assert_eq!(params.force, Some(true));
+    }
+
+    #[test]
+    fn test_ai_index_project_params_empty() {
+        let json = r#"{}"#;
+        let params: AiIndexProjectParams = serde_json::from_str(json).unwrap();
+        assert!(params.path.is_none());
+        assert!(params.force.is_none());
     }
 }

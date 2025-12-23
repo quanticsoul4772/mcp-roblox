@@ -1,22 +1,20 @@
 //! Integration tests for CLI toolchain (StyLua, Rojo, Wally, Selene)
 //!
 //! These tests invoke actual CLI binaries and require the tools to be installed.
+//! Tests FAIL LOUDLY if tools are missing - no silent fallbacks.
 //!
-//! **NOTE**: These tests are marked with `#[ignore]` to skip them in CI by default.
-//! They require external toolchain binaries to be installed first.
+//! Tool installation (required):
+//! - `aftman install` (installs StyLua, Rojo, Wally from aftman.toml)
+//! - `cargo install selene` (linter)
 //!
 //! Run with:
 //! ```bash
 //! # Ensure aftman tools are in PATH
 //! export PATH="$HOME/.aftman/bin:$PATH"
 //!
-//! # Run ignored tests explicitly
-//! cargo test --test toolchain_integration -- --ignored --test-threads=1
+//! # Run all tests
+//! cargo test --test toolchain_integration -- --test-threads=1
 //! ```
-//!
-//! Tool installation:
-//! - `aftman install` (installs StyLua, Rojo, Wally from aftman.toml)
-//! - `cargo install selene` (linter)
 
 use serial_test::serial;
 use std::path::Path;
@@ -199,7 +197,6 @@ fn clear_wally_index_locks() {
 // ============================================================================
 
 #[test]
-#[ignore]
 fn test_stylua_format_unformatted_script() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -227,7 +224,6 @@ print(z)"#;
 }
 
 #[test]
-#[ignore]
 fn test_stylua_check_mode_detects_unformatted() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -249,7 +245,6 @@ fn test_stylua_check_mode_detects_unformatted() {
 }
 
 #[test]
-#[ignore]
 fn test_stylua_check_mode_passes_formatted() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -270,7 +265,6 @@ fn test_stylua_check_mode_passes_formatted() {
 }
 
 #[test]
-#[ignore]
 fn test_stylua_with_config() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -306,7 +300,6 @@ indent_width = 4
 }
 
 #[test]
-#[ignore]
 fn test_stylua_handles_syntax_error() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -331,7 +324,6 @@ fn test_stylua_handles_syntax_error() {
 // ============================================================================
 
 #[test]
-#[ignore]
 fn test_rojo_build_project() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -357,7 +349,6 @@ fn test_rojo_build_project() {
 }
 
 #[test]
-#[ignore]
 fn test_rojo_build_model() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -382,7 +373,6 @@ fn test_rojo_build_model() {
 }
 
 #[test]
-#[ignore]
 fn test_rojo_sourcemap() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -414,7 +404,6 @@ fn test_rojo_sourcemap() {
 }
 
 #[test]
-#[ignore]
 fn test_rojo_sourcemap_stdout() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -441,7 +430,6 @@ fn test_rojo_sourcemap_stdout() {
 }
 
 #[test]
-#[ignore]
 fn test_rojo_invalid_project() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -468,7 +456,6 @@ fn test_rojo_invalid_project() {
 // ============================================================================
 
 #[test]
-#[ignore]
 #[serial]
 fn test_wally_manifest_validation() {
     clear_wally_index_locks();
@@ -493,7 +480,6 @@ fn test_wally_manifest_validation() {
 }
 
 #[test]
-#[ignore]
 #[serial]
 fn test_wally_install_dependencies() {
     clear_wally_index_locks();
@@ -525,7 +511,6 @@ fn test_wally_install_dependencies() {
 }
 
 #[test]
-#[ignore]
 #[serial]
 fn test_wally_invalid_manifest() {
     clear_wally_index_locks();
@@ -552,7 +537,6 @@ fn test_wally_invalid_manifest() {
 // ============================================================================
 
 #[test]
-#[ignore]
 fn test_selene_lint_clean_script() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -585,7 +569,6 @@ Players.PlayerAdded:Connect(onPlayerAdded)
 }
 
 #[test]
-#[ignore]
 fn test_selene_lint_with_warnings() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -613,7 +596,6 @@ print("hello")
 }
 
 #[test]
-#[ignore]
 fn test_selene_with_config() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -653,7 +635,6 @@ unused_variable = "allow"
 // ============================================================================
 
 #[test]
-#[ignore]
 fn test_format_then_lint_workflow() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -689,7 +670,6 @@ end)"#;
 }
 
 #[test]
-#[ignore]
 fn test_rojo_build_with_formatted_scripts() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -731,7 +711,6 @@ fn test_rojo_build_with_formatted_scripts() {
 // ============================================================================
 
 #[test]
-#[ignore]
 fn test_stylua_large_file() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());
@@ -765,7 +744,6 @@ fn test_stylua_large_file() {
 }
 
 #[test]
-#[ignore]
 fn test_rojo_nested_project_structure() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     setup_aftman_config(temp.path());

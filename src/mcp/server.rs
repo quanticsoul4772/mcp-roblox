@@ -25,6 +25,11 @@ use crate::cloud::OrderedDataStoreListParams;
 use crate::limits::{MAX_FILE_ENTRIES, MAX_SEARCH_RESULTS, MAX_TREE_ENTRIES};
 use crate::mcp::instrumentation::InstrumentedCall;
 use crate::mcp::params::{
+    // AI params
+    AiFindRelatedParams,
+    AiGetContextParams,
+    AiIndexProjectParams,
+    AiSearchCodebaseParams,
     // Cloud params
     CloudDatastoreGetParams,
     CloudDatastoreSetParams,
@@ -67,6 +72,10 @@ use crate::mcp::params::{
     WallyInstallParams,
     WallyUpdateParams,
 };
+
+// AI module imports (feature-gated)
+#[cfg(feature = "ai")]
+use crate::ai::KnowledgeGraph;
 use crate::metrics::ServerMetrics;
 use crate::regex_safety::validate_regex_safety;
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
@@ -150,6 +159,9 @@ pub struct RobloxMcpServer<
     wally: W,
     /// Moonwave runner for documentation generation
     moonwave: M,
+    /// Knowledge graph for AI-powered code search (optional - requires 'ai' feature)
+    #[cfg(feature = "ai")]
+    knowledge_graph: Option<Arc<dyn KnowledgeGraph>>,
 }
 
 /// Production constructor for RobloxMcpServer with all default implementations
@@ -213,6 +225,8 @@ impl
             rojo,
             wally,
             moonwave,
+            #[cfg(feature = "ai")]
+            knowledge_graph: None, // Must be set separately with with_knowledge_graph()
         }
     }
 }
@@ -246,6 +260,8 @@ impl<B: StudioBridge + Clone + 'static>
             rojo: DefaultRojoRunner::new(),
             wally: DefaultWallyRunner::new(),
             moonwave: DefaultMoonwaveRunner::new(),
+            #[cfg(feature = "ai")]
+            knowledge_graph: None,
         }
     }
 }
@@ -279,6 +295,8 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static>
             rojo: DefaultRojoRunner::new(),
             wally: DefaultWallyRunner::new(),
             moonwave: DefaultMoonwaveRunner::new(),
+            #[cfg(feature = "ai")]
+            knowledge_graph: None,
         }
     }
 
@@ -305,6 +323,8 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static>
             rojo: DefaultRojoRunner::new(),
             wally: DefaultWallyRunner::new(),
             moonwave: DefaultMoonwaveRunner::new(),
+            #[cfg(feature = "ai")]
+            knowledge_graph: None,
         }
     }
 }
@@ -352,6 +372,8 @@ impl<
             rojo: config.rojo,
             wally: config.wally,
             moonwave: config.moonwave,
+            #[cfg(feature = "ai")]
+            knowledge_graph: None,
         }
     }
 }
@@ -390,6 +412,37 @@ impl<
     /// mock.queue_datastore_get(Ok(entry));
     /// let server = create_test_server(root).with_cloud_client(mock);
     /// ```
+    /// Set a custom knowledge graph (for AI-powered code search)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let kg = Arc::new(LuauKnowledgeGraph::new(config, embedder).await?);
+    /// let server = RobloxMcpServer::new(bridge, root).with_knowledge_graph(kg);
+    /// ```
+    #[cfg(feature = "ai")]
+    pub fn with_knowledge_graph(mut self, kg: Arc<dyn KnowledgeGraph>) -> Self {
+        self.knowledge_graph = Some(kg);
+        self
+    }
+
+    /// Get the knowledge graph, returning an error if not configured
+    ///
+    /// This centralizes the "knowledge graph required" check that all AI tools need.
+    /// Returns a reference to the Arc<dyn KnowledgeGraph> if available.
+    ///
+    /// # Errors
+    /// Returns `ErrorData::internal_error` if AI features are not configured.
+    #[cfg(feature = "ai")]
+    fn kg(&self) -> Result<&Arc<dyn KnowledgeGraph>, ErrorData> {
+        self.knowledge_graph.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Knowledge graph not configured: AI features require Neo4j and Voyage AI credentials"
+                    .to_string(),
+                None,
+            )
+        })
+    }
+
     #[cfg(test)]
     pub fn with_cloud_client(mut self, client: Arc<dyn CloudClient>) -> Self {
         self.cloud_client = Some(client);
@@ -2184,6 +2237,226 @@ impl<
             serde_json::to_string(&snapshot)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
+    }
+
+    // === AI TOOLS (4) ===
+    // These tools provide AI-powered semantic code search using Voyage AI embeddings
+    // and Neo4j graph database. Requires the 'ai' feature flag to be enabled.
+    //
+    // Note: Tools are always compiled but return errors when 'ai' feature is disabled
+    // or when the knowledge graph is not configured.
+
+    #[tool(
+        description = "Semantic search for Luau scripts using natural language. Returns scripts matching the query by meaning, not just keywords. Requires 'ai' feature and configured Neo4j + Voyage AI."
+    )]
+    async fn ai_search_codebase(
+        &self,
+        #[allow(unused_variables)] Parameters(params): Parameters<AiSearchCodebaseParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("ai_search_codebase");
+
+        #[cfg(feature = "ai")]
+        let result = {
+            let kg = self.kg()?;
+            let limit = params.limit.unwrap_or(10);
+            let min_similarity = params.min_similarity.unwrap_or(0.5);
+
+            let results = kg
+                .search(&params.query, limit, min_similarity)
+                .await
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+            Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&results)
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+            )]))
+        };
+
+        #[cfg(not(feature = "ai"))]
+        let result: Result<CallToolResult, ErrorData> = {
+            warn!("ai_search_codebase called but 'ai' feature is NOT ENABLED. Rebuild with: cargo build --features ai");
+            Err(ErrorData::internal_error(
+                "AI FEATURES DISABLED: This tool requires the 'ai' feature flag. Rebuild with: cargo build --features ai"
+                    .to_string(),
+                None,
+            ))
+        };
+
+        call.finish_with(result).await
+    }
+
+    #[tool(
+        description = "Find scripts related to a given file through code relationships (requires, remote calls, events). Uses graph traversal to discover dependencies. Requires 'ai' feature."
+    )]
+    async fn ai_find_related(
+        &self,
+        #[allow(unused_variables)] Parameters(params): Parameters<AiFindRelatedParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("ai_find_related");
+
+        #[cfg(feature = "ai")]
+        let result = {
+            let kg = self.kg()?;
+            let max_depth = params.max_depth.unwrap_or(2);
+
+            let results = kg
+                .find_related(&params.path, max_depth)
+                .await
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+            Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&results)
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+            )]))
+        };
+
+        #[cfg(not(feature = "ai"))]
+        let result: Result<CallToolResult, ErrorData> = {
+            warn!("ai_find_related called but 'ai' feature is NOT ENABLED. Rebuild with: cargo build --features ai");
+            Err(ErrorData::internal_error(
+                "AI FEATURES DISABLED: This tool requires the 'ai' feature flag. Rebuild with: cargo build --features ai"
+                    .to_string(),
+                None,
+            ))
+        };
+
+        call.finish_with(result).await
+    }
+
+    #[tool(
+        description = "Get relevant code context for a task description. Returns snippets within a token budget, optimized for LLM context windows. Requires 'ai' feature."
+    )]
+    async fn ai_get_context(
+        &self,
+        #[allow(unused_variables)] Parameters(params): Parameters<AiGetContextParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("ai_get_context");
+
+        #[cfg(feature = "ai")]
+        let result = {
+            let kg = self.kg()?;
+            let token_budget = params.token_budget.unwrap_or(4000);
+
+            let results = kg
+                .get_context(&params.task, token_budget)
+                .await
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+            Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&results)
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+            )]))
+        };
+
+        #[cfg(not(feature = "ai"))]
+        let result: Result<CallToolResult, ErrorData> = {
+            warn!("ai_get_context called but 'ai' feature is NOT ENABLED. Rebuild with: cargo build --features ai");
+            Err(ErrorData::internal_error(
+                "AI FEATURES DISABLED: This tool requires the 'ai' feature flag. Rebuild with: cargo build --features ai"
+                    .to_string(),
+                None,
+            ))
+        };
+
+        call.finish_with(result).await
+    }
+
+    #[tool(
+        description = "Index Luau scripts for AI-powered search. Scans directory for .luau files, generates embeddings, and stores in knowledge graph. Requires 'ai' feature."
+    )]
+    async fn ai_index_project(
+        &self,
+        #[allow(unused_variables)] Parameters(params): Parameters<AiIndexProjectParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("ai_index_project");
+
+        #[cfg(feature = "ai")]
+        let result = {
+            let kg = self.kg()?;
+            let force = params.force.unwrap_or(false);
+
+            // Determine root path to scan
+            let scan_root = match params.path {
+                Some(ref p) => {
+                    let path = PathBuf::from(p);
+                    validate_path(&path, &self.project_root)
+                        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+                }
+                None => self.project_root.clone(),
+            };
+
+            // Collect all .luau files
+            let mut indexed = 0;
+            let mut skipped = 0;
+            let mut errors = Vec::new();
+
+            for entry in WalkDir::new(&scan_root)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                if path.extension().map(|e| e == "luau").unwrap_or(false) {
+                    // Read file content
+                    match fs::read_to_string(path).await {
+                        Ok(content) => {
+                            // Check if reindex needed (unless force)
+                            let path_str = path.display().to_string();
+                            let content_hash = {
+                                use sha2::{Digest, Sha256};
+                                let mut hasher = Sha256::new();
+                                hasher.update(content.as_bytes());
+                                hex::encode(hasher.finalize())
+                            };
+
+                            let needs_index = if force {
+                                true
+                            } else {
+                                kg.needs_reindex(&path_str, &content_hash)
+                                    .await
+                                    .unwrap_or(true)
+                            };
+
+                            if needs_index {
+                                match kg.index_script(&path_str, &content).await {
+                                    Ok(()) => indexed += 1,
+                                    Err(e) => errors.push(format!("{}: {}", path_str, e)),
+                                }
+                            } else {
+                                skipped += 1;
+                            }
+                        }
+                        Err(e) => {
+                            errors.push(format!("{}: {}", path.display(), e));
+                        }
+                    }
+                }
+            }
+
+            let result = json!({
+                "indexed": indexed,
+                "skipped": skipped,
+                "errors": errors,
+                "total_processed": indexed + skipped + errors.len(),
+            });
+
+            Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&result)
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+            )]))
+        };
+
+        #[cfg(not(feature = "ai"))]
+        let result: Result<CallToolResult, ErrorData> = {
+            warn!("ai_index_project called but 'ai' feature is NOT ENABLED. Rebuild with: cargo build --features ai");
+            Err(ErrorData::internal_error(
+                "AI FEATURES DISABLED: This tool requires the 'ai' feature flag. Rebuild with: cargo build --features ai"
+                    .to_string(),
+                None,
+            ))
+        };
+
+        call.finish_with(result).await
     }
 }
 
