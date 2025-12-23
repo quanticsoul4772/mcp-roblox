@@ -835,3 +835,525 @@ fn test_rojo_nested_project_structure() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+// ============================================================================
+// Unit Tests for Utility Functions
+// ============================================================================
+// These tests validate the helper functions themselves without requiring
+// external toolchain binaries to be installed.
+
+#[test]
+fn test_project_root_returns_valid_path() {
+    let root = project_root();
+    assert!(root.exists(), "Project root should exist");
+    assert!(root.is_dir(), "Project root should be a directory");
+    
+    // Verify it contains expected project files
+    assert!(root.join("Cargo.toml").exists(), "Project root should contain Cargo.toml");
+}
+
+#[test]
+fn test_aftman_bin_returns_expected_path() {
+    let bin_path = aftman_bin();
+    
+    // Verify path structure (doesn't need to exist)
+    assert!(bin_path.ends_with(".aftman/bin"), "Should end with .aftman/bin");
+    assert!(bin_path.is_absolute(), "Should be an absolute path");
+}
+
+#[test]
+fn test_tool_path_selene_special_case() {
+    let selene_path = tool_path("selene");
+    
+    // Selene is installed via cargo, not aftman
+    assert!(
+        selene_path.to_string_lossy().contains(".cargo") || 
+        selene_path.to_string_lossy().contains("cargo"),
+        "Selene path should contain .cargo or cargo: {:?}",
+        selene_path
+    );
+    
+    #[cfg(windows)]
+    {
+        assert!(selene_path.ends_with("selene.exe"), "Windows should have .exe extension");
+    }
+    
+    #[cfg(not(windows))]
+    {
+        assert!(selene_path.ends_with("selene"), "Unix should not have .exe extension");
+    }
+}
+
+#[test]
+fn test_tool_path_aftman_tools() {
+    let tools = vec!["stylua", "rojo", "wally"];
+    
+    for tool in tools {
+        let tool_path_result = tool_path(tool);
+        
+        // Verify it's in the aftman bin directory
+        assert!(
+            tool_path_result.to_string_lossy().contains(".aftman"),
+            "Tool {} should be in .aftman directory",
+            tool
+        );
+        
+        // Check platform-specific extension
+        #[cfg(windows)]
+        {
+            assert!(
+                tool_path_result.ends_with(format!("{}.exe", tool)),
+                "Windows tool {} should have .exe extension",
+                tool
+            );
+        }
+        
+        #[cfg(not(windows))]
+        {
+            assert!(
+                tool_path_result.ends_with(tool),
+                "Unix tool {} should not have .exe extension",
+                tool
+            );
+        }
+    }
+}
+
+#[test]
+fn test_tool_path_case_sensitivity() {
+    // Tool names should be case-sensitive
+    let lower = tool_path("stylua");
+    let mixed = tool_path("StyLua");
+    
+    // Different casing should produce different paths
+    assert_ne!(lower, mixed, "Tool paths should be case-sensitive");
+}
+
+#[test]
+fn test_setup_aftman_config_creates_file() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    setup_aftman_config(temp.path());
+    
+    let dest = temp.path().join("aftman.toml");
+    let source = project_root().join("aftman.toml");
+    
+    if source.exists() {
+        assert!(dest.exists(), "aftman.toml should be copied to temp dir");
+        
+        // Verify content matches
+        let source_content = std::fs::read_to_string(&source).expect("Failed to read source");
+        let dest_content = std::fs::read_to_string(&dest).expect("Failed to read dest");
+        assert_eq!(source_content, dest_content, "Copied content should match source");
+    } else {
+        // If source doesn't exist, dest shouldn't be created
+        assert!(!dest.exists(), "aftman.toml should not be created if source doesn't exist");
+    }
+}
+
+#[test]
+fn test_setup_aftman_config_handles_missing_source() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    // This should not panic even if aftman.toml doesn't exist
+    // (though it should exist in this project)
+    setup_aftman_config(temp.path());
+    
+    // Function should complete without error
+}
+
+#[test]
+fn test_create_test_script_basic() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let content = "print('Hello, World!')";
+    
+    let script_path = create_test_script(temp.path(), "test.luau", content);
+    
+    assert!(script_path.exists(), "Script file should exist");
+    assert!(script_path.is_file(), "Script path should be a file");
+    
+    let read_content = std::fs::read_to_string(&script_path).expect("Failed to read script");
+    assert_eq!(read_content, content, "Script content should match");
+}
+
+#[test]
+fn test_create_test_script_with_different_extensions() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let extensions = vec!["luau", "lua", "server.luau", "client.luau"];
+    
+    for ext in extensions {
+        let filename = format!("test.{}", ext);
+        let path = create_test_script(temp.path(), &filename, "-- test");
+        
+        assert!(path.exists(), "Script with extension {} should exist", ext);
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), filename);
+    }
+}
+
+#[test]
+fn test_create_test_script_with_special_characters() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    // Test various content types
+    let test_cases = vec![
+        ("empty.luau", ""),
+        ("newlines.luau", "line1\nline2\nline3"),
+        ("unicode.luau", "print('Hello 世界 🌍')"),
+        ("quotes.luau", r#"local str = "test\"quote""#),
+        ("multiline.luau", "local x = [[\n  multiline\n  string\n]]"),
+    ];
+    
+    for (name, content) in test_cases {
+        let path = create_test_script(temp.path(), name, content);
+        let read_content = std::fs::read_to_string(&path)
+            .expect(&format!("Failed to read {}", name));
+        assert_eq!(read_content, content, "Content mismatch for {}", name);
+    }
+}
+
+#[test]
+fn test_create_rojo_project_structure() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    let project_path = create_rojo_project(temp.path());
+    
+    // Verify project.json was created
+    assert!(project_path.exists(), "Project JSON should exist");
+    assert_eq!(
+        project_path.file_name().unwrap().to_str().unwrap(),
+        "default.project.json"
+    );
+    
+    // Verify JSON is valid
+    let content = std::fs::read_to_string(&project_path).expect("Failed to read project JSON");
+    let parsed: serde_json::Value = serde_json::from_str(&content)
+        .expect("Project JSON should be valid");
+    
+    // Verify expected structure
+    assert_eq!(parsed["name"], "test-project");
+    assert!(parsed["tree"].is_object(), "Should have a tree object");
+    assert_eq!(parsed["tree"]["$className"], "DataModel");
+    
+    // Verify directory structure
+    let src_dir = temp.path().join("src").join("server");
+    assert!(src_dir.exists(), "src/server directory should exist");
+    
+    let script_path = src_dir.join("Main.server.luau");
+    assert!(script_path.exists(), "Main.server.luau should exist");
+    
+    let script_content = std::fs::read_to_string(&script_path).expect("Failed to read script");
+    assert_eq!(script_content, "print('Hello from server!')");
+}
+
+#[test]
+fn test_create_rojo_project_json_validity() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let project_path = create_rojo_project(temp.path());
+    
+    let content = std::fs::read_to_string(&project_path).expect("Failed to read project");
+    let parsed: serde_json::Value = serde_json::from_str(&content).expect("Invalid JSON");
+    
+    // Verify ServerScriptService structure
+    assert!(parsed["tree"]["ServerScriptService"].is_object());
+    assert_eq!(
+        parsed["tree"]["ServerScriptService"]["$className"],
+        "ServerScriptService"
+    );
+    assert!(parsed["tree"]["ServerScriptService"]["Main"].is_object());
+}
+
+#[test]
+fn test_create_wally_project_basic() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    let wally_path = create_wally_project(temp.path());
+    
+    assert!(wally_path.exists(), "wally.toml should exist");
+    assert_eq!(wally_path.file_name().unwrap().to_str().unwrap(), "wally.toml");
+    
+    let content = std::fs::read_to_string(&wally_path).expect("Failed to read wally.toml");
+    
+    // Verify expected content
+    assert!(content.contains("[package]"), "Should have [package] section");
+    assert!(content.contains("name = \"test/test-package\""));
+    assert!(content.contains("version = \"0.1.0\""));
+    assert!(content.contains("registry = \"https://github.com/UpliftGames/wally-index\""));
+    assert!(content.contains("realm = \"shared\""));
+    assert!(content.contains("[dependencies]"), "Should have [dependencies] section");
+}
+
+#[test]
+fn test_create_wally_project_with_deps() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    let wally_path = create_wally_project_with_deps(temp.path());
+    
+    assert!(wally_path.exists(), "wally.toml with deps should exist");
+    
+    let content = std::fs::read_to_string(&wally_path).expect("Failed to read wally.toml");
+    
+    // Verify basic structure
+    assert!(content.contains("[package]"));
+    assert!(content.contains("[dependencies]"));
+    
+    // Verify Promise dependency
+    assert!(
+        content.contains("Promise = \"evaera/promise@4.0.0\""),
+        "Should contain Promise dependency"
+    );
+}
+
+#[test]
+fn test_create_wally_project_difference_between_variants() {
+    let temp1 = TempDir::new().expect("Failed to create temp dir 1");
+    let temp2 = TempDir::new().expect("Failed to create temp dir 2");
+    
+    let basic = create_wally_project(temp1.path());
+    let with_deps = create_wally_project_with_deps(temp2.path());
+    
+    let basic_content = std::fs::read_to_string(&basic).expect("Failed to read basic");
+    let deps_content = std::fs::read_to_string(&with_deps).expect("Failed to read deps");
+    
+    // Basic should not have Promise dependency
+    assert!(!basic_content.contains("Promise"));
+    
+    // With deps should have Promise dependency
+    assert!(deps_content.contains("Promise"));
+}
+
+#[test]
+fn test_create_invalid_wally_project() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    let wally_path = create_invalid_wally_project(temp.path());
+    
+    assert!(wally_path.exists(), "Invalid wally.toml should be created");
+    
+    let content = std::fs::read_to_string(&wally_path).expect("Failed to read wally.toml");
+    
+    // Verify it's intentionally invalid
+    assert!(content.contains("name = \"invalid\""));
+    assert!(content.contains("# Missing required fields"));
+    
+    // Verify it's missing required fields
+    assert!(!content.contains("version ="), "Should not have version");
+    assert!(!content.contains("registry ="), "Should not have registry");
+    assert!(!content.contains("realm ="), "Should not have realm");
+}
+
+#[test]
+fn test_create_selene_config_structure() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    let config_path = create_selene_config(temp.path());
+    
+    assert!(config_path.exists(), "selene.toml should exist");
+    assert_eq!(config_path.file_name().unwrap().to_str().unwrap(), "selene.toml");
+    
+    let content = std::fs::read_to_string(&config_path).expect("Failed to read selene.toml");
+    
+    assert!(content.contains("std = \"roblox\""), "Should set std to roblox");
+}
+
+#[test]
+fn test_clear_wally_index_locks_does_not_panic() {
+    // This function should not panic even if directories don't exist
+    clear_wally_index_locks();
+    
+    // Call it multiple times to ensure idempotency
+    clear_wally_index_locks();
+    clear_wally_index_locks();
+}
+
+#[test]
+fn test_clear_wally_index_locks_handles_missing_home() {
+    // Function should handle edge cases gracefully
+    // This is a smoke test - the function uses dirs::home_dir() which may fail
+    // but we expect it to not panic in normal circumstances
+    clear_wally_index_locks();
+}
+
+#[test]
+fn test_multiple_test_scripts_in_same_directory() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    let script1 = create_test_script(temp.path(), "script1.luau", "print(1)");
+    let script2 = create_test_script(temp.path(), "script2.luau", "print(2)");
+    let script3 = create_test_script(temp.path(), "script3.luau", "print(3)");
+    
+    // All should exist independently
+    assert!(script1.exists());
+    assert!(script2.exists());
+    assert!(script3.exists());
+    
+    // Verify content
+    assert_eq!(std::fs::read_to_string(&script1).unwrap(), "print(1)");
+    assert_eq!(std::fs::read_to_string(&script2).unwrap(), "print(2)");
+    assert_eq!(std::fs::read_to_string(&script3).unwrap(), "print(3)");
+}
+
+#[test]
+fn test_create_test_script_overwrite_behavior() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    // Create initial script
+    let path = create_test_script(temp.path(), "overwrite.luau", "original");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original");
+    
+    // Overwrite with new content
+    let path2 = create_test_script(temp.path(), "overwrite.luau", "modified");
+    assert_eq!(path, path2, "Path should be the same");
+    assert_eq!(std::fs::read_to_string(&path2).unwrap(), "modified");
+}
+
+#[test]
+fn test_rojo_project_paths_are_relative() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let project_path = create_rojo_project(temp.path());
+    
+    let content = std::fs::read_to_string(&project_path).expect("Failed to read project");
+    
+    // Verify paths in JSON are relative, not absolute
+    assert!(content.contains("src/server/Main.server.luau"));
+    assert!(!content.contains(temp.path().to_str().unwrap()), 
+        "Should not contain absolute temp path");
+}
+
+#[test]
+fn test_wally_manifest_format_consistency() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    let basic = create_wally_project(temp.path().join("basic"));
+    let with_deps = create_wally_project_with_deps(temp.path().join("deps"));
+    let invalid = create_invalid_wally_project(temp.path().join("invalid"));
+    
+    // All should create wally.toml
+    assert!(basic.ends_with("wally.toml"));
+    assert!(with_deps.ends_with("wally.toml"));
+    assert!(invalid.ends_with("wally.toml"));
+}
+
+#[test]
+fn test_tool_path_empty_string() {
+    let path = tool_path("");
+    
+    // Should return a path (even if tool name is empty)
+    #[cfg(windows)]
+    {
+        assert!(path.ends_with(".exe"));
+    }
+    
+    #[cfg(not(windows))]
+    {
+        assert!(path.to_string_lossy().contains(".aftman"));
+    }
+}
+
+#[test]
+fn test_create_rojo_project_directory_creation() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    // Subdirectories shouldn't exist initially
+    let src_path = temp.path().join("src");
+    assert!(!src_path.exists(), "src should not exist initially");
+    
+    create_rojo_project(temp.path());
+    
+    // Now they should exist
+    assert!(src_path.exists(), "src should be created");
+    assert!(src_path.join("server").exists(), "src/server should be created");
+}
+
+#[test]
+fn test_wally_project_toml_parse_validity() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let wally_path = create_wally_project(temp.path());
+    
+    let content = std::fs::read_to_string(&wally_path).expect("Failed to read wally.toml");
+    
+    // Verify TOML section markers are properly formatted
+    assert!(content.contains("[package]"));
+    assert!(content.contains("[dependencies]"));
+    
+    // Verify no obvious syntax errors
+    assert!(!content.contains("[["));  // No array tables in our format
+    assert!(content.lines().filter(|l| l.trim().starts_with('[') && l.trim().ends_with(']')).count() == 2);
+}
+
+#[test]
+fn test_create_test_script_with_subdirectory() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    
+    // Create a subdirectory first
+    let subdir = temp.path().join("nested");
+    std::fs::create_dir(&subdir).expect("Failed to create subdir");
+    
+    let script_path = create_test_script(&subdir, "nested_script.luau", "print('nested')");
+    
+    assert!(script_path.exists());
+    assert!(script_path.starts_with(&subdir));
+}
+
+#[test]
+fn test_project_root_is_consistent() {
+    // Multiple calls should return the same path
+    let root1 = project_root();
+    let root2 = project_root();
+    let root3 = project_root();
+    
+    assert_eq!(root1, root2);
+    assert_eq!(root2, root3);
+}
+
+#[test]
+fn test_aftman_bin_is_consistent() {
+    let bin1 = aftman_bin();
+    let bin2 = aftman_bin();
+    
+    assert_eq!(bin1, bin2, "aftman_bin should return consistent paths");
+}
+
+#[test]
+fn test_create_multiple_projects_independent() {
+    let temp1 = TempDir::new().expect("Failed to create temp dir 1");
+    let temp2 = TempDir::new().expect("Failed to create temp dir 2");
+    
+    let rojo1 = create_rojo_project(temp1.path());
+    let rojo2 = create_rojo_project(temp2.path());
+    
+    // Both should exist independently
+    assert!(rojo1.exists());
+    assert!(rojo2.exists());
+    assert_ne!(rojo1, rojo2);
+    
+    // Verify both have their own directory structures
+    assert!(temp1.path().join("src/server").exists());
+    assert!(temp2.path().join("src/server").exists());
+}
+
+#[test]
+fn test_selene_config_minimal_content() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let config = create_selene_config(temp.path());
+    
+    let content = std::fs::read_to_string(&config).expect("Failed to read config");
+    
+    // Should be minimal (just std setting)
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(lines.len() <= 3, "Config should be minimal");
+}
+
+#[test]
+fn test_tool_path_with_special_characters() {
+    // Test tool names with hyphens and underscores
+    let tool1 = tool_path("test-tool");
+    let tool2 = tool_path("test_tool");
+    
+    assert_ne!(tool1, tool2, "Different tool names should produce different paths");
+    
+    #[cfg(windows)]
+    {
+        assert!(tool1.ends_with("test-tool.exe"));
+        assert!(tool2.ends_with("test_tool.exe"));
+    }
+}
