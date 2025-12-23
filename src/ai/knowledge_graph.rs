@@ -219,8 +219,7 @@ impl<E: EmbeddingProvider> LuauKnowledgeGraph<E> {
 
         for i in 0..total.saturating_sub(max_lines) {
             let mut score = 0;
-            for j in i..i + max_lines {
-                let line = lines[j];
+            for line in lines.iter().skip(i).take(max_lines) {
                 if line.contains("function") {
                     score += 3;
                 }
@@ -464,7 +463,7 @@ impl<E: EmbeddingProvider + 'static> KnowledgeGraph for LuauKnowledgeGraph<E> {
     ) -> Result<Vec<SearchResult>, RobloxMcpError> {
         // Estimate: ~4 chars per token, so divide by 4
         let estimated_snippets = token_budget / 500; // ~500 tokens per snippet
-        let limit = estimated_snippets.max(3).min(10);
+        let limit = estimated_snippets.clamp(3, 10);
 
         self.search(task, limit, 0.4).await
     }

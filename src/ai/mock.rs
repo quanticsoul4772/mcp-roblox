@@ -165,7 +165,7 @@ impl KnowledgeGraph for MockKnowledgeGraph {
         task: &str,
         token_budget: usize,
     ) -> Result<Vec<SearchResult>, RobloxMcpError> {
-        let limit = (token_budget / 500).max(3).min(10);
+        let limit = (token_budget / 500).clamp(3, 10);
         self.search(task, limit, 0.4).await
     }
 
