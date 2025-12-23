@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Rust MCP server for Roblox Studio integration. Provides **39 MCP tools** for filesystem operations, live Studio manipulation, Open Cloud API access, and toolchain integration.
+Rust MCP server for Roblox Studio integration. Provides **40 MCP tools** for filesystem operations, live Studio manipulation, Open Cloud API access, and toolchain integration.
 
 ## Build and Test Commands
 
@@ -36,7 +36,7 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 - `src/config.rs` - Environment configuration parsing (testable)
 - `src/limits.rs` - Resource limits (MAX_SEARCH_RESULTS, MAX_TREE_ENTRIES)
 - `src/regex_safety.rs` - Regex DoS protection with pattern validation
-- `src/mcp/server.rs` - All 39 MCP tool implementations
+- `src/mcp/server.rs` - All 40 MCP tool implementations
 - `src/mcp/params.rs` - Tool parameter structs with JSON Schema
 - `src/bridge/http.rs` - Plugin HTTP communication (poll/result endpoints)
 - `src/bridge/auth.rs` - Bearer token authentication for plugin
@@ -58,12 +58,12 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 - `src/metrics/mod.rs` - Tool execution metrics
 - `plugin/MCPServer.server.luau` - Roblox Studio plugin
 
-## Tool Categories (39 total)
+## Tool Categories (40 total)
 
 | Category | Count | Tools |
 |----------|-------|-------|
 | Filesystem | 8 | fs_get_tree, fs_read_script, fs_write_script, fs_delete_script, fs_search_content, fs_get_changes, fs_lint_script, fs_watch_changes |
-| Studio | 13 | studio_health_check, studio_get_selection, studio_get_datamodel, studio_get_datamodel_paginated, studio_get_script_source, studio_get_properties, studio_get_bounds, studio_modify_script, studio_create_instance, studio_set_property, studio_delete_instance, studio_find_instances, studio_get_output |
+| Studio | 14 | studio_health_check, studio_get_selection, studio_get_datamodel, studio_get_datamodel_paginated, studio_get_script_source, studio_get_properties, studio_get_bounds, studio_modify_script, studio_create_instance, studio_insert_r15_rig, studio_set_property, studio_delete_instance, studio_find_instances, studio_get_output |
 | Cloud | 11 | cloud_publish_place, cloud_upload_asset, cloud_datastore_get, cloud_datastore_set, cloud_ordered_datastore_list, cloud_ordered_datastore_set, cloud_ordered_datastore_increment, cloud_ordered_datastore_delete, cloud_get_universe, cloud_restart_servers, cloud_messaging_publish |
 | Toolchain | 6 | stylua_format, rojo_build, rojo_sourcemap, wally_install, wally_update, moonwave_build |
 | Monitoring | 1 | server_get_metrics |

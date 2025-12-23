@@ -457,7 +457,7 @@ Default timeout: 30 seconds. Used for StyLua, Selene, Rojo, Wally, and Moonwave.
 
 ## MCP Tools
 
-The server exposes 39 MCP tools across five categories:
+The server exposes 40 MCP tools across five categories:
 
 ### Filesystem Tools (8)
 
@@ -472,7 +472,7 @@ The server exposes 39 MCP tools across five categories:
 | `fs_lint_script` | Run Selene linter |
 | `fs_watch_changes` | Poll for file changes |
 
-### Studio Tools (13)
+### Studio Tools (14)
 
 | Tool | Description |
 |------|-------------|
@@ -485,6 +485,7 @@ The server exposes 39 MCP tools across five categories:
 | `studio_get_bounds` | Get bounding box of Part/Model |
 | `studio_modify_script` | Update script source |
 | `studio_create_instance` | Create new instance |
+| `studio_insert_r15_rig` | Insert complete R15 humanoid rig |
 | `studio_set_property` | Set instance property |
 | `studio_delete_instance` | Delete instance |
 | `studio_find_instances` | Find by class name |

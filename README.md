@@ -14,7 +14,7 @@ A Rust MCP (Model Context Protocol) server for Roblox Studio integration. Provid
 - `fs_lint_script` - Run Selene linter on Luau scripts (requires Selene installed)
 - `fs_watch_changes` - Poll for real-time file changes
 
-### Studio Tools (13 tools)
+### Studio Tools (14 tools)
 Requires the companion Roblox Studio plugin to be running.
 
 - `studio_health_check` - Check plugin connection status
@@ -26,6 +26,7 @@ Requires the companion Roblox Studio plugin to be running.
 - `studio_get_bounds` - Get bounding box of Parts/Models
 - `studio_modify_script` - Modify script source with undo support
 - `studio_create_instance` - Create new instances with initial properties
+- `studio_insert_r15_rig` - Insert a complete R15 humanoid rig with Motor6D joints
 - `studio_set_property` - Set properties on instances (supports BrickColor, Vector3, Color3)
 - `studio_delete_instance` - Delete instances with undo support
 - `studio_find_instances` - Find all instances of a specific class
@@ -147,7 +148,7 @@ mcp-roblox/
 │   ├── limits.rs            # Resource limits (search results, tree entries)
 │   ├── regex_safety.rs      # Regex DoS protection
 │   ├── mcp/
-│   │   ├── server.rs        # All 39 MCP tool implementations
+│   │   ├── server.rs        # All 40 MCP tool implementations
 │   │   ├── params.rs        # Tool parameter definitions with JSON Schema
 │   │   └── instrumentation.rs  # Metrics collection wrapper
 │   ├── bridge/
@@ -212,7 +213,7 @@ cargo clippy
 
 ## Testing
 
-The project includes 770 unit tests covering:
+The project includes 780+ unit tests covering:
 - Configuration parsing and environment variable handling
 - Filesystem operations and path validation
 - HTTP bridge command handling and edge cases
