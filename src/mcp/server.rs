@@ -211,48 +211,6 @@ impl
         }
     }
 
-    /// Test-only constructor that doesn't require ROBLOX_OPEN_CLOUD_API_KEY.
-    ///
-    /// This avoids race conditions in parallel tests where one test temporarily
-    /// removes the env var while other tests try to create servers.
-    #[cfg(test)]
-    pub fn new_for_testing(bridge: Arc<PluginBridge>, project_root: PathBuf) -> Self {
-        // Try to initialize cloud client - OK if it fails (env var may not be set)
-        let cloud_client: Option<Arc<dyn CloudClient>> = OpenCloudClient::new()
-            .ok()
-            .map(|c| Arc::new(c) as Arc<dyn CloudClient>);
-
-        // Initialize file watcher - REQUIRED even for tests
-        let file_watcher = Some(Arc::new(
-            FileWatcher::new(project_root.clone()).expect("File watcher initialization failed")
-        ));
-
-        // Always create metrics
-        let metrics = Arc::new(ServerMetrics::new());
-
-        // Initialize toolchain components
-        let linter = SeleneLinter::new();
-        let formatter = StyLuaFormatter::new();
-        let rojo = DefaultRojoRunner::new();
-        let wally = DefaultWallyRunner::new();
-        let moonwave = DefaultMoonwaveRunner::new();
-
-        Self {
-            tool_router: Self::tool_router(),
-            bridge,
-            project_root,
-            cloud_client,
-            file_watcher,
-            metrics,
-            linter,
-            formatter,
-            rojo,
-            wally,
-            moonwave,
-            knowledge_graph: None,
-            auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)),
-        }
-    }
 }
 
 /// Generic implementation for any StudioBridge with default toolchain implementations
@@ -1256,9 +1214,7 @@ mod tests {
 
     fn create_test_server(project_root: PathBuf) -> RobloxMcpServer {
         let bridge = Arc::new(PluginBridge::new());
-        // Use new_for_testing to avoid panicking if ROBLOX_OPEN_CLOUD_API_KEY
-        // is temporarily unset by a parallel test
-        RobloxMcpServer::new_for_testing(bridge, project_root)
+        RobloxMcpServer::new(bridge, project_root)
     }
 
     fn create_test_server_with_stale_bridge(project_root: PathBuf) -> RobloxMcpServer {
@@ -1275,9 +1231,7 @@ mod tests {
         })
         .join()
         .unwrap();
-        // Use new_for_testing to avoid panicking if ROBLOX_OPEN_CLOUD_API_KEY
-        // is temporarily unset by a parallel test
-        RobloxMcpServer::new_for_testing(bridge, project_root)
+        RobloxMcpServer::new(bridge, project_root)
     }
 
     // === FILESYSTEM TOOL TESTS ===
@@ -1715,15 +1669,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial]
     async fn test_server_new() {
-        // Skip if API key not set - production constructor requires it
-        // In CI, this env var is always set. Locally, it may not be.
-        if std::env::var("ROBLOX_OPEN_CLOUD_API_KEY").is_err() {
-            eprintln!("Skipping test_server_new: ROBLOX_OPEN_CLOUD_API_KEY not set");
-            return;
-        }
-
         let temp_dir = TempDir::new().unwrap();
         let bridge = Arc::new(PluginBridge::new());
         let server = RobloxMcpServer::new(bridge, temp_dir.path().to_path_buf());

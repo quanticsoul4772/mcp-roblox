@@ -32,7 +32,7 @@ jobs:
     - name: Build
       run: cargo build --verbose
     - name: Run unit tests
-      run: cargo test --bin roblox-studio-mcp --verbose -- --nocapture
+      run: cargo test --bin roblox-studio-mcp --verbose -- --nocapture --test-threads=1
     - name: Run MCP integration tests
       run: cargo test --test mcp_integration --verbose -- --nocapture
     # Note: toolchain_integration tests require external tools (rojo, selene, stylua, wally)
