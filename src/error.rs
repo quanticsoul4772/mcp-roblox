@@ -68,8 +68,7 @@ pub enum RobloxMcpError {
     #[error("Security violation: {0}")]
     SecurityViolation(String),
 
-    // === AI Feature Errors ===
-    #[cfg(feature = "ai")]
+    // === AI Errors ===
     #[error("AI/Cloud API error: {0}")]
     CloudApiError(String),
 }
@@ -128,8 +127,7 @@ impl From<RobloxMcpError> for ErrorData {
             // Configuration errors → Invalid Request (client should fix config)
             RobloxMcpError::ConfigError(_) => Self::invalid_request(err.to_string(), None),
 
-            // AI feature errors → Internal Error
-            #[cfg(feature = "ai")]
+            // AI errors → Internal Error
             RobloxMcpError::CloudApiError(_) => Self::internal_error(err.to_string(), None),
         }
     }

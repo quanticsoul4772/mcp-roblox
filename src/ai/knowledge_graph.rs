@@ -133,14 +133,12 @@ pub trait KnowledgeGraph: Send + Sync {
 }
 
 /// Neo4j-backed knowledge graph for Luau scripts.
-#[cfg(feature = "ai")]
 pub struct LuauKnowledgeGraph<E: EmbeddingProvider> {
     graph: Arc<neo4rs::Graph>,
     embedder: Arc<E>,
     parser: LuauParser,
 }
 
-#[cfg(feature = "ai")]
 impl<E: EmbeddingProvider> LuauKnowledgeGraph<E> {
     /// Create a new knowledge graph connected to Neo4j.
     pub async fn new(
@@ -244,7 +242,6 @@ impl<E: EmbeddingProvider> LuauKnowledgeGraph<E> {
     }
 }
 
-#[cfg(feature = "ai")]
 #[async_trait]
 impl<E: EmbeddingProvider + 'static> KnowledgeGraph for LuauKnowledgeGraph<E> {
     async fn index_script(&self, path: &str, content: &str) -> Result<(), RobloxMcpError> {

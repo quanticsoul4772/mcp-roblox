@@ -1,6 +1,6 @@
 # Roblox Studio MCP Server
 
-A Rust MCP (Model Context Protocol) server for Roblox Studio integration. Provides filesystem operations, live Studio manipulation, Open Cloud API access, and toolchain integration through a standardized tool interface.
+A Rust MCP (Model Context Protocol) server for Roblox Studio integration. Provides filesystem operations, live Studio manipulation, Open Cloud API access, AI-powered code search, and toolchain integration through a standardized tool interface.
 
 ## Features
 
@@ -57,6 +57,16 @@ Integration with Roblox development toolchain.
 - `wally_update` - Update Wally packages to latest versions
 - `moonwave_build` - Build documentation with Moonwave (requires Moonwave installed)
 
+### AI Tools (4 tools)
+AI-powered semantic code search using Voyage AI embeddings and Neo4j knowledge graph. Enabled by default.
+
+- `ai_index_project` - Index Luau scripts for AI-powered search (generates embeddings, extracts relationships)
+- `ai_search_codebase` - Semantic search using natural language queries
+- `ai_find_related` - Find scripts related through code relationships (requires, remote calls)
+- `ai_get_context` - Get relevant code context for a task within a token budget
+
+Requires environment variables: `VOYAGE_API_KEY`, `NEO4J_URI`, `NEO4J_PASSWORD`
+
 ### Monitoring Tools (1 tool)
 - `server_get_metrics` - Get tool execution counts, durations, and error rates
 
@@ -64,6 +74,8 @@ Integration with Roblox development toolchain.
 
 - Rust 1.75 or later
 - Roblox Studio (for Studio tools)
+- Neo4j database (for AI tools) - [Neo4j Aura free tier](https://neo4j.com/cloud/aura-free/) works
+- Voyage AI API key (for AI tools) - [voyageai.com](https://www.voyageai.com/)
 - Optional toolchain:
   - Selene (`cargo install selene`) - for linting
   - StyLua (`cargo install stylua`) - for formatting
@@ -90,10 +102,17 @@ The binary will be at `target/release/roblox-studio-mcp.exe` (Windows) or `targe
 | `ROBLOX_OPEN_CLOUD_API_KEY` | No | - | API key for Open Cloud tools |
 | `ROBLOX_MCP_PORT` | No | 8080 | HTTP bridge port for plugin communication |
 | `RUST_LOG` | No | `roblox_studio_mcp=info` | Log level configuration |
+| `VOYAGE_API_KEY` | For AI | - | Voyage AI API key for embeddings |
+| `VOYAGE_MODEL` | No | `voyage-code-3` | Voyage AI embedding model |
+| `VOYAGE_DIMENSIONS` | No | `1024` | Embedding vector dimensions |
+| `NEO4J_URI` | For AI | - | Neo4j connection URI (e.g., `neo4j+s://xxx.databases.neo4j.io`) |
+| `NEO4J_USERNAME` | No | `neo4j` | Neo4j username |
+| `NEO4J_PASSWORD` | For AI | - | Neo4j password |
+| `NEO4J_DATABASE` | No | `neo4j` | Neo4j database name |
 
 ### MCP Client Configuration
 
-Add to your MCP client configuration (e.g., Claude Desktop):
+Add to your MCP client configuration (e.g., Claude Desktop or Claude Code):
 
 ```json
 {
@@ -102,7 +121,10 @@ Add to your MCP client configuration (e.g., Claude Desktop):
       "command": "path/to/roblox-studio-mcp",
       "args": [],
       "env": {
-        "ROBLOX_OPEN_CLOUD_API_KEY": "your-api-key-here"
+        "ROBLOX_OPEN_CLOUD_API_KEY": "your-api-key-here",
+        "VOYAGE_API_KEY": "pa-xxxxxxxx",
+        "NEO4J_URI": "neo4j+s://xxxxxxxx.databases.neo4j.io",
+        "NEO4J_PASSWORD": "your-neo4j-password"
       }
     }
   }
@@ -142,15 +164,27 @@ The plugin features:
 ```
 mcp-roblox/
 ├── src/
-│   ├── main.rs              # Entry point, STDIO transport, HTTP bridge
+│   ├── main.rs              # Entry point, STDIO transport, AI initialization
 │   ├── config.rs            # Environment configuration parsing
 │   ├── error.rs             # Error types and MCP error conversion
 │   ├── limits.rs            # Resource limits (search results, tree entries)
 │   ├── regex_safety.rs      # Regex DoS protection
 │   ├── mcp/
-│   │   ├── server.rs        # All 40 MCP tool implementations
+│   │   ├── server.rs        # MCP server with 44 tool definitions
 │   │   ├── params.rs        # Tool parameter definitions with JSON Schema
-│   │   └── instrumentation.rs  # Metrics collection wrapper
+│   │   ├── instrumentation.rs  # Metrics collection wrapper
+│   │   └── tools/           # Domain-organized tool implementations
+│   │       ├── filesystem.rs   # fs_* tool implementations
+│   │       ├── studio.rs       # studio_* tool implementations
+│   │       ├── cloud.rs        # cloud_* tool implementations
+│   │       └── toolchain.rs    # stylua/rojo/wally/moonwave implementations
+│   ├── ai/                  # AI-powered code search (feature-gated)
+│   │   ├── config.rs           # Voyage AI and Neo4j configuration
+│   │   ├── embedder.rs         # Voyage AI embedding client
+│   │   ├── knowledge_graph.rs  # Neo4j knowledge graph operations
+│   │   ├── auto_indexer.rs     # Real-time file watching and indexing
+│   │   ├── parser.rs           # Luau syntax parsing for relationships
+│   │   └── mock.rs             # Mock implementations for testing
 │   ├── bridge/
 │   │   ├── http.rs          # Plugin HTTP communication (poll/result endpoints)
 │   │   ├── auth.rs          # Bearer token authentication
@@ -186,7 +220,7 @@ mcp-roblox/
 ## Security Features
 
 - **Regex DoS Protection**: User-provided regex patterns are validated to prevent catastrophic backtracking
-- **API Key Protection**: Cloud API keys use the `secrecy` crate for automatic memory redaction
+- **API Key Protection**: Cloud API keys and AI credentials use the `secrecy` crate for automatic memory redaction
 - **Path Traversal Prevention**: All file operations validate paths to prevent directory traversal attacks
 - **Tool Timeouts**: External tools (StyLua, Selene, Rojo, Wally, Moonwave) have 30-second timeout protection
 - **HTTP Authentication**: Plugin communication uses bearer token authentication
@@ -195,31 +229,23 @@ mcp-roblox/
 ## Development
 
 ```bash
-# Build
-cargo build
-
-# Run tests (770 tests)
-cargo test
-
-# Run with debug logging
-RUST_LOG=debug cargo run
-
-# Build release binary
-cargo build --release
-
-# Run clippy
-cargo clippy
+cargo build          # Build debug binary
+cargo build --release # Build release binary
+cargo test           # Run 920+ tests
+cargo clippy         # Run linter
+RUST_LOG=debug cargo run  # Run with debug logging
 ```
 
 ## Testing
 
-The project includes 780+ unit tests covering:
+The project includes 920+ unit tests covering:
 - Configuration parsing and environment variable handling
 - Filesystem operations and path validation
 - HTTP bridge command handling and edge cases
 - Open Cloud API operations (DataStores, OrderedDataStores, Messaging, Assets, Universes)
 - Cloud tool success paths (with MockCloudClient)
-- Mock infrastructure for dependency injection (bridge, HTTP client, linter, cloud)
+- AI tools (with MockKnowledgeGraph and MockEmbeddingProvider)
+- Mock infrastructure for dependency injection (bridge, HTTP client, linter, cloud, AI)
 - Error type conversions and MCP error mapping
 - Tool parameter serialization with JSON Schema
 - Metrics collection and instrumentation
@@ -242,6 +268,7 @@ cargo build && cargo test --test mcp_integration -- --ignored
 - [Development Guide](docs/DEVELOPMENT_GUIDE.md) - Workflows, Luau reference, tool usage, production patterns
 - [API Reference](docs/API_REFERENCE.md) - Public traits, types, and MCP tools
 - [Testing Patterns](docs/TESTING_PATTERNS.md) - Mock infrastructure and testing best practices
+- [Unwrap Safety](docs/unwrap-safety.md) - Error handling patterns and unwrap audit
 
 ## License
 
