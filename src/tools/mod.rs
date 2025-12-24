@@ -1,6 +1,7 @@
 pub mod filesystem;
 pub mod formatting;
 pub mod linting;
+pub mod luau_lsp;
 pub mod lune;
 pub mod moonwave;
 pub mod rojo;

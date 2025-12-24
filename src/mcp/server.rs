@@ -44,6 +44,8 @@ use crate::mcp::params::{
     FsSearchContentParams,
     FsWatchChangesParams,
     FsWriteScriptParams,
+    // Luau-LSP params
+    LuauLspAnalyzeParams,
     // Lune params
     LuneEvalParams,
     LuneRunParams,
@@ -79,6 +81,7 @@ use walkdir::WalkDir;
 use crate::metrics::ServerMetrics;
 use crate::tools::formatting::{Formatter, StyLuaFormatter};
 use crate::tools::linting::{Linter, SeleneLinter};
+use crate::tools::luau_lsp::{DefaultLuauLspRunner, LuauLspRunner};
 use crate::tools::lune::{DefaultLuneRunner, LuneRunner};
 use crate::tools::moonwave::{DefaultMoonwaveRunner, MoonwaveRunner};
 use crate::tools::rojo::{DefaultRojoRunner, RojoRunner};
@@ -90,7 +93,7 @@ use crate::watcher::FileWatcher;
 /// Bundles all injectable dependencies to avoid too many function arguments.
 /// Used by `RobloxMcpServer::with_all_mocks()` for comprehensive test setups.
 #[allow(dead_code)] // Only constructed in tests, but must be public for the API
-pub struct MockServerConfig<B, L, F, R, W, M, LN>
+pub struct MockServerConfig<B, L, F, R, W, M, LN, LA>
 where
     B: StudioBridge + Clone,
     L: Linter + Clone,
@@ -99,6 +102,7 @@ where
     W: WallyRunner + Clone,
     M: MoonwaveRunner + Clone,
     LN: LuneRunner + Clone,
+    LA: LuauLspRunner + Clone,
 {
     /// Studio bridge for plugin communication
     pub bridge: Arc<B>,
@@ -118,6 +122,8 @@ where
     pub moonwave: M,
     /// Lune runner implementation
     pub lune: LN,
+    /// Luau-LSP runner implementation
+    pub luau_lsp: LA,
 }
 
 /// Roblox MCP Server with injectable dependencies
@@ -130,6 +136,7 @@ where
 /// - `W`: WallyRunner implementation (default: DefaultWallyRunner)
 /// - `M`: MoonwaveRunner implementation (default: DefaultMoonwaveRunner)
 /// - `LN`: LuneRunner implementation (default: DefaultLuneRunner)
+/// - `LA`: LuauLspRunner implementation (default: DefaultLuauLspRunner)
 ///
 /// This allows injecting mock implementations for testing while keeping
 /// production code unchanged.
@@ -142,6 +149,7 @@ pub struct RobloxMcpServer<
     W: WallyRunner + Clone = DefaultWallyRunner,
     M: MoonwaveRunner + Clone = DefaultMoonwaveRunner,
     LN: LuneRunner + Clone = DefaultLuneRunner,
+    LA: LuauLspRunner + Clone = DefaultLuauLspRunner,
 > {
     tool_router: ToolRouter<Self>,
     pub(crate) bridge: Arc<B>,
@@ -165,6 +173,8 @@ pub struct RobloxMcpServer<
     pub(crate) moonwave: M,
     /// Lune runner for Luau script execution
     pub(crate) lune: LN,
+    /// Luau-LSP runner for static analysis
+    pub(crate) luau_lsp: LA,
     /// Knowledge graph for AI-powered code search
     pub(crate) knowledge_graph: Option<Arc<dyn KnowledgeGraph>>,
     /// Auto-indexer handle for background indexing (optional - requires file_watcher + knowledge_graph)
@@ -183,6 +193,7 @@ impl
         DefaultWallyRunner,
         DefaultMoonwaveRunner,
         DefaultLuneRunner,
+        DefaultLuauLspRunner,
     >
 {
     pub fn new(bridge: Arc<PluginBridge>, project_root: PathBuf) -> Self {
@@ -206,6 +217,7 @@ impl
         let wally = DefaultWallyRunner::new();
         let moonwave = DefaultMoonwaveRunner::new();
         let lune = DefaultLuneRunner::new();
+        let luau_lsp = DefaultLuauLspRunner::new();
 
         Self {
             tool_router: Self::tool_router(),
@@ -220,6 +232,7 @@ impl
             wally,
             moonwave,
             lune,
+            luau_lsp,
             knowledge_graph: None, // Must be set separately with with_knowledge_graph()
             auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)), // Started with start_auto_indexing()
         }
@@ -236,6 +249,7 @@ impl<B: StudioBridge + Clone + 'static>
         DefaultWallyRunner,
         DefaultMoonwaveRunner,
         DefaultLuneRunner,
+        DefaultLuauLspRunner,
     >
 {
     /// Create a test server with a mock bridge (uses default toolchain implementations)
@@ -257,6 +271,7 @@ impl<B: StudioBridge + Clone + 'static>
             wally: DefaultWallyRunner::new(),
             moonwave: DefaultMoonwaveRunner::new(),
             lune: DefaultLuneRunner::new(),
+            luau_lsp: DefaultLuauLspRunner::new(),
             knowledge_graph: None,
             auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -273,6 +288,7 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static>
         DefaultWallyRunner,
         DefaultMoonwaveRunner,
         DefaultLuneRunner,
+        DefaultLuauLspRunner,
     >
 {
     /// Create a test server with a mock bridge and custom linter
@@ -294,6 +310,7 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static>
             wally: DefaultWallyRunner::new(),
             moonwave: DefaultMoonwaveRunner::new(),
             lune: DefaultLuneRunner::new(),
+            luau_lsp: DefaultLuauLspRunner::new(),
             knowledge_graph: None,
             auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -323,6 +340,7 @@ impl<B: StudioBridge + Clone + 'static, L: Linter + Clone + 'static>
             wally: DefaultWallyRunner::new(),
             moonwave: DefaultMoonwaveRunner::new(),
             lune: DefaultLuneRunner::new(),
+            luau_lsp: DefaultLuauLspRunner::new(),
             knowledge_graph: None,
             auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -339,7 +357,8 @@ impl<
         W: WallyRunner + Clone + 'static,
         M: MoonwaveRunner + Clone + 'static,
         LN: LuneRunner + Clone + 'static,
-    > RobloxMcpServer<B, L, F, R, W, M, LN>
+        LA: LuauLspRunner + Clone + 'static,
+    > RobloxMcpServer<B, L, F, R, W, M, LN, LA>
 {
     /// Create a test server with all mock toolchain components
     ///
@@ -358,10 +377,11 @@ impl<
     ///     wally: MockWallyRunner::new(),
     ///     moonwave: MockMoonwaveRunner::new(),
     ///     lune: MockLuneRunner::new(),
+    ///     luau_lsp: MockLuauLspRunner::new(),
     /// };
     /// let server = RobloxMcpServer::with_all_mocks(config);
     /// ```
-    pub fn with_all_mocks(config: MockServerConfig<B, L, F, R, W, M, LN>) -> Self {
+    pub fn with_all_mocks(config: MockServerConfig<B, L, F, R, W, M, LN, LA>) -> Self {
         Self {
             tool_router: Self::tool_router(),
             bridge: config.bridge,
@@ -375,6 +395,7 @@ impl<
             wally: config.wally,
             moonwave: config.moonwave,
             lune: config.lune,
+            luau_lsp: config.luau_lsp,
             knowledge_graph: None,
             auto_indexer_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -390,7 +411,8 @@ impl<
         W: WallyRunner + Clone + 'static,
         M: MoonwaveRunner + Clone + 'static,
         LN: LuneRunner + Clone + 'static,
-    > RobloxMcpServer<B, L, F, R, W, M, LN>
+        LA: LuauLspRunner + Clone + 'static,
+    > RobloxMcpServer<B, L, F, R, W, M, LN, LA>
 {
     /// Set shared metrics for cross-component tracking (e.g., late plugin results)
     ///
@@ -538,7 +560,8 @@ impl<
         W: WallyRunner + Clone + 'static,
         M: MoonwaveRunner + Clone + 'static,
         LN: LuneRunner + Clone + 'static,
-    > RobloxMcpServer<B, L, F, R, W, M, LN>
+        LA: LuauLspRunner + Clone + 'static,
+    > RobloxMcpServer<B, L, F, R, W, M, LN, LA>
 {
     // === FILESYSTEM TOOLS (7) ===
 
@@ -1044,6 +1067,18 @@ impl<
         call.finish_with(result).await
     }
 
+    #[tool(
+        description = "Analyze Luau scripts for type errors using luau-lsp. Catches type mismatches, undefined variables, and deprecated APIs. Use sourcemap from rojo_sourcemap for proper require resolution. Requires 'luau-lsp' to be installed (aftman add johnnymorganz/luau-lsp)."
+    )]
+    async fn luau_lsp_analyze(
+        &self,
+        Parameters(params): Parameters<LuauLspAnalyzeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("luau_lsp_analyze");
+        let result = self.luau_lsp_analyze_impl(params).await;
+        call.finish_with(result).await
+    }
+
     // === METRICS TOOLS (1) ===
     // These tools provide server monitoring and health information.
 
@@ -1240,7 +1275,8 @@ impl<
         W: WallyRunner + Clone + 'static,
         M: MoonwaveRunner + Clone + 'static,
         LN: LuneRunner + Clone + 'static,
-    > ServerHandler for RobloxMcpServer<B, L, F, R, W, M, LN>
+        LA: LuauLspRunner + Clone + 'static,
+    > ServerHandler for RobloxMcpServer<B, L, F, R, W, M, LN, LA>
 {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
@@ -1257,6 +1293,7 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::luau_lsp::mock::MockLuauLspRunner;
     use crate::tools::lune::mock::MockLuneRunner;
     use tempfile::TempDir;
     use tokio::time::Duration;
@@ -4327,6 +4364,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = StyluaFormatParams {
@@ -4370,6 +4408,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = StyluaFormatParams {
@@ -4406,6 +4445,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = StyluaFormatParams {
@@ -4449,6 +4489,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = RojoBuildParams {
@@ -4489,6 +4530,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = RojoSourcemapParams {
@@ -4530,6 +4572,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = WallyInstallParams {
@@ -4569,6 +4612,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = WallyUpdateParams {
@@ -4609,6 +4653,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = MoonwaveBuildParams {
@@ -4651,6 +4696,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = MoonwaveBuildParams {
@@ -4695,6 +4741,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = StyluaFormatParams {
@@ -4737,6 +4784,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = RojoSourcemapParams {
@@ -4776,6 +4824,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         let params = StyluaFormatParams {
@@ -4810,6 +4859,7 @@ mod tests {
             wally: mock_wally,
             moonwave: mock_moonwave,
             lune: MockLuneRunner::new(),
+            luau_lsp: MockLuauLspRunner::new(),
         });
 
         // Verify construction by calling get_info

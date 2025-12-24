@@ -30,12 +30,13 @@ use crate::mcp::params::{
 use crate::mcp::server::RobloxMcpServer;
 use crate::tools::formatting::Formatter;
 use crate::tools::linting::Linter;
+use crate::tools::luau_lsp::LuauLspRunner;
 use crate::tools::lune::LuneRunner;
 use crate::tools::moonwave::MoonwaveRunner;
 use crate::tools::rojo::RojoRunner;
 use crate::tools::wally::WallyRunner;
 
-impl<B, L, F, R, W, M, LN> RobloxMcpServer<B, L, F, R, W, M, LN>
+impl<B, L, F, R, W, M, LN, LA> RobloxMcpServer<B, L, F, R, W, M, LN, LA>
 where
     B: StudioBridge + Clone + 'static,
     L: Linter + Clone + 'static,
@@ -44,6 +45,7 @@ where
     W: WallyRunner + Clone + 'static,
     M: MoonwaveRunner + Clone + 'static,
     LN: LuneRunner + Clone + 'static,
+    LA: LuauLspRunner + Clone + 'static,
 {
     // =========================================================================
     // studio_health_check - Check if Studio plugin is connected

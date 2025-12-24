@@ -375,6 +375,22 @@ pub struct FsWatchChangesParams {
     pub limit: Option<usize>,
 }
 
+// === LUAU-LSP PARAMS ===
+// Parameter structs for luau-lsp static analysis MCP tools
+// Provides type checking for Luau scripts before syncing to Studio
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LuauLspAnalyzeParams {
+    #[schemars(description = "Path to file or directory to analyze")]
+    pub path: String,
+    #[schemars(
+        description = "Path to Rojo sourcemap.json for require resolution (optional). Generate with rojo_sourcemap first for best results."
+    )]
+    pub sourcemap_path: Option<String>,
+    #[schemars(description = "Paths to definition files for API types (optional)")]
+    pub definitions: Option<Vec<String>>,
+}
+
 // === LUNE PARAMS ===
 // Parameter structs for Lune runtime execution MCP tools
 // Lune is a standalone Luau runtime for testing scripts outside Roblox Studio
@@ -985,5 +1001,59 @@ mod tests {
         let debug = format!("{:?}", params);
         assert!(debug.contains("LuneEvalParams"));
         assert!(debug.contains("hello"));
+    }
+
+    // === LUAU-LSP PARAMS TESTS ===
+
+    #[test]
+    fn test_luau_lsp_analyze_params_full() {
+        let json = r#"{"path": "src/", "sourcemap_path": "sourcemap.json", "definitions": ["types/roblox.d.luau"]}"#;
+        let params: LuauLspAnalyzeParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.path, "src/");
+        assert_eq!(params.sourcemap_path, Some("sourcemap.json".to_string()));
+        assert_eq!(
+            params.definitions,
+            Some(vec!["types/roblox.d.luau".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_luau_lsp_analyze_params_minimal() {
+        let json = r#"{"path": "src/main.luau"}"#;
+        let params: LuauLspAnalyzeParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.path, "src/main.luau");
+        assert!(params.sourcemap_path.is_none());
+        assert!(params.definitions.is_none());
+    }
+
+    #[test]
+    fn test_luau_lsp_analyze_params_with_sourcemap_only() {
+        let json = r#"{"path": "src/", "sourcemap_path": "sourcemap.json"}"#;
+        let params: LuauLspAnalyzeParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.path, "src/");
+        assert_eq!(params.sourcemap_path, Some("sourcemap.json".to_string()));
+        assert!(params.definitions.is_none());
+    }
+
+    #[test]
+    fn test_luau_lsp_analyze_params_multiple_definitions() {
+        let json =
+            r#"{"path": "src/", "definitions": ["types/roblox.d.luau", "types/custom.d.luau"]}"#;
+        let params: LuauLspAnalyzeParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.path, "src/");
+        assert!(params.sourcemap_path.is_none());
+        assert_eq!(params.definitions.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_luau_lsp_analyze_params_debug() {
+        let params = LuauLspAnalyzeParams {
+            path: "src/".to_string(),
+            sourcemap_path: Some("sourcemap.json".to_string()),
+            definitions: None,
+        };
+        let debug = format!("{:?}", params);
+        assert!(debug.contains("LuauLspAnalyzeParams"));
+        assert!(debug.contains("src/"));
     }
 }

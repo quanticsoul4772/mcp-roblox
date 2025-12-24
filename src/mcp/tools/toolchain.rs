@@ -1,6 +1,6 @@
 //! Toolchain tool implementations.
 //!
-//! Provides 8 tools for external Luau development tool integration:
+//! Provides 9 tools for external Luau development tool integration:
 //! - `stylua_format` - Format Luau scripts using StyLua
 //! - `rojo_build` - Build Roblox project using Rojo
 //! - `rojo_sourcemap` - Generate Rojo sourcemap
@@ -9,6 +9,7 @@
 //! - `moonwave_build` - Build Moonwave documentation
 //! - `lune_run` - Run Luau scripts using Lune runtime
 //! - `lune_eval` - Evaluate inline Luau code using Lune
+//! - `luau_lsp_analyze` - Analyze Luau scripts for type errors using luau-lsp
 
 use std::path::Path;
 use std::time::Duration;
@@ -18,19 +19,20 @@ use rmcp::ErrorData;
 
 use crate::bridge::StudioBridge;
 use crate::mcp::params::{
-    LuneEvalParams, LuneRunParams, MoonwaveBuildParams, RojoBuildParams, RojoSourcemapParams,
-    StyluaFormatParams, WallyInstallParams, WallyUpdateParams,
+    LuauLspAnalyzeParams, LuneEvalParams, LuneRunParams, MoonwaveBuildParams, RojoBuildParams,
+    RojoSourcemapParams, StyluaFormatParams, WallyInstallParams, WallyUpdateParams,
 };
 use crate::mcp::server::RobloxMcpServer;
 use crate::tools::filesystem::validate_path;
 use crate::tools::formatting::Formatter;
 use crate::tools::linting::Linter;
+use crate::tools::luau_lsp::LuauLspRunner;
 use crate::tools::lune::LuneRunner;
 use crate::tools::moonwave::MoonwaveRunner;
 use crate::tools::rojo::RojoRunner;
 use crate::tools::wally::WallyRunner;
 
-impl<B, L, F, R, W, M, LN> RobloxMcpServer<B, L, F, R, W, M, LN>
+impl<B, L, F, R, W, M, LN, LA> RobloxMcpServer<B, L, F, R, W, M, LN, LA>
 where
     B: StudioBridge + Clone + 'static,
     L: Linter + Clone + 'static,
@@ -39,6 +41,7 @@ where
     W: WallyRunner + Clone + 'static,
     M: MoonwaveRunner + Clone + 'static,
     LN: LuneRunner + Clone + 'static,
+    LA: LuauLspRunner + Clone + 'static,
 {
     // =========================================================================
     // stylua_format - Format Luau scripts using StyLua
@@ -287,6 +290,71 @@ where
         let result = self
             .lune
             .eval(&params.code, timeout)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    // =========================================================================
+    // luau_lsp_analyze - Analyze Luau scripts for type errors
+    // =========================================================================
+
+    pub(crate) async fn luau_lsp_analyze_impl(
+        &self,
+        params: LuauLspAnalyzeParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let path = Path::new(&params.path);
+
+        // Validate path is within project root
+        let validated_path = validate_path(path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Parse optional sourcemap path
+        let sourcemap_path = match &params.sourcemap_path {
+            Some(p) => {
+                let sp = Path::new(p);
+                Some(
+                    validate_path(sp, &self.project_root)
+                        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+                )
+            }
+            None => None,
+        };
+
+        // Parse optional definition files
+        let definitions = match &params.definitions {
+            Some(defs) => {
+                let mut validated_defs = Vec::with_capacity(defs.len());
+                for def in defs {
+                    let def_path = Path::new(def);
+                    validated_defs.push(
+                        validate_path(def_path, &self.project_root)
+                            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+                    );
+                }
+                Some(validated_defs)
+            }
+            None => None,
+        };
+
+        // Convert to slices for the runner
+        let definitions_refs: Vec<&Path> = definitions
+            .as_ref()
+            .map(|d| d.iter().map(|p| p.as_path()).collect())
+            .unwrap_or_default();
+
+        // Run the analyzer
+        let result = self
+            .luau_lsp
+            .analyze(
+                &validated_path,
+                sourcemap_path.as_deref(),
+                &definitions_refs,
+            )
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 

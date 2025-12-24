@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Rust MCP server for Roblox Studio integration. Provides **44 MCP tools** for filesystem operations, live Studio manipulation, Open Cloud API access, AI-powered code search, and toolchain integration.
+Rust MCP server for Roblox Studio integration. Provides **45 MCP tools** for filesystem operations, live Studio manipulation, Open Cloud API access, AI-powered code search, and toolchain integration.
 
 ## Build and Test Commands
 
@@ -43,7 +43,7 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
   - `filesystem.rs` - fs_* tool implementations
   - `studio.rs` - studio_* tool implementations
   - `cloud.rs` - cloud_* tool implementations
-  - `toolchain.rs` - stylua/rojo/wally/moonwave implementations
+  - `toolchain.rs` - stylua/rojo/wally/moonwave/lune/luau-lsp implementations
   - `ai.rs` - ai_* tool implementations
 - `src/bridge/http.rs` - Plugin HTTP communication (poll/result endpoints)
 - `src/bridge/auth.rs` - Bearer token authentication for plugin
@@ -60,6 +60,8 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 - `src/tools/rojo.rs` - Rojo build and sourcemap operations
 - `src/tools/wally.rs` - Wally package management
 - `src/tools/moonwave.rs` - Moonwave documentation builds
+- `src/tools/lune.rs` - Lune runtime integration for Luau execution
+- `src/tools/luau_lsp.rs` - luau-lsp static analysis integration
 - `src/tools/timeout.rs` - External tool timeout protection (30s default)
 - `src/ai/` - AI-powered semantic code search (feature-gated):
   - `config.rs` - Voyage AI and Neo4j configuration
@@ -72,7 +74,7 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 - `src/metrics/mod.rs` - Tool execution metrics
 - `plugin/MCPServer.server.luau` - Roblox Studio plugin
 
-## Tool Categories (44 total)
+## Tool Categories (45 total)
 
 | Category | Count | Tools |
 |----------|-------|-------|
@@ -80,7 +82,7 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 | Studio | 14 | studio_health_check, studio_get_selection, studio_get_datamodel, studio_get_datamodel_paginated, studio_get_script_source, studio_get_properties, studio_get_bounds, studio_modify_script, studio_create_instance, studio_insert_r15_rig, studio_set_property, studio_delete_instance, studio_find_instances, studio_get_output |
 | Cloud | 11 | cloud_publish_place, cloud_upload_asset, cloud_datastore_get, cloud_datastore_set, cloud_ordered_datastore_list, cloud_ordered_datastore_set, cloud_ordered_datastore_increment, cloud_ordered_datastore_delete, cloud_get_universe, cloud_restart_servers, cloud_messaging_publish |
 | AI | 4 | ai_index_project, ai_search_codebase, ai_find_related, ai_get_context |
-| Toolchain | 6 | stylua_format, rojo_build, rojo_sourcemap, wally_install, wally_update, moonwave_build |
+| Toolchain | 7 | stylua_format, rojo_build, rojo_sourcemap, wally_install, wally_update, moonwave_build, luau_lsp_analyze |
 | Monitoring | 1 | server_get_metrics |
 
 ## Tool Implementation Pattern
@@ -229,6 +231,23 @@ ai_find_related(path, max_depth?)  // Finds scripts through code relationships
 ai_get_context(task, token_budget?)  // Returns relevant snippets within budget
 ```
 - Optimized for LLM context windows (default: 4000 tokens)
+
+## Static Analysis with luau-lsp
+
+### Analyzing Luau Code for Type Errors
+```rust
+luau_lsp_analyze(path, sourcemap_path?, definitions?)
+```
+- Catches type mismatches, undefined variables, and deprecated APIs before syncing to Studio
+- Use with Rojo sourcemap for proper require resolution:
+  1. First generate sourcemap: `rojo_sourcemap(project_path)`
+  2. Then analyze: `luau_lsp_analyze(src_path, sourcemap_path: "sourcemap.json")`
+- Optional `definitions` array for additional type definition files
+- Returns structured diagnostics with severity, line/column, and message
+
+**Installation**: `aftman add johnnymorganz/luau-lsp`
+
+**Why this matters**: Prevents the "sync to Studio, see errors, fix, repeat" loop by catching errors locally first.
 
 ## Resource Limits
 
