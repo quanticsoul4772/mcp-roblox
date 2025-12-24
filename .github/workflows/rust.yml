@@ -31,5 +31,9 @@ jobs:
         echo "All secrets are set"
     - name: Build
       run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose -- --nocapture
+    - name: Run unit tests
+      run: cargo test --lib --bin roblox-studio-mcp --verbose -- --nocapture
+    - name: Run MCP integration tests
+      run: cargo test --test mcp_integration --verbose -- --nocapture
+    # Note: toolchain_integration tests require external tools (rojo, selene, stylua, wally)
+    # which are not installed in CI. Run locally with: cargo test --test toolchain_integration
