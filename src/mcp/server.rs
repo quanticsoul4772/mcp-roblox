@@ -421,14 +421,6 @@ impl<
         self
     }
 
-    /// Set a custom cloud client (for testing cloud tool success paths)
-    ///
-    /// # Example
-    /// ```ignore
-    /// let mock = Arc::new(MockCloudClient::new());
-    /// mock.queue_datastore_get(Ok(entry));
-    /// let server = create_test_server(root).with_cloud_client(mock);
-    /// ```
     /// Set a custom knowledge graph (for AI-powered code search)
     ///
     /// # Example
@@ -517,6 +509,14 @@ impl<
         guard.as_ref().map(|h| h.is_running()).unwrap_or(false)
     }
 
+    /// Set a custom cloud client (for testing cloud tool success paths)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mock = Arc::new(MockCloudClient::new());
+    /// mock.queue_datastore_get(Ok(entry));
+    /// let server = create_test_server(root).with_cloud_client(mock);
+    /// ```
     #[cfg(test)]
     pub fn with_cloud_client(mut self, client: Arc<dyn CloudClient>) -> Self {
         self.cloud_client = Some(client);

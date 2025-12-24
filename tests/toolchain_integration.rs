@@ -984,7 +984,7 @@ fn test_create_test_script_with_special_characters() {
     for (name, content) in test_cases {
         let path = create_test_script(temp.path(), name, content);
         let read_content = std::fs::read_to_string(&path)
-            .expect(&format!("Failed to read {}", name));
+            .unwrap_or_else(|_| panic!("Failed to read {}", name));
         assert_eq!(read_content, content, "Content mismatch for {}", name);
     }
 }
