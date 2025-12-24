@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Rust MCP server for Roblox Studio integration. Provides **45 MCP tools** for filesystem operations, live Studio manipulation, Open Cloud API access, AI-powered code search, and toolchain integration.
+Rust MCP server for Roblox Studio integration. Provides **47 MCP tools** for filesystem operations, live Studio manipulation, Open Cloud API access, AI-powered code search, and toolchain integration.
 
 ## Build and Test Commands
 
@@ -74,7 +74,7 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 - `src/metrics/mod.rs` - Tool execution metrics
 - `plugin/MCPServer.server.luau` - Roblox Studio plugin
 
-## Tool Categories (45 total)
+## Tool Categories (47 total)
 
 | Category | Count | Tools |
 |----------|-------|-------|
@@ -82,7 +82,7 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
 | Studio | 14 | studio_health_check, studio_get_selection, studio_get_datamodel, studio_get_datamodel_paginated, studio_get_script_source, studio_get_properties, studio_get_bounds, studio_modify_script, studio_create_instance, studio_insert_r15_rig, studio_set_property, studio_delete_instance, studio_find_instances, studio_get_output |
 | Cloud | 11 | cloud_publish_place, cloud_upload_asset, cloud_datastore_get, cloud_datastore_set, cloud_ordered_datastore_list, cloud_ordered_datastore_set, cloud_ordered_datastore_increment, cloud_ordered_datastore_delete, cloud_get_universe, cloud_restart_servers, cloud_messaging_publish |
 | AI | 4 | ai_index_project, ai_search_codebase, ai_find_related, ai_get_context |
-| Toolchain | 7 | stylua_format, rojo_build, rojo_sourcemap, wally_install, wally_update, moonwave_build, luau_lsp_analyze |
+| Toolchain | 9 | stylua_format, rojo_build, rojo_sourcemap, wally_install, wally_update, moonwave_build, lune_run, lune_eval, luau_lsp_analyze |
 | Monitoring | 1 | server_get_metrics |
 
 ## Tool Implementation Pattern

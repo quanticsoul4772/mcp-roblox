@@ -457,7 +457,7 @@ Default timeout: 30 seconds. Used for StyLua, Selene, Rojo, Wally, and Moonwave.
 
 ## MCP Tools
 
-The server exposes 40 MCP tools across five categories:
+The server exposes 47 MCP tools across six categories:
 
 ### Filesystem Tools (8)
 
@@ -608,7 +608,7 @@ GET https://apis.roblox.com/ordered-data-stores/v1/universes/{id}/orderedDataSto
     ?max_page_size={limit}&order_by={desc|asc}&filter={expression}
 ```
 
-### Toolchain Tools (6)
+### Toolchain Tools (9)
 
 | Tool | Description |
 |------|-------------|
@@ -618,8 +618,110 @@ GET https://apis.roblox.com/ordered-data-stores/v1/universes/{id}/orderedDataSto
 | `wally_install` | Install packages |
 | `wally_update` | Update packages |
 | `moonwave_build` | Build documentation |
+| `lune_run` | Run Luau scripts using Lune runtime |
+| `lune_eval` | Evaluate inline Luau code using Lune |
+| `luau_lsp_analyze` | Static type analysis using luau-lsp |
 
 All toolchain tools have 30-second timeout protection via `execute_with_timeout()`.
+
+#### LuneRunner Trait
+
+**Location:** `src/tools/lune.rs`
+
+Abstraction over Lune runtime execution for testability.
+
+```rust
+#[async_trait]
+pub trait LuneRunner: Send + Sync {
+    async fn run(
+        &self,
+        script_path: &Path,
+        args: &[String],
+        timeout: Option<Duration>,
+    ) -> Result<LuneRunResult, RobloxMcpError>;
+
+    async fn eval(
+        &self,
+        code: &str,
+        timeout: Option<Duration>,
+    ) -> Result<LuneRunResult, RobloxMcpError>;
+}
+```
+
+**Response Types:**
+
+```rust
+pub struct LuneRunResult {
+    pub success: bool,
+    pub exit_code: Option<i32>,
+    pub signal: Option<i32>,
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
+    pub duration_ms: u64,
+}
+```
+
+| Implementation | Use Case |
+|----------------|----------|
+| `DefaultLuneRunner` | Production with real Lune binary |
+| `MockLuneRunner` | Testing with queue-based responses |
+
+#### LuauLspRunner Trait
+
+**Location:** `src/tools/luau_lsp.rs`
+
+Abstraction over luau-lsp static analysis for testability.
+
+```rust
+#[async_trait]
+pub trait LuauLspRunner: Send + Sync {
+    async fn analyze(
+        &self,
+        path: &Path,
+        sourcemap_path: Option<&Path>,
+        definitions: &[&Path],
+    ) -> Result<AnalyzeResult, RobloxMcpError>;
+}
+```
+
+**Response Types:**
+
+```rust
+pub struct AnalyzeResult {
+    pub path: String,
+    pub diagnostics: Vec<AnalyzeDiagnostic>,
+    pub error_count: usize,
+    pub warning_count: usize,
+    pub files_analyzed: usize,
+}
+
+pub struct AnalyzeDiagnostic {
+    pub severity: String,      // "Error", "Warning", "Information", "Hint"
+    pub code: String,          // e.g., "TypeError", "UnknownGlobal"
+    pub message: String,
+    pub file: String,
+    pub start_line: u32,
+    pub start_column: u32,
+    pub end_line: Option<u32>,
+    pub end_column: Option<u32>,
+}
+```
+
+| Implementation | Use Case |
+|----------------|----------|
+| `DefaultLuauLspRunner` | Production with real luau-lsp binary |
+| `MockLuauLspRunner` | Testing with queue-based responses |
+
+### AI Tools (4)
+
+Requires `VOYAGE_API_KEY`, `NEO4J_URI`, and `NEO4J_PASSWORD` environment variables.
+
+| Tool | Description |
+|------|-------------|
+| `ai_index_project` | Index Luau scripts for AI-powered search |
+| `ai_search_codebase` | Semantic search using natural language |
+| `ai_find_related` | Find scripts through code relationships |
+| `ai_get_context` | Get relevant context within token budget |
 
 ### Monitoring Tools (1)
 

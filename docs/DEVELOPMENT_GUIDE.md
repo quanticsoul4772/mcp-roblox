@@ -922,7 +922,8 @@ Beyond Rojo, the modern Roblox stack includes:
 | **Wally** | Package manager | `rokit add wally` |
 | **Selene** | Luau linter | `rokit add selene` |
 | **StyLua** | Code formatter | `rokit add stylua` |
-| **Luau LSP** | VS Code autocomplete | VS Code extension |
+| **Luau LSP** | Type analysis & autocomplete | `rokit add luau-lsp` |
+| **Lune** | Luau runtime for testing | `rokit add lune` |
 | **TestEZ** | Testing framework | `wally add testez` |
 
 ```bash
@@ -933,7 +934,7 @@ cargo install rokit
 rokit init
 
 # Add tools
-rokit add rojo selene stylua wally
+rokit add rojo selene stylua wally lune luau-lsp
 
 # Lint code
 selene src/
@@ -941,9 +942,53 @@ selene src/
 # Format code
 stylua src/
 
+# Type-check code (catch errors before syncing to Studio)
+luau-lsp analyze src/
+
+# Run Luau tests without Studio
+lune run tests/unit/my_test.luau
+
 # Run tests
 rojo build -o test.rbxl && run-in-roblox --place test.rbxl --script tests/run.lua
 ```
+
+### MCP Toolchain Tools
+
+The MCP server provides tools for running these external tools programmatically:
+
+```
+# Format Luau code
+stylua_format(file_path, config_path?, check_only?)
+
+# Build with Rojo
+rojo_build(project_path, output_path)
+rojo_sourcemap(project_path, output_path?)
+
+# Package management
+wally_install(project_path)
+wally_update(project_path)
+
+# Documentation
+moonwave_build(project_path, output_dir?)
+
+# Run Luau scripts with Lune (no Studio required)
+lune_run(script_path, args?, timeout?)
+lune_eval(code, timeout?)  # Evaluate inline Luau code
+
+# Static type analysis
+luau_lsp_analyze(path, sourcemap_path?, definitions?)
+```
+
+**Lune Use Cases:**
+- Test pure Luau logic (math, data structures, algorithms)
+- Validate JSON/YAML data files with Lune's serde library
+- Run CI/CD tests in GitHub Actions without Studio
+- Quick REPL-like code evaluation
+
+**luau-lsp Use Cases:**
+- Catch type errors before syncing to Studio
+- Validate code against Rojo sourcemap for accurate type resolution
+- CI/CD type checking in pull request pipelines
 
 ### Recommended Libraries
 

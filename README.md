@@ -1,6 +1,6 @@
 # Roblox Studio MCP Server
 
-A Rust MCP (Model Context Protocol) server for Roblox Studio integration. Provides filesystem operations, live Studio manipulation, Open Cloud API access, AI-powered code search, and toolchain integration through a standardized tool interface.
+A Rust MCP (Model Context Protocol) server for Roblox Studio integration. Provides **47 tools** for filesystem operations, live Studio manipulation, Open Cloud API access, AI-powered code search, and toolchain integration through a standardized tool interface.
 
 ## Features
 
@@ -47,7 +47,7 @@ Requires `ROBLOX_OPEN_CLOUD_API_KEY` environment variable.
 - `cloud_restart_servers` - Restart all game servers for a universe
 - `cloud_messaging_publish` - Publish messages to MessagingService topics
 
-### Toolchain Tools (6 tools)
+### Toolchain Tools (9 tools)
 Integration with Roblox development toolchain.
 
 - `stylua_format` - Format Luau scripts with StyLua (requires StyLua installed)
@@ -56,6 +56,9 @@ Integration with Roblox development toolchain.
 - `wally_install` - Install Wally packages (requires Wally installed)
 - `wally_update` - Update Wally packages to latest versions
 - `moonwave_build` - Build documentation with Moonwave (requires Moonwave installed)
+- `lune_run` - Run Luau scripts using Lune runtime (requires Lune installed)
+- `lune_eval` - Evaluate inline Luau code using Lune runtime
+- `luau_lsp_analyze` - Static type analysis using luau-lsp (requires luau-lsp installed)
 
 ### AI Tools (4 tools)
 AI-powered semantic code search using Voyage AI embeddings and Neo4j knowledge graph. Enabled by default.
@@ -82,6 +85,8 @@ Requires environment variables: `VOYAGE_API_KEY`, `NEO4J_URI`, `NEO4J_PASSWORD`
   - Rojo (`cargo install rojo`) - for project builds
   - Wally (`aftman install wally`) - for package management
   - Moonwave (`npm install -g moonwave`) - for documentation
+  - Lune (`aftman add lune-org/lune`) - for Luau script execution
+  - luau-lsp (`aftman add johnnymorganz/luau-lsp`) - for static type analysis
 
 ## Installation
 
@@ -170,14 +175,15 @@ mcp-roblox/
 │   ├── limits.rs            # Resource limits (search results, tree entries)
 │   ├── regex_safety.rs      # Regex DoS protection
 │   ├── mcp/
-│   │   ├── server.rs        # MCP server with 44 tool definitions
+│   │   ├── server.rs        # MCP server with 47 tool definitions
 │   │   ├── params.rs        # Tool parameter definitions with JSON Schema
 │   │   ├── instrumentation.rs  # Metrics collection wrapper
 │   │   └── tools/           # Domain-organized tool implementations
 │   │       ├── filesystem.rs   # fs_* tool implementations
 │   │       ├── studio.rs       # studio_* tool implementations
 │   │       ├── cloud.rs        # cloud_* tool implementations
-│   │       └── toolchain.rs    # stylua/rojo/wally/moonwave implementations
+│   │       ├── toolchain.rs    # stylua/rojo/wally/moonwave/lune/luau-lsp implementations
+│   │       └── ai.rs           # ai_* tool implementations
 │   ├── ai/                  # AI-powered code search (feature-gated)
 │   │   ├── config.rs           # Voyage AI and Neo4j configuration
 │   │   ├── embedder.rs         # Voyage AI embedding client
@@ -209,6 +215,8 @@ mcp-roblox/
 │   │   ├── rojo.rs          # Rojo build/sourcemap operations
 │   │   ├── wally.rs         # Wally package management
 │   │   ├── moonwave.rs      # Moonwave documentation builds
+│   │   ├── lune.rs          # Lune runtime integration
+│   │   ├── luau_lsp.rs      # luau-lsp static analysis
 │   │   └── timeout.rs       # External tool timeout protection
 │   ├── watcher/             # File change detection
 │   └── metrics/             # Tool execution metrics
@@ -222,7 +230,7 @@ mcp-roblox/
 - **Regex DoS Protection**: User-provided regex patterns are validated to prevent catastrophic backtracking
 - **API Key Protection**: Cloud API keys and AI credentials use the `secrecy` crate for automatic memory redaction
 - **Path Traversal Prevention**: All file operations validate paths to prevent directory traversal attacks
-- **Tool Timeouts**: External tools (StyLua, Selene, Rojo, Wally, Moonwave) have 30-second timeout protection
+- **Tool Timeouts**: External tools (StyLua, Selene, Rojo, Wally, Moonwave, Lune, luau-lsp) have 30-second timeout protection
 - **HTTP Authentication**: Plugin communication uses bearer token authentication
 - **Symlink Protection**: Filesystem operations reject symlinks to prevent path escapes
 
