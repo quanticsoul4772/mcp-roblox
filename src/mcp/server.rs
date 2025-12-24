@@ -174,32 +174,15 @@ impl
     >
 {
     pub fn new(bridge: Arc<PluginBridge>, project_root: PathBuf) -> Self {
-        // Initialize cloud client with explicit logging on failure
-        // Cloud tools will check availability and return clear error to users
-        // Cast to trait object for consistency with test injection
-        let cloud_client: Option<Arc<dyn CloudClient>> = match OpenCloudClient::new() {
-            Ok(client) => Some(Arc::new(client) as Arc<dyn CloudClient>),
-            Err(e) => {
-                warn!(
-                    "Open Cloud client unavailable: {}. Cloud tools (publish, assets, datastores) will be disabled.",
-                    e
-                );
-                None
-            }
-        };
+        // Initialize cloud client - REQUIRED
+        let cloud_client: Option<Arc<dyn CloudClient>> = Some(Arc::new(
+            OpenCloudClient::new().expect("ROBLOX_OPEN_CLOUD_API_KEY is required")
+        ) as Arc<dyn CloudClient>);
 
-        // Initialize file watcher with explicit logging on failure
-        // May fail on some platforms or if directory is inaccessible
-        let file_watcher = match FileWatcher::new(project_root.clone()) {
-            Ok(watcher) => Some(Arc::new(watcher)),
-            Err(e) => {
-                warn!(
-                    "File watcher unavailable: {}. Real-time change detection will be disabled.",
-                    e
-                );
-                None
-            }
-        };
+        // Initialize file watcher - REQUIRED
+        let file_watcher = Some(Arc::new(
+            FileWatcher::new(project_root.clone()).expect("File watcher initialization failed")
+        ));
 
         // Always create metrics
         let metrics = Arc::new(ServerMetrics::new());
