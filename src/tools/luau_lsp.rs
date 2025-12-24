@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn test_default_runner_default() {
-        let runner = DefaultLuauLspRunner::default();
+        let runner = DefaultLuauLspRunner;
         assert!(format!("{:?}", runner).contains("DefaultLuauLspRunner"));
     }
 
@@ -734,7 +734,7 @@ mod tests {
 
         let sourcemap = Path::new("sourcemap.json");
         let defs = [Path::new("types/roblox.d.luau")];
-        let def_refs: Vec<&Path> = defs.iter().map(|p| *p).collect();
+        let def_refs: Vec<&Path> = defs.to_vec();
 
         mock.analyze(Path::new("src/"), Some(sourcemap), &def_refs)
             .await

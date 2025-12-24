@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_default_lune_runner_default() {
-        let runner = DefaultLuneRunner::default();
+        let runner = DefaultLuneRunner;
         assert!(format!("{:?}", runner).contains("DefaultLuneRunner"));
     }
 
