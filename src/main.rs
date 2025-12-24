@@ -25,6 +25,11 @@ use crate::config::ServerConfig;
 use crate::mcp::RobloxMcpServer;
 use crate::metrics::ServerMetrics;
 
+#[cfg(feature = "ai")]
+use crate::ai::{LuauKnowledgeGraph, Neo4jConfig, VoyageConfig, VoyageEmbedder};
+#[cfg(feature = "ai")]
+use crate::http::ReqwestHttpClient;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse configuration from environment (testable logic in config module)
@@ -56,7 +61,35 @@ async fn main() -> Result<()> {
     startup::spawn_http_bridge(http_bridge, bind_addr.to_string(), auth_token);
 
     // Create MCP server with shared metrics for unified tracking
-    let server = RobloxMcpServer::new(bridge, project_root).with_shared_metrics(metrics);
+    #[allow(unused_mut)]
+    let mut server = RobloxMcpServer::new(bridge, project_root).with_shared_metrics(metrics);
+
+    // Initialize AI features if configured
+    #[cfg(feature = "ai")]
+    {
+        match (VoyageConfig::from_env(), Neo4jConfig::from_env()) {
+            (Ok(voyage_config), Ok(neo4j_config)) => {
+                info!("AI credentials found, initializing knowledge graph...");
+                let http_client = Arc::new(ReqwestHttpClient::new().expect("Failed to create HTTP client"));
+                let embedder = Arc::new(VoyageEmbedder::new(http_client, voyage_config));
+                match LuauKnowledgeGraph::new(neo4j_config, embedder).await {
+                    Ok(kg) => {
+                        info!("Knowledge graph initialized successfully");
+                        server = server.with_knowledge_graph(Arc::new(kg));
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to connect to Neo4j: {}. AI features disabled.", e);
+                    }
+                }
+            }
+            (Err(e), _) => {
+                tracing::warn!("Voyage AI not configured: {}. AI features disabled.", e);
+            }
+            (_, Err(e)) => {
+                tracing::warn!("Neo4j not configured: {}. AI features disabled.", e);
+            }
+        }
+    }
 
     // Run MCP server on STDIO (blocks main thread)
     info!("Starting MCP server on STDIO");

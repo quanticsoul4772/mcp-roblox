@@ -8,7 +8,7 @@ description = "High-performance Rust MCP server for Roblox Studio with fast-fail
 license = "MIT OR Apache-2.0"
 
 [features]
-default = []
+default = ["ai"]
 ai = ["dep:neo4rs", "dep:sha2", "dep:hex"]
 
 [dependencies]

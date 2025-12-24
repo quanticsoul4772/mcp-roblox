@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,9 +9,6 @@ use rmcp::{
 
 #[cfg(test)]
 use rmcp::model::RawContent;
-use serde_json::json;
-use tokio::fs;
-use walkdir::WalkDir;
 
 use tracing::warn;
 #[cfg(feature = "ai")]
@@ -20,11 +16,8 @@ use tracing::info;
 
 use crate::bridge::http::PluginBridge;
 use crate::bridge::StudioBridge;
-use crate::cloud::AssetType;
 use crate::cloud::CloudClient;
 use crate::cloud::OpenCloudClient;
-use crate::cloud::OrderedDataStoreListParams;
-use crate::limits::{MAX_FILE_ENTRIES, MAX_SEARCH_RESULTS, MAX_TREE_ENTRIES};
 use crate::mcp::instrumentation::InstrumentedCall;
 use crate::mcp::params::{
     // AI params
@@ -78,9 +71,16 @@ use crate::mcp::params::{
 // AI module imports (feature-gated)
 #[cfg(feature = "ai")]
 use crate::ai::{AutoIndexer, AutoIndexerConfig, AutoIndexerHandle, KnowledgeGraph};
+#[cfg(feature = "ai")]
+use crate::tools::filesystem::validate_path;
+#[cfg(feature = "ai")]
+use serde_json::json;
+#[cfg(feature = "ai")]
+use tokio::fs;
+#[cfg(feature = "ai")]
+use walkdir::WalkDir;
+
 use crate::metrics::ServerMetrics;
-use crate::regex_safety::validate_regex_safety;
-use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
 use crate::tools::formatting::{Formatter, StyLuaFormatter};
 use crate::tools::linting::{Linter, SeleneLinter};
 use crate::tools::moonwave::{DefaultMoonwaveRunner, MoonwaveRunner};
@@ -142,28 +142,28 @@ pub struct RobloxMcpServer<
     M: MoonwaveRunner + Clone = DefaultMoonwaveRunner,
 > {
     tool_router: ToolRouter<Self>,
-    bridge: Arc<B>,
-    project_root: PathBuf,
+    pub(crate) bridge: Arc<B>,
+    pub(crate) project_root: PathBuf,
     /// Open Cloud client for CI/CD operations (optional - only if API key configured)
     /// Uses trait object for testability with MockCloudClient
-    cloud_client: Option<Arc<dyn CloudClient>>,
+    pub(crate) cloud_client: Option<Arc<dyn CloudClient>>,
     /// File watcher for real-time change detection (optional - may fail on some platforms)
-    file_watcher: Option<Arc<FileWatcher>>,
+    pub(crate) file_watcher: Option<Arc<FileWatcher>>,
     /// Server metrics for monitoring
-    metrics: Arc<ServerMetrics>,
+    pub(crate) metrics: Arc<ServerMetrics>,
     /// Linter for Luau script analysis
-    linter: L,
+    pub(crate) linter: L,
     /// Formatter for Luau code formatting
-    formatter: F,
+    pub(crate) formatter: F,
     /// Rojo runner for project builds
-    rojo: R,
+    pub(crate) rojo: R,
     /// Wally runner for package management
-    wally: W,
+    pub(crate) wally: W,
     /// Moonwave runner for documentation generation
-    moonwave: M,
+    pub(crate) moonwave: M,
     /// Knowledge graph for AI-powered code search (optional - requires 'ai' feature)
     #[cfg(feature = "ai")]
-    knowledge_graph: Option<Arc<dyn KnowledgeGraph>>,
+    pub(crate) knowledge_graph: Option<Arc<dyn KnowledgeGraph>>,
     /// Auto-indexer handle for background indexing (optional - requires file_watcher + knowledge_graph)
     /// Wrapped in Arc<Mutex<>> to allow Clone (handles are shared between clones)
     #[cfg(feature = "ai")]
@@ -451,7 +451,7 @@ impl<
     /// # Errors
     /// Returns `ErrorData::internal_error` if AI features are not configured.
     #[cfg(feature = "ai")]
-    fn kg(&self) -> Result<&Arc<dyn KnowledgeGraph>, ErrorData> {
+    pub(crate) fn kg(&self) -> Result<&Arc<dyn KnowledgeGraph>, ErrorData> {
         self.knowledge_graph.as_ref().ok_or_else(|| {
             ErrorData::internal_error(
                 "Knowledge graph not configured: AI features require Neo4j and Voyage AI credentials"
@@ -524,7 +524,7 @@ impl<
     }
 
     /// Start instrumentation for a tool call
-    fn start_instrumentation(&self, tool_name: &str) -> InstrumentedCall {
+    pub(crate) fn start_instrumentation(&self, tool_name: &str) -> InstrumentedCall {
         InstrumentedCall::start(self.metrics.clone(), tool_name)
     }
 
@@ -535,7 +535,7 @@ impl<
     ///
     /// # Errors
     /// Returns `ErrorData::internal_error` if `ROBLOX_OPEN_CLOUD_API_KEY` was not set.
-    fn cloud(&self) -> Result<&Arc<dyn CloudClient>, ErrorData> {
+    pub(crate) fn cloud(&self) -> Result<&Arc<dyn CloudClient>, ErrorData> {
         self.cloud_client.as_ref().ok_or_else(|| {
             ErrorData::internal_error(
                 "Open Cloud not configured: ROBLOX_OPEN_CLOUD_API_KEY environment variable not set"
@@ -571,48 +571,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn fs_get_tree_impl(&self, params: FsGetTreeParams) -> Result<CallToolResult, ErrorData> {
-        let path = PathBuf::from(&params.path);
-
-        // Validate path is within project root
-        let validated_path = validate_path(&path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // max_depth is optional with documented default - this is acceptable
-        let max_depth = params.max_depth.unwrap_or(5);
-
-        // build_tree now returns TreeBuildResult with both tree and skipped entries
-        let result = build_tree(&validated_path, 0, max_depth)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Return both tree AND skipped entries so caller knows what was excluded
-        let mut response = json!({
-            "tree": result.tree,
-            "skipped": result.skipped,
-            "skipped_count": result.skipped.len()
-        });
-
-        // Add truncation metadata if limit was hit
-        if result.truncated {
-            response["truncated"] = json!(true);
-            response["limit"] = json!(MAX_TREE_ENTRIES);
-            if let Some(total) = result.total_entries {
-                response["total_entries"] = json!(total);
-            }
-            response["message"] = json!(format!(
-                "Tree truncated at {} entries. Use max_depth parameter or more specific path.",
-                MAX_TREE_ENTRIES
-            ));
-        }
-
-        // Use compact JSON for large tree responses (up to 10,000 entries)
-        let json = serde_json::to_string(&response)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(json)]))
-    }
-
     #[tool(description = "Read a Luau script file. Only .luau files are supported.")]
     async fn fs_read_script(
         &self,
@@ -621,34 +579,6 @@ impl<
         let call = self.start_instrumentation("fs_read_script");
         let result = self.fs_read_script_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn fs_read_script_impl(
-        &self,
-        params: FsReadScriptParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let path = PathBuf::from(&params.file_path);
-
-        // Validate .luau extension
-        if path.extension() != Some(std::ffi::OsStr::new("luau")) {
-            return Err(ErrorData::invalid_params(
-                "Only .luau files are supported",
-                None,
-            ));
-        }
-
-        // Validate path is within project root
-        let validated_path = validate_path(&path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let script_content = read_script(&validated_path)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let json = serde_json::to_string_pretty(&script_content)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
     #[tool(
@@ -663,69 +593,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn fs_write_script_impl(
-        &self,
-        params: FsWriteScriptParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let path = PathBuf::from(&params.file_path);
-
-        // For new files, validate the parent directory is within project root
-        let parent = path.parent().ok_or_else(|| {
-            ErrorData::internal_error("Invalid file path: no parent directory".to_string(), None)
-        })?;
-
-        // Check if parent exists or if we're allowed to create it
-        let create_dirs = params.create_directories.unwrap_or(false);
-
-        if !parent.exists() && !create_dirs {
-            return Err(ErrorData::internal_error(
-                format!(
-                    "Parent directory does not exist: {}. Set create_directories=true to create it.",
-                    parent.display()
-                ),
-                None,
-            ));
-        }
-
-        // If parent exists, validate it's within project root
-        if parent.exists() {
-            validate_path(parent, &self.project_root)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        } else {
-            // Validate that the target would be within project root
-            // by checking if the path starts with project_root
-            let abs_path = if path.is_absolute() {
-                path.clone()
-            } else {
-                self.project_root.join(&path)
-            };
-
-            if !abs_path.starts_with(&self.project_root) {
-                return Err(ErrorData::internal_error(
-                    format!("Path traversal detected: {}", abs_path.display()),
-                    None,
-                ));
-            }
-        }
-
-        // Validate .luau extension
-        if path.extension() != Some(std::ffi::OsStr::new("luau")) {
-            return Err(ErrorData::internal_error(
-                "Only .luau files are supported".to_string(),
-                None,
-            ));
-        }
-
-        let write_result = write_script(&path, &params.content, create_dirs)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let json = serde_json::to_string_pretty(&write_result)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(json)]))
-    }
-
     #[tool(description = "Delete a Luau script file. Only .luau files can be deleted.")]
     async fn fs_delete_script(
         &self,
@@ -734,45 +601,6 @@ impl<
         let call = self.start_instrumentation("fs_delete_script");
         let result = self.fs_delete_script_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn fs_delete_script_impl(
-        &self,
-        params: FsDeleteScriptParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let path = PathBuf::from(&params.file_path);
-
-        // Validate path is within project root
-        let validated_path = validate_path(&path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Validate .luau extension
-        if validated_path.extension() != Some(std::ffi::OsStr::new("luau")) {
-            return Err(ErrorData::internal_error(
-                "Only .luau files can be deleted".to_string(),
-                None,
-            ));
-        }
-
-        // Check file exists
-        if !validated_path.exists() {
-            return Err(ErrorData::internal_error(
-                format!("File not found: {}", validated_path.display()),
-                None,
-            ));
-        }
-
-        fs::remove_file(&validated_path)
-            .await
-            .map_err(|e| ErrorData::internal_error(format!("Failed to delete file: {e}"), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            json!({
-                "deleted": validated_path.display().to_string(),
-                "success": true
-            })
-            .to_string(),
-        )]))
     }
 
     #[tool(
@@ -787,124 +615,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn fs_search_content_impl(
-        &self,
-        params: FsSearchContentParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let path = PathBuf::from(&params.path);
-
-        // Validate path is within project root
-        let validated_path = validate_path(&path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Validate and compile regex pattern with DoS protection
-        // This prevents catastrophic backtracking attacks via malicious patterns
-        let regex = validate_regex_safety(&params.pattern)
-            .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
-
-        // Extension is REQUIRED (enforced by schema) - clone for move into closure
-        let extension = params.extension.clone();
-
-        // Move entire traversal to blocking thread pool to avoid blocking async runtime
-        let (results, errors, truncated) = tokio::task::spawn_blocking(move || {
-            let mut results: Vec<serde_json::Value> = Vec::new();
-            let mut errors: Vec<serde_json::Value> = Vec::new();
-            let mut truncated = false;
-
-            // Walk directory and search files - REPORT ALL ERRORS
-            'outer: for entry in WalkDir::new(&validated_path).into_iter() {
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(e) => {
-                        errors.push(json!({
-                            "type": "enumeration_error",
-                            "path": e.path().map(|p| p.display().to_string()),
-                            "error": e.to_string()
-                        }));
-                        continue;
-                    }
-                };
-
-                let entry_path = entry.path();
-
-                // Skip directories
-                if entry_path.is_dir() {
-                    continue;
-                }
-
-                // Check extension
-                if entry_path.extension() != Some(std::ffi::OsStr::new(&extension)) {
-                    continue;
-                }
-
-                // Skip hidden files - but REPORT that we're skipping
-                if let Some(name) = entry_path.file_name() {
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with('.') {
-                        errors.push(json!({
-                            "type": "skipped_hidden",
-                            "path": entry_path.display().to_string()
-                        }));
-                        continue;
-                    }
-                }
-
-                // Read and search file - use std::fs (NOT tokio::fs) inside spawn_blocking
-                let content = match std::fs::read_to_string(entry_path) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        errors.push(json!({
-                            "type": "read_error",
-                            "path": entry_path.display().to_string(),
-                            "error": e.to_string()
-                        }));
-                        continue;
-                    }
-                };
-
-                for (line_num, line) in content.lines().enumerate() {
-                    if regex.is_match(line) {
-                        // Check limit before adding result
-                        if results.len() >= MAX_SEARCH_RESULTS {
-                            truncated = true;
-                            break 'outer;
-                        }
-                        results.push(json!({
-                            "file": entry_path.display().to_string(),
-                            "line": line_num + 1,
-                            "content": line.trim()
-                        }));
-                    }
-                }
-            }
-
-            (results, errors, truncated)
-        })
-        .await
-        .map_err(|e| ErrorData::internal_error(format!("Task join error: {e}"), None))?;
-
-        // Build response with truncation metadata if needed
-        let mut response = json!({
-            "matches": results.len(),
-            "results": results,
-            "errors": errors,
-            "error_count": errors.len()
-        });
-
-        if truncated {
-            response["truncated"] = json!(true);
-            response["limit"] = json!(MAX_SEARCH_RESULTS);
-            response["message"] = json!(format!(
-                "Results truncated at {} matches. Refine your search pattern for more specific results.",
-                MAX_SEARCH_RESULTS
-            ));
-        }
-
-        Ok(CallToolResult::success(vec![Content::text(
-            response.to_string(),
-        )]))
-    }
-
     #[tool(
         description = "Get file modification times for change detection. Returns a map of file paths to modification timestamps."
     )]
@@ -917,133 +627,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn fs_get_changes_impl(
-        &self,
-        params: FsGetChangesParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let path = PathBuf::from(&params.path);
-
-        // Validate path is within project root
-        let validated_path = validate_path(&path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Move entire traversal to blocking thread pool to avoid blocking async runtime
-        let (mtimes, errors, truncated) = tokio::task::spawn_blocking(move || {
-            let mut mtimes: HashMap<String, u64> = HashMap::new();
-            let mut errors: Vec<serde_json::Value> = Vec::new();
-            let mut truncated = false;
-
-            // Walk directory and collect mtimes - REPORT ALL ERRORS
-            for entry in WalkDir::new(&validated_path).into_iter() {
-                // Check limit before processing
-                if mtimes.len() >= MAX_FILE_ENTRIES {
-                    truncated = true;
-                    break;
-                }
-
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(e) => {
-                        errors.push(json!({
-                            "type": "enumeration_error",
-                            "path": e.path().map(|p| p.display().to_string()),
-                            "error": e.to_string()
-                        }));
-                        continue;
-                    }
-                };
-
-                let entry_path = entry.path();
-
-                // Skip directories
-                if entry_path.is_dir() {
-                    continue;
-                }
-
-                // Only track .luau files
-                if entry_path.extension() != Some(std::ffi::OsStr::new("luau")) {
-                    continue;
-                }
-
-                // Skip hidden files - but REPORT
-                if let Some(name) = entry_path.file_name() {
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with('.') {
-                        errors.push(json!({
-                            "type": "skipped_hidden",
-                            "path": entry_path.display().to_string()
-                        }));
-                        continue;
-                    }
-                }
-
-                // Get modification time - use std::fs::metadata (already was, now explicit)
-                let metadata = match std::fs::metadata(entry_path) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        errors.push(json!({
-                            "type": "metadata_error",
-                            "path": entry_path.display().to_string(),
-                            "error": e.to_string()
-                        }));
-                        continue;
-                    }
-                };
-
-                let modified = match metadata.modified() {
-                    Ok(m) => m,
-                    Err(e) => {
-                        errors.push(json!({
-                            "type": "modified_time_error",
-                            "path": entry_path.display().to_string(),
-                            "error": e.to_string()
-                        }));
-                        continue;
-                    }
-                };
-
-                let duration = match modified.duration_since(std::time::UNIX_EPOCH) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        errors.push(json!({
-                            "type": "timestamp_error",
-                            "path": entry_path.display().to_string(),
-                            "error": e.to_string()
-                        }));
-                        continue;
-                    }
-                };
-
-                mtimes.insert(entry_path.display().to_string(), duration.as_secs());
-            }
-
-            (mtimes, errors, truncated)
-        })
-        .await
-        .map_err(|e| ErrorData::internal_error(format!("Task join error: {e}"), None))?;
-
-        // Build response with truncation metadata if needed
-        let mut response = json!({
-            "file_count": mtimes.len(),
-            "files": mtimes,
-            "errors": errors,
-            "error_count": errors.len()
-        });
-
-        if truncated {
-            response["truncated"] = json!(true);
-            response["limit"] = json!(MAX_FILE_ENTRIES);
-            response["message"] = json!(format!(
-                "File list truncated at {} entries. Consider using a more specific path.",
-                MAX_FILE_ENTRIES
-            ));
-        }
-
-        Ok(CallToolResult::success(vec![Content::text(
-            response.to_string(),
-        )]))
-    }
-
     #[tool(
         description = "Run Selene linter on a Luau script file. Returns diagnostics with errors and warnings. Requires 'selene' to be installed (cargo install selene)."
     )]
@@ -1054,39 +637,6 @@ impl<
         let call = self.start_instrumentation("fs_lint_script");
         let result = self.fs_lint_script_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn fs_lint_script_impl(
-        &self,
-        params: FsLintScriptParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let path = PathBuf::from(&params.file_path);
-
-        // Validate path is within project root
-        let validated_path = validate_path(&path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Validate .luau extension
-        if validated_path.extension() != Some(std::ffi::OsStr::new("luau")) {
-            return Err(ErrorData::internal_error(
-                "Only .luau files can be linted".to_string(),
-                None,
-            ));
-        }
-
-        let config_path = params.config_path.map(PathBuf::from);
-
-        // Use injected linter for testability
-        let result = self
-            .linter
-            .lint(&validated_path, config_path.as_deref())
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     // === STUDIO TOOLS (9) ===
@@ -1102,37 +652,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn studio_health_check_impl(&self) -> Result<CallToolResult, ErrorData> {
-        let connected = self.bridge.is_connected().await;
-
-        // Record connection status in metrics
-        self.metrics.record_connection_status(connected);
-
-        // Get connection metrics snapshot for detailed stats
-        let connection_stats = self.metrics.connection_snapshot();
-
-        let result = json!({
-            "connected": connected,
-            "message": if connected {
-                "Studio plugin is connected and responsive"
-            } else {
-                "Studio plugin is not connected or heartbeat timed out"
-            },
-            "stats": connection_stats
-        });
-
-        // Use the raw CallToolResult to set is_error based on connection status
-        let call_result = CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]);
-
-        Ok(CallToolResult {
-            is_error: Some(!connected),
-            ..call_result
-        })
-    }
-
     #[tool(
         description = "Get currently selected instances in Roblox Studio. Returns array of selected instances with Name, ClassName, and Path."
     )]
@@ -1140,19 +659,6 @@ impl<
         let call = self.start_instrumentation("studio_get_selection");
         let result = self.studio_get_selection_impl().await;
         call.finish_with(result).await
-    }
-
-    async fn studio_get_selection_impl(&self) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command("getSelection", json!({}))
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -1167,26 +673,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn studio_get_datamodel_impl(
-        &self,
-        params: StudioGetDataModelParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command(
-                "getDataModel",
-                json!({ "maxDepth": params.max_depth.unwrap_or(3) }),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Use compact JSON for large DataModel hierarchies
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Get DataModel with pagination to avoid context overflow for large hierarchies. Returns instances with a cursor for continuation."
     )]
@@ -1197,35 +683,6 @@ impl<
         let call = self.start_instrumentation("studio_get_datamodel_paginated");
         let result = self.studio_get_datamodel_paginated_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn studio_get_datamodel_paginated_impl(
-        &self,
-        params: StudioGetDataModelPaginatedParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let max_depth = params.max_depth.unwrap_or(3);
-        let limit = params.limit.unwrap_or(500).min(1000);
-        let start_path = params.start_path.unwrap_or_else(|| "game".to_string());
-
-        let result = self
-            .bridge
-            .execute_command(
-                "getDataModelPaginated",
-                json!({
-                    "startPath": start_path,
-                    "maxDepth": max_depth,
-                    "limit": limit,
-                    "cursor": params.cursor,
-                }),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Use compact JSON for paginated DataModel responses
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -1240,22 +697,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn studio_get_script_source_impl(
-        &self,
-        params: StudioGetScriptSourceParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command("getScriptSource", json!({ "path": params.path }))
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Read properties from any instance in Studio. Returns the specified properties or common properties for the class if none specified."
     )]
@@ -1266,28 +707,6 @@ impl<
         let call = self.start_instrumentation("studio_get_properties");
         let result = self.studio_get_properties_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn studio_get_properties_impl(
-        &self,
-        params: StudioGetPropertiesParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command(
-                "getProperties",
-                json!({
-                    "path": params.path,
-                    "properties": params.properties
-                }),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -1302,22 +721,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn studio_get_bounds_impl(
-        &self,
-        params: StudioGetBoundsParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command("getBounds", json!({ "path": params.path }))
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Modify script source in Studio with undo support. Creates a waypoint for undo/redo functionality."
     )]
@@ -1328,29 +731,6 @@ impl<
         let call = self.start_instrumentation("studio_modify_script");
         let result = self.studio_modify_script_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn studio_modify_script_impl(
-        &self,
-        params: StudioModifyScriptParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command(
-                "modifyScript",
-                json!({
-                    "path": params.path,
-                    "newSource": params.new_source,
-                    "recordUndo": params.record_undo.unwrap_or(true)
-                }),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -1365,31 +745,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn studio_create_instance_impl(
-        &self,
-        params: StudioCreateInstanceParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command(
-                "createInstance",
-                json!({
-                    "className": params.class_name,
-                    "parent": params.parent,
-                    "name": params.name,
-                    "properties": params.properties,
-                    "recordUndo": params.record_undo.unwrap_or(true)
-                }),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Insert a complete R15 humanoid rig with proper Motor6D joints. Creates a fully-functional R15 character model with Humanoid and Animator ready for animation."
     )]
@@ -1400,29 +755,6 @@ impl<
         let call = self.start_instrumentation("studio_insert_r15_rig");
         let result = self.studio_insert_r15_rig_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn studio_insert_r15_rig_impl(
-        &self,
-        params: StudioInsertR15RigParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command(
-                "insertR15Rig",
-                json!({
-                    "parent": params.parent,
-                    "name": params.name,
-                    "recordUndo": params.record_undo.unwrap_or(true)
-                }),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -1437,30 +769,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn studio_set_property_impl(
-        &self,
-        params: StudioSetPropertyParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command(
-                "setProperty",
-                json!({
-                    "path": params.path,
-                    "property": params.property,
-                    "value": params.value,
-                    "recordUndo": params.record_undo.unwrap_or(true)
-                }),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(description = "Delete an instance from Studio. Creates an undo waypoint for recovery.")]
     async fn studio_delete_instance(
         &self,
@@ -1469,28 +777,6 @@ impl<
         let call = self.start_instrumentation("studio_delete_instance");
         let result = self.studio_delete_instance_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn studio_delete_instance_impl(
-        &self,
-        params: StudioDeleteInstanceParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command(
-                "deleteInstance",
-                json!({
-                    "path": params.path,
-                    "recordUndo": params.record_undo.unwrap_or(true)
-                }),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -1505,29 +791,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn studio_find_instances_impl(
-        &self,
-        params: StudioFindInstancesParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = self
-            .bridge
-            .execute_command(
-                "findInstances",
-                json!({
-                    "className": params.class_name,
-                    "root": params.root
-                }),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Use compact JSON for potentially large instance lists
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Get recent Output window logs from Roblox Studio. Returns log entries with message, type, and timestamp."
     )]
@@ -1538,25 +801,6 @@ impl<
         let call = self.start_instrumentation("studio_get_output");
         let result = self.studio_get_output_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn studio_get_output_impl(
-        &self,
-        params: StudioGetOutputParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let limit = params.limit.unwrap_or(100);
-
-        let result = self
-            .bridge
-            .execute_command("getOutput", json!({ "limit": limit }))
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Use compact JSON for log output (many entries)
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     // === CLOUD TOOLS (3) ===
@@ -1575,29 +819,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn cloud_publish_place_impl(
-        &self,
-        params: CloudPublishPlaceParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        let path = PathBuf::from(&params.rbxl_path);
-        let result = client
-            .publish_place(params.universe_id, params.place_id, &path)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "success": true,
-                "version_number": result.version_number,
-                "universe_id": params.universe_id,
-                "place_id": params.place_id
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Upload an asset (image, model, or audio) to Roblox via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
     )]
@@ -1608,38 +829,6 @@ impl<
         let call = self.start_instrumentation("cloud_upload_asset");
         let result = self.cloud_upload_asset_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn cloud_upload_asset_impl(
-        &self,
-        params: CloudUploadAssetParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        // Parse asset type
-        let asset_type = AssetType::from_str(&params.asset_type)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let path = PathBuf::from(&params.file_path);
-        let result = client
-            .upload_asset(
-                asset_type,
-                &path,
-                &params.name,
-                &params.description,
-                params.creator_id,
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "success": true,
-                "operation_path": result.path,
-                "done": result.done
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -1654,33 +843,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn cloud_datastore_get_impl(
-        &self,
-        params: CloudDatastoreGetParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        let result = client
-            .datastore_get(
-                params.universe_id,
-                &params.datastore_name,
-                &params.key,
-                params.scope.as_deref(),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "value": result.value,
-                "version": result.version,
-                "created_time": result.created_time,
-                "updated_time": result.updated_time
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Set a value in a Roblox DataStore via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
     )]
@@ -1693,35 +855,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn cloud_datastore_set_impl(
-        &self,
-        params: CloudDatastoreSetParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        let result = client
-            .datastore_set(
-                params.universe_id,
-                &params.datastore_name,
-                &params.key,
-                params.value.clone(),
-                params.scope.as_deref(),
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "success": true,
-                "value": result.value,
-                "version": result.version,
-                "created_time": result.created_time,
-                "updated_time": result.updated_time
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Publish a message to a Roblox MessagingService topic via Open Cloud API. Messages are delivered to all servers subscribed to the topic. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
     )]
@@ -1732,32 +865,6 @@ impl<
         let call = self.start_instrumentation("cloud_messaging_publish");
         let result = self.cloud_messaging_publish_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn cloud_messaging_publish_impl(
-        &self,
-        params: CloudMessagingPublishParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        client
-            .messaging_publish(params.universe_id, &params.topic, params.message.clone())
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "success": true,
-                "topic": params.topic,
-                "universe_id": params.universe_id,
-                "message_preview": if params.message.to_string().len() > 100 {
-                    format!("{}...", &params.message.to_string()[..100])
-                } else {
-                    params.message.to_string()
-                }
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     // === PHASE 1: ORDERED DATASTORE TOOLS (4) ===
@@ -1775,35 +882,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn cloud_ordered_datastore_list_impl(
-        &self,
-        params: CloudOrderedDatastoreListParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        let result = client
-            .ordered_datastore_list(OrderedDataStoreListParams {
-                universe_id: params.universe_id,
-                datastore_name: &params.datastore_name,
-                scope: params.scope.as_deref(),
-                max_page_size: params.max_page_size,
-                page_token: params.page_token.as_deref(),
-                order_by: params.order_by.as_deref(),
-                filter: params.filter.as_deref(),
-            })
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Use compact JSON for leaderboard entries (potentially many entries)
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&json!({
-                "entries": result.entries,
-                "next_page_token": result.next_page_token
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Set a value in an OrderedDataStore via Open Cloud API. Creates or updates an entry with the specified key and numerical value. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
     )]
@@ -1814,33 +892,6 @@ impl<
         let call = self.start_instrumentation("cloud_ordered_datastore_set");
         let result = self.cloud_ordered_datastore_set_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn cloud_ordered_datastore_set_impl(
-        &self,
-        params: CloudOrderedDatastoreSetParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        let result = client
-            .ordered_datastore_set(
-                params.universe_id,
-                &params.datastore_name,
-                params.scope.as_deref(),
-                &params.entry_id,
-                params.value,
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "path": result.path,
-                "id": result.id,
-                "value": result.value
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -1855,33 +906,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn cloud_ordered_datastore_increment_impl(
-        &self,
-        params: CloudOrderedDatastoreIncrementParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        let result = client
-            .ordered_datastore_increment(
-                params.universe_id,
-                &params.datastore_name,
-                params.scope.as_deref(),
-                &params.entry_id,
-                params.increment,
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "path": result.path,
-                "id": result.id,
-                "value": result.value
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Delete an entry from an OrderedDataStore via Open Cloud API. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
     )]
@@ -1892,31 +916,6 @@ impl<
         let call = self.start_instrumentation("cloud_ordered_datastore_delete");
         let result = self.cloud_ordered_datastore_delete_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn cloud_ordered_datastore_delete_impl(
-        &self,
-        params: CloudOrderedDatastoreDeleteParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        client
-            .ordered_datastore_delete(
-                params.universe_id,
-                &params.datastore_name,
-                params.scope.as_deref(),
-                &params.entry_id,
-            )
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "success": true,
-                "deleted_entry_id": params.entry_id
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     // === PHASE 1: UNIVERSE TOOLS (2) ===
@@ -1934,41 +933,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn cloud_get_universe_impl(
-        &self,
-        params: CloudGetUniverseParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        let info = client
-            .get_universe(params.universe_id)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "path": info.path,
-                "display_name": info.display_name,
-                "description": info.description,
-                "create_time": info.create_time,
-                "update_time": info.update_time,
-                "visibility": info.visibility,
-                "user": info.user,
-                "group": info.group,
-                "voice_chat_enabled": info.voice_chat_enabled,
-                "age_rating": info.age_rating,
-                "platforms": {
-                    "desktop": info.desktop_enabled,
-                    "mobile": info.mobile_enabled,
-                    "tablet": info.tablet_enabled,
-                    "vr": info.vr_enabled,
-                    "console": info.console_enabled
-                }
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Restart all game servers for a Roblox universe via Open Cloud API. Triggers a graceful restart - players will be disconnected and can rejoin. Requires ROBLOX_OPEN_CLOUD_API_KEY environment variable."
     )]
@@ -1979,27 +943,6 @@ impl<
         let call = self.start_instrumentation("cloud_restart_servers");
         let result = self.cloud_restart_servers_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn cloud_restart_servers_impl(
-        &self,
-        params: CloudRestartServersParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let client = self.cloud()?;
-
-        client
-            .restart_universe_servers(params.universe_id)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json!({
-                "success": true,
-                "universe_id": params.universe_id,
-                "message": "Server restart initiated. All servers will gracefully restart."
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     // === WATCHER TOOLS (1) ===
@@ -2015,32 +958,6 @@ impl<
         let call = self.start_instrumentation("fs_watch_changes");
         let result = self.fs_watch_changes_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn fs_watch_changes_impl(
-        &self,
-        params: FsWatchChangesParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        let watcher = self.file_watcher.as_ref().ok_or_else(|| {
-            ErrorData::internal_error(
-                "File watcher not available on this platform".to_string(),
-                None,
-            )
-        })?;
-
-        let limit = params.limit.unwrap_or(100);
-        let changes = watcher.poll_changes(limit).await;
-        let pending = watcher.pending_count().await;
-
-        // Use compact JSON for file change events
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&json!({
-                "changes": changes,
-                "returned_count": changes.len(),
-                "pending_count": pending
-            }))
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     // === TOOLCHAIN TOOLS (6) ===
@@ -2059,45 +976,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn stylua_format_impl(
-        &self,
-        params: StyluaFormatParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        use std::path::Path;
-
-        let file_path = Path::new(&params.file_path);
-
-        // Validate path is within project root
-        let validated_path = validate_path(file_path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Validate .luau extension
-        if validated_path.extension() != Some(std::ffi::OsStr::new("luau")) {
-            return Err(ErrorData::invalid_params(
-                "Only .luau files can be formatted",
-                None,
-            ));
-        }
-
-        // Parse config path
-        let config_path = params.config_path.as_ref().map(Path::new);
-
-        // Default check_only to false
-        let check_only = params.check_only.unwrap_or(false);
-
-        // Run the formatter
-        let result = self
-            .formatter
-            .format(&validated_path, config_path, check_only)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Build a Roblox project using Rojo. Requires 'rojo' to be installed. Generates .rbxl/.rbxlx or .rbxm/.rbxmx output files."
     )]
@@ -2108,33 +986,6 @@ impl<
         let call = self.start_instrumentation("rojo_build");
         let result = self.rojo_build_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn rojo_build_impl(&self, params: RojoBuildParams) -> Result<CallToolResult, ErrorData> {
-        use std::path::Path;
-
-        let project_path = Path::new(&params.project_path);
-        let output_path = Path::new(&params.output_path);
-
-        // Validate project path is within project root
-        let validated_project = validate_path(project_path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Validate output path is within project root
-        let validated_output = validate_path(output_path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Run rojo build
-        let result = self
-            .rojo
-            .build(&validated_project, &validated_output)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -2149,38 +1000,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn rojo_sourcemap_impl(
-        &self,
-        params: RojoSourcemapParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        use std::path::Path;
-
-        let project_path = Path::new(&params.project_path);
-
-        // Validate project path is within project root
-        let validated_project = validate_path(project_path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Parse optional output path
-        let output_path = params
-            .output_path
-            .as_ref()
-            .map(|p| Path::new(p).to_path_buf());
-
-        // Run rojo sourcemap
-        let result = self
-            .rojo
-            .sourcemap(&validated_project, output_path.as_deref())
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Use compact JSON for large sourcemap output
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Install packages from wally.toml. Requires 'wally' to be installed (aftman install UpliftGames/wally)."
     )]
@@ -2191,31 +1010,6 @@ impl<
         let call = self.start_instrumentation("wally_install");
         let result = self.wally_install_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn wally_install_impl(
-        &self,
-        params: WallyInstallParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        use std::path::Path;
-
-        let project_path = Path::new(&params.project_path);
-
-        // Validate project path is within project root
-        let validated_project = validate_path(project_path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Run wally install
-        let result = self
-            .wally
-            .install(&validated_project)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     #[tool(
@@ -2230,31 +1024,6 @@ impl<
         call.finish_with(result).await
     }
 
-    async fn wally_update_impl(
-        &self,
-        params: WallyUpdateParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        use std::path::Path;
-
-        let project_path = Path::new(&params.project_path);
-
-        // Validate project path is within project root
-        let validated_project = validate_path(project_path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Run wally update
-        let result = self
-            .wally
-            .update(&validated_project)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
-    }
-
     #[tool(
         description = "Build Moonwave documentation from source files. Requires 'moonwave' to be installed (npm install -g moonwave)."
     )]
@@ -2265,34 +1034,6 @@ impl<
         let call = self.start_instrumentation("moonwave_build");
         let result = self.moonwave_build_impl(params).await;
         call.finish_with(result).await
-    }
-
-    async fn moonwave_build_impl(
-        &self,
-        params: MoonwaveBuildParams,
-    ) -> Result<CallToolResult, ErrorData> {
-        use std::path::Path;
-
-        let project_path = Path::new(&params.project_path);
-
-        // Validate project path is within project root
-        let validated_project = validate_path(project_path, &self.project_root)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        // Parse optional output directory
-        let output_dir = params.output_dir.as_ref().map(Path::new);
-
-        // Run moonwave build
-        let result = self
-            .moonwave
-            .build(&validated_project, output_dir)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
-        )]))
     }
 
     // === METRICS TOOLS (1) ===
