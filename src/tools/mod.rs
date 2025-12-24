@@ -1,6 +1,7 @@
 pub mod filesystem;
 pub mod formatting;
 pub mod linting;
+pub mod lune;
 pub mod moonwave;
 pub mod rojo;
 pub mod timeout;

@@ -30,11 +30,12 @@ use crate::regex_safety::validate_regex_safety;
 use crate::tools::filesystem::{build_tree, read_script, validate_path, write_script};
 use crate::tools::formatting::Formatter;
 use crate::tools::linting::Linter;
+use crate::tools::lune::LuneRunner;
 use crate::tools::moonwave::MoonwaveRunner;
 use crate::tools::rojo::RojoRunner;
 use crate::tools::wally::WallyRunner;
 
-impl<B, L, F, R, W, M> RobloxMcpServer<B, L, F, R, W, M>
+impl<B, L, F, R, W, M, LN> RobloxMcpServer<B, L, F, R, W, M, LN>
 where
     B: StudioBridge + Clone + 'static,
     L: Linter + Clone + 'static,
@@ -42,6 +43,7 @@ where
     R: RojoRunner + Clone + 'static,
     W: WallyRunner + Clone + 'static,
     M: MoonwaveRunner + Clone + 'static,
+    LN: LuneRunner + Clone + 'static,
 {
     // =========================================================================
     // fs_get_tree - List project file structure with depth limits

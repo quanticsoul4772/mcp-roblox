@@ -1,32 +1,36 @@
 //! Toolchain tool implementations.
 //!
-//! Provides 6 tools for external Luau development tool integration:
+//! Provides 8 tools for external Luau development tool integration:
 //! - `stylua_format` - Format Luau scripts using StyLua
 //! - `rojo_build` - Build Roblox project using Rojo
 //! - `rojo_sourcemap` - Generate Rojo sourcemap
 //! - `wally_install` - Install Wally packages
 //! - `wally_update` - Update Wally packages
 //! - `moonwave_build` - Build Moonwave documentation
+//! - `lune_run` - Run Luau scripts using Lune runtime
+//! - `lune_eval` - Evaluate inline Luau code using Lune
 
 use std::path::Path;
+use std::time::Duration;
 
 use rmcp::model::{CallToolResult, Content};
 use rmcp::ErrorData;
 
 use crate::bridge::StudioBridge;
 use crate::mcp::params::{
-    MoonwaveBuildParams, RojoBuildParams, RojoSourcemapParams, StyluaFormatParams,
-    WallyInstallParams, WallyUpdateParams,
+    LuneEvalParams, LuneRunParams, MoonwaveBuildParams, RojoBuildParams, RojoSourcemapParams,
+    StyluaFormatParams, WallyInstallParams, WallyUpdateParams,
 };
 use crate::mcp::server::RobloxMcpServer;
 use crate::tools::filesystem::validate_path;
 use crate::tools::formatting::Formatter;
 use crate::tools::linting::Linter;
+use crate::tools::lune::LuneRunner;
 use crate::tools::moonwave::MoonwaveRunner;
 use crate::tools::rojo::RojoRunner;
 use crate::tools::wally::WallyRunner;
 
-impl<B, L, F, R, W, M> RobloxMcpServer<B, L, F, R, W, M>
+impl<B, L, F, R, W, M, LN> RobloxMcpServer<B, L, F, R, W, M, LN>
 where
     B: StudioBridge + Clone + 'static,
     L: Linter + Clone + 'static,
@@ -34,6 +38,7 @@ where
     R: RojoRunner + Clone + 'static,
     W: WallyRunner + Clone + 'static,
     M: MoonwaveRunner + Clone + 'static,
+    LN: LuneRunner + Clone + 'static,
 {
     // =========================================================================
     // stylua_format - Format Luau scripts using StyLua
@@ -217,6 +222,71 @@ where
         let result = self
             .moonwave
             .build(&validated_project, output_dir)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    // =========================================================================
+    // lune_run - Run a Luau script using Lune runtime
+    // =========================================================================
+
+    pub(crate) async fn lune_run_impl(
+        &self,
+        params: LuneRunParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        let script_path = Path::new(&params.script_path);
+
+        // Validate path is within project root
+        let validated_path = validate_path(script_path, &self.project_root)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Validate .luau extension
+        if validated_path.extension() != Some(std::ffi::OsStr::new("luau")) {
+            return Err(ErrorData::invalid_params(
+                "Only .luau files can be executed",
+                None,
+            ));
+        }
+
+        // Parse args (default to empty)
+        let args = params.args.unwrap_or_default();
+
+        // Parse timeout (default 30 seconds)
+        let timeout = params.timeout.map(Duration::from_secs);
+
+        // Run the script via Lune
+        let result = self
+            .lune
+            .run(&validated_path, &args, timeout)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    // =========================================================================
+    // lune_eval - Evaluate inline Luau code using Lune runtime
+    // =========================================================================
+
+    pub(crate) async fn lune_eval_impl(
+        &self,
+        params: LuneEvalParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Parse timeout (default 10 seconds for eval)
+        let timeout = params.timeout.map(Duration::from_secs);
+
+        // Evaluate the code via Lune
+        let result = self
+            .lune
+            .eval(&params.code, timeout)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 

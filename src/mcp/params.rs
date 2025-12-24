@@ -375,6 +375,28 @@ pub struct FsWatchChangesParams {
     pub limit: Option<usize>,
 }
 
+// === LUNE PARAMS ===
+// Parameter structs for Lune runtime execution MCP tools
+// Lune is a standalone Luau runtime for testing scripts outside Roblox Studio
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LuneRunParams {
+    #[schemars(description = "Path to .luau script file to run")]
+    pub script_path: String,
+    #[schemars(description = "Command-line arguments to pass to the script")]
+    pub args: Option<Vec<String>>,
+    #[schemars(description = "Timeout in seconds (default: 30)")]
+    pub timeout: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LuneEvalParams {
+    #[schemars(description = "Luau code to evaluate")]
+    pub code: String,
+    #[schemars(description = "Timeout in seconds (default: 10)")]
+    pub timeout: Option<u64>,
+}
+
 // === AI PARAMS ===
 // These parameter structs define the JSON schema for AI-powered code search tools
 // Requires the 'ai' feature flag and configured Neo4j + Voyage AI credentials
@@ -904,5 +926,64 @@ mod tests {
         let params: AiIndexProjectParams = serde_json::from_str(json).unwrap();
         assert!(params.path.is_none());
         assert!(params.force.is_none());
+    }
+
+    // === LUNE PARAMS TESTS ===
+
+    #[test]
+    fn test_lune_run_params_full() {
+        let json = r#"{"script_path": "tests/unit/math.luau", "args": ["--verbose", "100"], "timeout": 60}"#;
+        let params: LuneRunParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.script_path, "tests/unit/math.luau");
+        assert_eq!(params.args, Some(vec!["--verbose".to_string(), "100".to_string()]));
+        assert_eq!(params.timeout, Some(60));
+    }
+
+    #[test]
+    fn test_lune_run_params_minimal() {
+        let json = r#"{"script_path": "main.luau"}"#;
+        let params: LuneRunParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.script_path, "main.luau");
+        assert!(params.args.is_none());
+        assert!(params.timeout.is_none());
+    }
+
+    #[test]
+    fn test_lune_eval_params_full() {
+        let json = r#"{"code": "print(2 + 2)", "timeout": 5}"#;
+        let params: LuneEvalParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.code, "print(2 + 2)");
+        assert_eq!(params.timeout, Some(5));
+    }
+
+    #[test]
+    fn test_lune_eval_params_minimal() {
+        let json = r#"{"code": "return 42"}"#;
+        let params: LuneEvalParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.code, "return 42");
+        assert!(params.timeout.is_none());
+    }
+
+    #[test]
+    fn test_lune_run_params_debug() {
+        let params = LuneRunParams {
+            script_path: "test.luau".to_string(),
+            args: Some(vec!["arg1".to_string()]),
+            timeout: Some(30),
+        };
+        let debug = format!("{:?}", params);
+        assert!(debug.contains("LuneRunParams"));
+        assert!(debug.contains("test.luau"));
+    }
+
+    #[test]
+    fn test_lune_eval_params_debug() {
+        let params = LuneEvalParams {
+            code: "print('hello')".to_string(),
+            timeout: None,
+        };
+        let debug = format!("{:?}", params);
+        assert!(debug.contains("LuneEvalParams"));
+        assert!(debug.contains("hello"));
     }
 }
