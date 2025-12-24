@@ -553,7 +553,7 @@ local function executeCommand(action, params)
 
         local results = {}
         for _, desc in ipairs(root:GetDescendants()) do
-            if desc.ClassName == params.className then
+            if desc:IsA(params.className) then
                 table.insert(results, {
                     Name = desc.Name,
                     ClassName = desc.ClassName,
