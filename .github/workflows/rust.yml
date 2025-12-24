@@ -45,7 +45,9 @@ jobs:
       env:
         ROBLOX_OPEN_CLOUD_API_KEY: ${{ secrets.ROBLOX_OPEN_CLOUD_API_KEY }}
     - name: Run tests
-      run: cargo test --verbose
+      run: |
+        echo "ROBLOX_OPEN_CLOUD_API_KEY length: ${#ROBLOX_OPEN_CLOUD_API_KEY}"
+        cargo test --verbose -- --nocapture 2>&1 | head -500
       env:
         ROBLOX_OPEN_CLOUD_API_KEY: ${{ secrets.ROBLOX_OPEN_CLOUD_API_KEY }}
         VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
