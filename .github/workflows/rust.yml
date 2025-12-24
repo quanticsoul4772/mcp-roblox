@@ -31,6 +31,19 @@ jobs:
         echo "All secrets are set"
     - name: Build
       run: cargo build --verbose
+    - name: Debug env in Rust
+      run: |
+        cat > /tmp/test_env.rs << 'RUSTCODE'
+        fn main() {
+            match std::env::var("ROBLOX_OPEN_CLOUD_API_KEY") {
+                Ok(v) => println!("ROBLOX_OPEN_CLOUD_API_KEY is set ({} chars)", v.len()),
+                Err(e) => println!("ROBLOX_OPEN_CLOUD_API_KEY error: {:?}", e),
+            }
+        }
+        RUSTCODE
+        rustc /tmp/test_env.rs -o /tmp/test_env && /tmp/test_env
+      env:
+        ROBLOX_OPEN_CLOUD_API_KEY: ${{ secrets.ROBLOX_OPEN_CLOUD_API_KEY }}
     - name: Run tests
       run: cargo test --verbose
       env:
