@@ -1211,22 +1211,6 @@ mod tests {
     use tempfile::TempDir;
     use tokio::time::Duration;
 
-    #[test]
-    fn test_debug_env_var() {
-        eprintln!("=== DEBUG: Checking ROBLOX_OPEN_CLOUD_API_KEY in test process ===");
-        match std::env::var("ROBLOX_OPEN_CLOUD_API_KEY") {
-            Ok(v) => eprintln!("ROBLOX_OPEN_CLOUD_API_KEY is set ({} chars)", v.len()),
-            Err(e) => eprintln!("ROBLOX_OPEN_CLOUD_API_KEY error: {:?}", e),
-        }
-        eprintln!("All env vars:");
-        for (key, _value) in std::env::vars() {
-            if key.contains("ROBLOX") || key.contains("VOYAGE") || key.contains("NEO4J") {
-                eprintln!("  {} is set", key);
-            }
-        }
-        eprintln!("=== END DEBUG ===");
-    }
-
     fn create_test_server(project_root: PathBuf) -> RobloxMcpServer {
         let bridge = Arc::new(PluginBridge::new());
         RobloxMcpServer::new(bridge, project_root)

@@ -126,6 +126,7 @@ impl std::fmt::Debug for Neo4jConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::env;
 
     #[test]
@@ -154,7 +155,13 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_voyage_config_defaults() {
+        // Save original values
+        let orig_model = env::var("VOYAGE_MODEL").ok();
+        let orig_dims = env::var("VOYAGE_DIMENSIONS").ok();
+        let orig_key = env::var("VOYAGE_API_KEY").ok();
+
         // Clear any existing env vars
         env::remove_var("VOYAGE_MODEL");
         env::remove_var("VOYAGE_DIMENSIONS");
@@ -164,11 +171,30 @@ mod tests {
         assert_eq!(config.model, "voyage-code-3");
         assert_eq!(config.dimensions, 1024);
 
-        env::remove_var("VOYAGE_API_KEY");
+        // Restore original values
+        match orig_model {
+            Some(v) => env::set_var("VOYAGE_MODEL", v),
+            None => env::remove_var("VOYAGE_MODEL"),
+        }
+        match orig_dims {
+            Some(v) => env::set_var("VOYAGE_DIMENSIONS", v),
+            None => env::remove_var("VOYAGE_DIMENSIONS"),
+        }
+        match orig_key {
+            Some(v) => env::set_var("VOYAGE_API_KEY", v),
+            None => env::remove_var("VOYAGE_API_KEY"),
+        }
     }
 
     #[test]
+    #[serial]
     fn test_neo4j_config_defaults() {
+        // Save original values
+        let orig_username = env::var("NEO4J_USERNAME").ok();
+        let orig_database = env::var("NEO4J_DATABASE").ok();
+        let orig_uri = env::var("NEO4J_URI").ok();
+        let orig_password = env::var("NEO4J_PASSWORD").ok();
+
         env::remove_var("NEO4J_USERNAME");
         env::remove_var("NEO4J_DATABASE");
         env::set_var("NEO4J_URI", "neo4j+s://test.neo4j.io");
@@ -178,7 +204,22 @@ mod tests {
         assert_eq!(config.username, "neo4j");
         assert_eq!(config.database, "neo4j");
 
-        env::remove_var("NEO4J_URI");
-        env::remove_var("NEO4J_PASSWORD");
+        // Restore original values
+        match orig_username {
+            Some(v) => env::set_var("NEO4J_USERNAME", v),
+            None => env::remove_var("NEO4J_USERNAME"),
+        }
+        match orig_database {
+            Some(v) => env::set_var("NEO4J_DATABASE", v),
+            None => env::remove_var("NEO4J_DATABASE"),
+        }
+        match orig_uri {
+            Some(v) => env::set_var("NEO4J_URI", v),
+            None => env::remove_var("NEO4J_URI"),
+        }
+        match orig_password {
+            Some(v) => env::set_var("NEO4J_PASSWORD", v),
+            None => env::remove_var("NEO4J_PASSWORD"),
+        }
     }
 }

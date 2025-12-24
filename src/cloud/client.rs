@@ -297,6 +297,7 @@ impl<H: HttpClient> CloudClient for OpenCloudClient<H> {
 mod tests {
     use super::*;
     use crate::http::mock::{MockHttpClient, MockResponse};
+    use serial_test::serial;
 
     #[test]
     fn test_publish_result_deserialize() {
@@ -306,7 +307,11 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_new_without_api_key() {
+        // Save the original value to restore after test
+        let original = std::env::var("ROBLOX_OPEN_CLOUD_API_KEY").ok();
+
         // Ensure env var is not set for this test
         std::env::remove_var("ROBLOX_OPEN_CLOUD_API_KEY");
 
@@ -318,6 +323,11 @@ mod tests {
                 assert!(msg.contains("ROBLOX_OPEN_CLOUD_API_KEY"));
             }
             e => panic!("Expected ConfigError, got {e:?}"),
+        }
+
+        // Restore the original value
+        if let Some(val) = original {
+            std::env::set_var("ROBLOX_OPEN_CLOUD_API_KEY", val);
         }
     }
 
@@ -573,14 +583,22 @@ mod tests {
     // ========================================
 
     #[test]
+    #[serial]
     fn test_new_with_api_key_set() {
+        // Save the original value to restore after test
+        let original = std::env::var("ROBLOX_OPEN_CLOUD_API_KEY").ok();
+
         // Set the env var for this test
         std::env::set_var("ROBLOX_OPEN_CLOUD_API_KEY", "test-key-for-coverage");
 
         let result = OpenCloudClient::new();
 
-        // Clean up env var
-        std::env::remove_var("ROBLOX_OPEN_CLOUD_API_KEY");
+        // Restore the original value
+        if let Some(val) = original {
+            std::env::set_var("ROBLOX_OPEN_CLOUD_API_KEY", val);
+        } else {
+            std::env::remove_var("ROBLOX_OPEN_CLOUD_API_KEY");
+        }
 
         // The result should be Ok since we set the env var
         // Note: This may still fail if ReqwestHttpClient::new() fails,
