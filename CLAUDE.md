@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Rust MCP server for Roblox Studio integration. Provides **47 MCP tools** for filesystem operations, live Studio manipulation, Open Cloud API access, AI-powered code search, and toolchain integration.
+Rust MCP server for Roblox Studio integration. Provides **48 MCP tools** for filesystem operations, live Studio manipulation, Open Cloud API access, AI-powered code search, and toolchain integration.
 
 ## Build and Test Commands
 
@@ -70,16 +70,24 @@ MCP Client <--STDIO--> Rust Server <--HTTP:8080--> Studio Plugin <--> Roblox Stu
   - `auto_indexer.rs` - Real-time file watching and indexing
   - `parser.rs` - Luau syntax parsing for relationships
   - `mock.rs` - Mock implementations for testing
+- `src/trellis/` - TRELLIS text-to-3D mesh generation via RunPod serverless:
+  - `config.rs` - TrellisConfig from environment variables (RUNPOD_API_KEY, TRELLIS_ENDPOINT_ID)
+  - `client.rs` - RunPod API client (submit job → poll status → receive GLB)
+  - `glb_parser.rs` - GLB binary format parser for mesh geometry
+- `src/meshy/` - Meshy.ai text-to-3D mesh generation (fallback):
+  - `config.rs` - MeshyConfig from environment variables
+  - `client.rs` - Meshy.ai API client (preview → refine pipeline)
+  - `parser.rs` - OBJ file parser for mesh geometry
 - `src/watcher/mod.rs` - File change detection
 - `src/metrics/mod.rs` - Tool execution metrics
 - `plugin/MCPServer.server.luau` - Roblox Studio plugin
 
-## Tool Categories (47 total)
+## Tool Categories (48 total)
 
 | Category | Count | Tools |
 |----------|-------|-------|
 | Filesystem | 8 | fs_get_tree, fs_read_script, fs_write_script, fs_delete_script, fs_search_content, fs_get_changes, fs_lint_script, fs_watch_changes |
-| Studio | 14 | studio_health_check, studio_get_selection, studio_get_datamodel, studio_get_datamodel_paginated, studio_get_script_source, studio_get_properties, studio_get_bounds, studio_modify_script, studio_create_instance, studio_insert_r15_rig, studio_set_property, studio_delete_instance, studio_find_instances, studio_get_output |
+| Studio | 15 | studio_health_check, studio_get_selection, studio_get_datamodel, studio_get_datamodel_paginated, studio_get_script_source, studio_get_properties, studio_get_bounds, studio_modify_script, studio_create_instance, studio_insert_r15_rig, studio_set_property, studio_delete_instance, studio_find_instances, studio_get_output, studio_generate_mesh |
 | Cloud | 11 | cloud_publish_place, cloud_upload_asset, cloud_datastore_get, cloud_datastore_set, cloud_ordered_datastore_list, cloud_ordered_datastore_set, cloud_ordered_datastore_increment, cloud_ordered_datastore_delete, cloud_get_universe, cloud_restart_servers, cloud_messaging_publish |
 | AI | 4 | ai_index_project, ai_search_codebase, ai_find_related, ai_get_context |
 | Toolchain | 9 | stylua_format, rojo_build, rojo_sourcemap, wally_install, wally_update, moonwave_build, lune_run, lune_eval, luau_lsp_analyze |
@@ -115,6 +123,20 @@ async fn tool_name(
 - `NEO4J_USERNAME` - Neo4j username (default: neo4j)
 - `NEO4J_PASSWORD` - Neo4j password (required for AI tools)
 - `NEO4J_DATABASE` - Neo4j database name (default: neo4j)
+
+### Mesh Generation (for studio_generate_mesh)
+
+Two providers are supported. TRELLIS is tried first, then Meshy.ai as fallback:
+
+**TRELLIS via RunPod (recommended)**
+- `RUNPOD_API_KEY` - RunPod API key (get at https://runpod.io/console/user/settings)
+- `TRELLIS_ENDPOINT_ID` - RunPod serverless endpoint ID for your TRELLIS worker
+- `RUNPOD_BASE_URL` - Optional, defaults to `https://api.runpod.ai/v2`
+- `TRELLIS_MAX_POLL_ATTEMPTS` - Max poll attempts (default: 120 = 10 min at 5s intervals)
+- `TRELLIS_POLL_INTERVAL_MS` - Poll interval in ms (default: 5000)
+
+**Meshy.ai (fallback)**
+- `MESHY_API_KEY` - Meshy.ai API key (get free key at https://www.meshy.ai/api)
 
 ## Security Features
 
@@ -179,6 +201,61 @@ Use `record_undo: false` when modifying scripts to avoid "script document not av
 ```rust
 studio_modify_script(path, source, record_undo: false)
 ```
+
+### Text-to-3D Mesh Generation
+
+Generate 3D meshes from text prompts using TRELLIS (via RunPod) or Meshy.ai API + EditableMesh APIs:
+```rust
+studio_generate_mesh(
+    prompt: "medieval torch bracket with ornate scrollwork",
+    parent: "game.Workspace.Dungeon",  // Optional, default: game.Workspace
+    name: "TorchBracket"  // Optional, default: GeneratedMesh
+)
+```
+
+**How it works**:
+1. Rust server calls TRELLIS via RunPod serverless (or falls back to Meshy.ai)
+2. TRELLIS: Submits job → polls for completion → receives base64-encoded GLB
+3. Parses GLB binary format to extract vertices/faces/normals/UVs
+4. Plugin creates EditableMesh, populates geometry, calls `CreateMeshPartAsync`
+5. Result is a permanent MeshPart in your scene
+
+**Provider Priority**:
+1. **TRELLIS via RunPod** (if `RUNPOD_API_KEY` and `TRELLIS_ENDPOINT_ID` set) - Uses Microsoft's open-source TRELLIS model, outputs high-quality GLB meshes
+2. **Meshy.ai** (fallback if `MESHY_API_KEY` set) - Commercial API, may have free tier limitations
+
+**Requirements**:
+- Set `RUNPOD_API_KEY` + `TRELLIS_ENDPOINT_ID` for TRELLIS, or `MESHY_API_KEY` for Meshy.ai
+- Studio plugin must be connected
+
+**Timing**: TRELLIS generation takes ~1-3 minutes depending on GPU availability and cold start state.
+
+**RunPod TRELLIS Worker Deployment**:
+
+Repository: https://github.com/quanticsoul4772/trellis-runpod-worker
+
+Key requirements discovered through extensive testing:
+- Base image: `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` (only available option for PyTorch 2.4.0)
+- TRELLIS requires PyTorch 2.4.0 - earlier versions don't work
+- Critical: Install `easydict` LAST with `--force-reinstall --no-deps` (gets shadowed by other packages)
+- Skip `flash-attn` (30+ min compile exceeds RunPod build timeout) - TRELLIS uses native attention fallback
+- Model download happens at runtime (first request ~60s delay for cold start + model download)
+
+**Dockerfile Critical Installation Order**:
+1. Clone TRELLIS first (establishes PYTHONPATH priority)
+2. Install CUDA packages (spconv-cu124, kaolin, nvdiffrast)
+3. Install TRELLIS deps with `--ignore-installed` (blinker distutils conflict)
+4. Install open3d and transformers separately (large packages)
+5. Install easydict ABSOLUTELY LAST with `--force-reinstall --no-deps`
+
+**Common RunPod Issues**:
+- `No module named 'easydict'`: Package shadowing - easydict must be installed LAST
+- `torchvision has no attribute 'extension'`: xformers version conflict - skip xformers, use native attention
+- `blinker cannot be uninstalled`: Use `--ignore-installed` flag
+- Build timeout: Skip flash-attn compilation, set `MAX_JOBS=4` and `NINJA_MAX_JOBS=4`
+- Base image not found: Only CUDA 12.4.1 available for PyTorch 2.4.0, not CUDA 12.1
+
+See `claudedocs/TRELLIS_RUNPOD_DESIGN.md` for comprehensive deployment guide.
 
 ## Testing
 

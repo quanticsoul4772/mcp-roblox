@@ -65,12 +65,12 @@ Based on extensive debugging and research, here are the critical requirements fo
 
 | Component | Required Version | Notes |
 |-----------|-----------------|-------|
-| PyTorch | 2.4.0 | TRELLIS requirement |
-| CUDA | 12.1 | xformers compatibility |
-| xformers | 0.0.27.post2 | For PyTorch 2.4.0 + CUDA 12.1 |
+| PyTorch | 2.4.0 (2.4.1 in image) | TRELLIS requirement |
+| CUDA | 12.4.1 | Only available RunPod image for PyTorch 2.4 |
+| xformers | Skip | Causes torchvision conflicts - use native attention |
 | Python | 3.11 | RunPod base image |
 
-**Critical**: CUDA 12.4 does NOT work with PyTorch 2.4.0 + xformers. Use CUDA 12.1.
+**Critical**: Only `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` exists. CUDA 12.1 image not available.
 
 ### 2. Package Installation Order
 
@@ -85,7 +85,7 @@ Based on extensive debugging and research, here are the critical requirements fo
 | Issue | Root Cause | Solution |
 |-------|-----------|----------|
 | `No module named 'easydict'` | open3d/transformers overwrite it | Install easydict LAST with --force-reinstall |
-| `torchvision has no attribute 'extension'` | xformers installs wrong torchvision | Use CUDA 12.1 + xformers 0.0.27.post2 |
+| `torchvision has no attribute 'extension'` | xformers version conflict | Skip xformers entirely - use native attention |
 | `blinker 1.4 cannot be uninstalled` | distutils package in base image | Use --ignore-installed |
 | flash-attn compile timeout | 30+ min compile exceeds RunPod limit | Skip it, use xformers fallback |
 | utils3d commit not found | Pinned commit was deleted | Use latest (no commit hash) |
@@ -99,15 +99,15 @@ Based on extensive debugging and research, here are the critical requirements fo
 # TRELLIS Text-to-3D RunPod Serverless Dockerfile
 # =============================================================================
 # Key insights from comprehensive analysis:
-# 1. Use CUDA 12.1 (not 12.4) for xformers compatibility with PyTorch 2.4.0
+# 1. Use CUDA 12.4 (only available option for PyTorch 2.4.0 on RunPod)
 # 2. Clone TRELLIS first, then install deps (PYTHONPATH order matters)
 # 3. Install easydict LAST to prevent shadowing by other packages
 # 4. Use --ignore-installed for distutils conflicts in base image
-# 5. Skip flash-attn (30min compile exceeds RunPod build timeout)
+# 5. Skip flash-attn AND xformers - use native attention
 # =============================================================================
 
-# PyTorch 2.4.0 with CUDA 12.1 - compatible with xformers 0.0.27.post2
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.1.0-devel-ubuntu22.04
+# PyTorch 2.4.0 with CUDA 12.4 - only available version on RunPod
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 # Limit ninja parallelism to avoid OOM during CUDA kernel compilation
 ENV MAX_JOBS=4
@@ -133,18 +133,16 @@ WORKDIR /app
 RUN git clone --depth 1 https://github.com/microsoft/TRELLIS.git /app/trellis
 ENV PYTHONPATH="/app/trellis:${PYTHONPATH}"
 
-# PHASE 2: Install xformers with correct version for PyTorch 2.4.0 + CUDA 12.1
-RUN pip install --no-cache-dir xformers==0.0.27.post2 \
-    || pip install --no-cache-dir xformers \
-    || echo "WARNING: xformers install failed"
-
-# Verify torch versions
+# PHASE 2: Verify base torch/torchvision are intact BEFORE any installs
 RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')" && \
     python -c "import torchvision; print(f'torchvision: {torchvision.__version__}')"
 
-# PHASE 3: CUDA-specific packages
-RUN pip install --no-cache-dir spconv-cu120 || echo "WARNING: spconv failed"
-RUN pip install --no-cache-dir kaolin -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.4.0_cu121.html \
+# PHASE 3: CUDA-specific packages (skip xformers - causes conflicts)
+RUN pip install --no-cache-dir spconv-cu124 \
+    || pip install --no-cache-dir spconv-cu120 \
+    || echo "WARNING: spconv failed"
+RUN pip install --no-cache-dir kaolin -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.4.0_cu124.html \
+    || pip install --no-cache-dir kaolin -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.4.0_cu121.html \
     || echo "WARNING: kaolin failed"
 RUN pip install --no-cache-dir git+https://github.com/NVlabs/nvdiffrast.git \
     || echo "WARNING: nvdiffrast failed"
