@@ -413,9 +413,7 @@ TRELLIS_ENDPOINT_ID=your-endpoint-id
 # RUNPOD_BASE_URL=https://api.runpod.ai/v2
 # TRELLIS_MAX_POLL_ATTEMPTS=120
 # TRELLIS_POLL_INTERVAL_MS=5000
-
-# Meshy.ai (fallback if RunPod not configured)
-# MESHY_API_KEY=your-meshy-api-key
+HF_TOKEN=your-huggingface-token
 ```
 
 ---
@@ -519,7 +517,5 @@ The Rust MCP server integrates TRELLIS via:
 - `src/trellis/client.rs` - RunPod API client (submit → poll → receive)
 - `src/trellis/glb_parser.rs` - GLB binary format parser
 
-Provider priority in `studio_generate_mesh`:
-1. TRELLIS (if RUNPOD_API_KEY + TRELLIS_ENDPOINT_ID set)
-2. Meshy.ai (fallback if MESHY_API_KEY set)
-3. Error if neither configured
+Required for `studio_generate_mesh`:
+- RUNPOD_API_KEY + TRELLIS_ENDPOINT_ID + HF_TOKEN

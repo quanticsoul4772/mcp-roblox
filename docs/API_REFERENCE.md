@@ -490,6 +490,7 @@ The server exposes 47 MCP tools across six categories:
 | `studio_delete_instance` | Delete instance |
 | `studio_find_instances` | Find by class name |
 | `studio_get_output` | Get Output logs |
+| `studio_generate_mesh` | Generate 3D mesh from text using TRELLIS |
 
 #### Property Type Mappings
 
@@ -561,6 +562,37 @@ studio_get_bounds(path)
 ```
 
 Useful for calculating furniture placement, collision detection, and verifying build dimensions.
+
+#### studio_generate_mesh
+
+Generate 3D meshes from text prompts using AI.
+
+```
+studio_generate_mesh(prompt, parent?, name?, record_undo?)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `prompt` | string | Text description of the 3D object (e.g., "wooden treasure chest") |
+| `parent` | string | Optional parent path (default: "game.Workspace") |
+| `name` | string | Optional name for the MeshPart (default: "GeneratedMesh") |
+| `record_undo` | boolean | Create undo waypoint (default: true) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "path": "game.Workspace.TreasureChest",
+  "vertexCount": 1024,
+  "faceCount": 2048,
+  "provider": "trellis"
+}
+```
+
+**Environment Variables:**
+- `RUNPOD_API_KEY` + `TRELLIS_ENDPOINT_ID` + `HF_TOKEN`
+
+**Timing:** 1-3 minutes depending on GPU availability and cold start state.
 
 #### Script Modification Note
 

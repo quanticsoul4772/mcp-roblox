@@ -640,7 +640,60 @@ furniture_bounds = studio_get_bounds("Workspace.MyBuilding.ReceptionDesk")
 # Check for overlap and reposition if needed
 ```
 
-### 10. Game State Management
+### 10. AI Mesh Generation
+
+Generate 3D meshes from text descriptions using TRELLIS via RunPod:
+
+```python
+# Generate a simple object
+studio_generate_mesh(
+    prompt="wooden treasure chest with metal bands",
+    parent="Workspace",
+    name="TreasureChest"
+)
+
+# Generate props for a scene
+studio_generate_mesh(prompt="medieval torch bracket", parent="Workspace.Dungeon", name="TorchBracket")
+studio_generate_mesh(prompt="stone gargoyle statue", parent="Workspace.Dungeon", name="Gargoyle")
+studio_generate_mesh(prompt="iron door with ornate hinges", parent="Workspace.Dungeon", name="IronDoor")
+```
+
+**Prompt Tips for Best Results:**
+- Be specific: "wooden barrel with iron bands" > "barrel"
+- Include materials: "stone", "wooden", "metal", "crystal"
+- Describe style: "medieval", "sci-fi", "cartoon", "realistic"
+- Add details: "with ornate scrollwork", "weathered", "glowing"
+
+**Example Prompts:**
+| Prompt | Result Quality |
+|--------|---------------|
+| "chair" | Generic, may be low quality |
+| "medieval wooden chair with carved backrest" | Much better detail |
+| "sci-fi control panel with glowing buttons" | Good for game props |
+| "low-poly tree for mobile game" | Optimized geometry |
+
+**Timing Expectations:**
+- Cold start (first request): ~2-3 minutes (model loading)
+- Warm requests: ~1-2 minutes
+- TRELLIS generates high-quality meshes
+
+**After Generation:**
+```python
+# Verify the mesh was created
+props = studio_get_properties("Workspace.TreasureChest", ["Position", "Size"])
+
+# Get bounds for positioning
+bounds = studio_get_bounds("Workspace.TreasureChest")
+
+# Adjust position if needed
+studio_set_property("Workspace.TreasureChest", "Position", [10, 2, -5])
+
+# Add physics or interactivity
+studio_set_property("Workspace.TreasureChest", "Anchored", True)
+studio_create_instance("ClickDetector", "Workspace.TreasureChest", "OpenDetector")
+```
+
+### 11. Game State Management
 
 ```lua
 -- Track per-player state

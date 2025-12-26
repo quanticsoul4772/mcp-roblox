@@ -650,6 +650,237 @@ local function executeCommand(action, params)
 
         return result
 
+    elseif action == "generateMesh" then
+        -- Generate a 3D mesh from text using Roblox's Cube 3D AI (GenerationService)
+        -- Rate limited to 5 generations per minute
+        local GenerationService = game:GetService("GenerationService")
+
+        if not params.prompt or params.prompt == "" then
+            error("Prompt is required for mesh generation")
+        end
+
+        -- Build generation options
+        local options = {}
+        if params.suggestedSize then
+            options["SuggestedSize"] = Vector3.new(
+                params.suggestedSize[1] or 1,
+                params.suggestedSize[2] or 1,
+                params.suggestedSize[3] or 1
+            )
+        end
+
+        -- Step 1: Generate mesh (returns generationId)
+        -- API signature: GenerateMeshAsync(prompts, player, options)
+        -- Requires Team Test mode where real Player objects exist in the server window
+        local Players = game:GetService("Players")
+        local RunService = game:GetService("RunService")
+
+        -- Wait briefly for players to join (Team Test can take a moment)
+        local player = nil
+        local waitTime = 0
+        local maxWait = 5 -- seconds
+
+        repeat
+            local children = Players:GetChildren()
+            for _, child in ipairs(children) do
+                if child:IsA("Player") then
+                    player = child
+                    break
+                end
+            end
+            if not player then
+                task.wait(0.5)
+                waitTime = waitTime + 0.5
+            end
+        until player or waitTime >= maxWait
+
+        -- Debug info
+        local isRunning = RunService:IsRunning()
+        local isServer = RunService:IsServer()
+        local isClient = RunService:IsClient()
+        local playerCount = #Players:GetChildren()
+
+        if not player then
+            error(string.format(
+                "No Player found. IsRunning=%s, IsServer=%s, IsClient=%s, PlayerCount=%d. " ..
+                "Use Team Test: Test tab > Start > set Players to 2 > Start",
+                tostring(isRunning), tostring(isServer), tostring(isClient), playerCount
+            ))
+        end
+
+        print(string.format("[MCP Plugin] Found player: %s (IsServer=%s, PlayerCount=%d)",
+            player.Name, tostring(isServer), playerCount))
+
+        local generateSuccess, generationId, contextId = pcall(function()
+            return GenerationService:GenerateMeshAsync(
+                { ["Prompt"] = params.prompt },
+                player,
+                options
+            )
+        end)
+
+        if not generateSuccess then
+            error("GenerateMeshAsync failed: " .. tostring(generationId))
+        end
+
+        print("[MCP Plugin] Generation started, ID: " .. tostring(generationId))
+
+        -- Step 2: Load the generated mesh
+        local loadSuccess, mesh = pcall(function()
+            return GenerationService:LoadGeneratedMeshAsync(generationId)
+        end)
+
+        if not loadSuccess then
+            error("LoadGeneratedMeshAsync failed: " .. tostring(mesh))
+        end
+
+        -- Step 3: Configure and place the mesh
+        local meshName = params.name or "GeneratedMesh"
+        mesh.Name = meshName
+
+        local parentPath = params.parent or "game.Workspace"
+        local parent = resolveInstancePath(parentPath) or game:FindFirstChild(parentPath, true)
+        if not parent then
+            error("Parent not found: " .. parentPath)
+        end
+        mesh.Parent = parent
+
+        if params.recordUndo ~= false then
+            ChangeHistoryService:SetWaypoint("MCP Generate Mesh")
+        end
+
+        return {
+            success = true,
+            path = mesh:GetFullName(),
+            generationId = generationId,
+            contextId = contextId,
+            className = mesh.ClassName
+        }
+
+    elseif action == "createMeshFromData" then
+        -- Create a MeshPart from vertex/face data using EditableMesh APIs
+        -- This is used for AI-generated meshes from TRELLIS
+        local AssetService = game:GetService("AssetService")
+
+        if not params.vertices or #params.vertices == 0 then
+            error("Vertices array is required and cannot be empty")
+        end
+        if not params.faces or #params.faces == 0 then
+            error("Faces array is required and cannot be empty")
+        end
+
+        print(string.format("[MCP Plugin] Creating mesh from data: %d vertices, %d faces",
+            #params.vertices, #params.faces))
+
+        -- Create an empty EditableMesh
+        local editableMesh = AssetService:CreateEditableMesh()
+        if not editableMesh then
+            error("Failed to create EditableMesh - check device memory budget")
+        end
+
+        -- Add vertices
+        local vertexIds = {}
+        for i, v in ipairs(params.vertices) do
+            -- v is {x, y, z} from the OBJ parser
+            local vertId = editableMesh:AddVertex(Vector3.new(v.x, v.y, v.z))
+            vertexIds[i] = vertId
+        end
+
+        -- Add normals if provided
+        local normalIds = {}
+        if params.normals and #params.normals > 0 then
+            for i, n in ipairs(params.normals) do
+                local normId = editableMesh:AddNormal(Vector3.new(n.x, n.y, n.z))
+                normalIds[i] = normId
+            end
+        end
+
+        -- Add faces (triangles)
+        for _, face in ipairs(params.faces) do
+            -- face.vertices is [v0, v1, v2] (0-based indices from parser)
+            local v1 = vertexIds[face.vertices[1] + 1]
+            local v2 = vertexIds[face.vertices[2] + 1]
+            local v3 = vertexIds[face.vertices[3] + 1]
+
+            if v1 and v2 and v3 then
+                local faceId = editableMesh:AddTriangle(v1, v2, v3)
+
+                -- Set normals if available
+                if face.normals and normalIds[face.normals[1] + 1] then
+                    editableMesh:SetFaceNormals(faceId, {
+                        normalIds[face.normals[1] + 1],
+                        normalIds[face.normals[2] + 1],
+                        normalIds[face.normals[3] + 1]
+                    })
+                end
+            end
+        end
+
+        -- Set UVs if provided (texture coordinates)
+        if params.texCoords and #params.texCoords > 0 then
+            for _, face in ipairs(params.faces) do
+                if face.tex_coords then
+                    -- Get the face vertices to find the faceId
+                    local v1 = vertexIds[face.vertices[1] + 1]
+                    local v2 = vertexIds[face.vertices[2] + 1]
+                    local v3 = vertexIds[face.vertices[3] + 1]
+
+                    -- Set UV for each vertex in the face
+                    if face.tex_coords[1] then
+                        local tc1 = params.texCoords[face.tex_coords[1] + 1]
+                        local tc2 = params.texCoords[face.tex_coords[2] + 1]
+                        local tc3 = params.texCoords[face.tex_coords[3] + 1]
+                        if tc1 and tc2 and tc3 then
+                            editableMesh:SetUV(v1, Vector2.new(tc1.u, tc1.v))
+                            editableMesh:SetUV(v2, Vector2.new(tc2.u, tc2.v))
+                            editableMesh:SetUV(v3, Vector2.new(tc3.u, tc3.v))
+                        end
+                    end
+                end
+            end
+        end
+
+        print("[MCP Plugin] EditableMesh populated, creating MeshPart...")
+
+        -- Create MeshPart from EditableMesh
+        local meshContent = Content.fromObject(editableMesh)
+        local meshPart = AssetService:CreateMeshPartAsync(meshContent, {
+            CollisionFidelity = Enum.CollisionFidelity.Default,
+            RenderFidelity = Enum.RenderFidelity.Automatic
+        })
+
+        if not meshPart then
+            error("Failed to create MeshPart from EditableMesh")
+        end
+
+        -- Configure the MeshPart
+        local meshName = params.name or "GeneratedMesh"
+        meshPart.Name = meshName
+
+        local parentPath = params.parent or "game.Workspace"
+        local parent = resolveInstancePath(parentPath) or game:FindFirstChild(parentPath, true)
+        if not parent then
+            error("Parent not found: " .. parentPath)
+        end
+        meshPart.Parent = parent
+
+        -- Clean up EditableMesh (it's no longer needed after CreateMeshPartAsync)
+        editableMesh:Destroy()
+
+        if params.recordUndo ~= false then
+            ChangeHistoryService:SetWaypoint("MCP Create Mesh From Data")
+        end
+
+        print(string.format("[MCP Plugin] MeshPart created: %s", meshPart:GetFullName()))
+
+        return {
+            success = true,
+            path = meshPart:GetFullName(),
+            vertexCount = #params.vertices,
+            faceCount = #params.faces,
+            className = meshPart.ClassName
+        }
+
     elseif action == "insertR15Rig" then
         -- Create a complete R15 humanoid rig using Players service for proper mesh parts
         local Players = game:GetService("Players")
