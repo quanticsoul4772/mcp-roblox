@@ -11,4 +11,3 @@ mod glb_parser;
 
 pub use client::TrellisClient;
 pub use config::TrellisConfig;
-pub use glb_parser::{Face, Normal, TexCoord, Vertex};
