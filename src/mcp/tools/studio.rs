@@ -1,6 +1,6 @@
 //! Studio tool implementations.
 //!
-//! Provides 14 tools for Roblox Studio integration via the HTTP plugin bridge:
+//! Provides 15 tools for Roblox Studio integration via the HTTP plugin bridge:
 //! - `studio_health_check` - Check plugin connectivity
 //! - `studio_get_selection` - Get selected instances
 //! - `studio_get_datamodel` - Explore DataModel hierarchy
@@ -15,19 +15,25 @@
 //! - `studio_delete_instance` - Delete instance with undo
 //! - `studio_find_instances` - Find instances by class
 //! - `studio_get_output` - Get output window logs
+//! - `studio_generate_mesh` - Generate 3D mesh from text using TRELLIS
 
 use rmcp::model::{CallToolResult, Content};
 use rmcp::ErrorData;
 use serde_json::json;
+use std::sync::Arc;
+use tracing::info;
 
 use crate::bridge::StudioBridge;
+use crate::http::ReqwestHttpClient;
 use crate::mcp::params::{
     StudioCreateInstanceParams, StudioDeleteInstanceParams, StudioFindInstancesParams,
-    StudioGetBoundsParams, StudioGetDataModelPaginatedParams, StudioGetDataModelParams,
-    StudioGetOutputParams, StudioGetPropertiesParams, StudioGetScriptSourceParams,
-    StudioInsertR15RigParams, StudioModifyScriptParams, StudioSetPropertyParams,
+    StudioGenerateMeshParams, StudioGetBoundsParams, StudioGetDataModelPaginatedParams,
+    StudioGetDataModelParams, StudioGetOutputParams, StudioGetPropertiesParams,
+    StudioGetScriptSourceParams, StudioInsertR15RigParams, StudioModifyScriptParams,
+    StudioSetPropertyParams,
 };
 use crate::mcp::server::RobloxMcpServer;
+use crate::trellis::{TrellisClient, TrellisConfig};
 use crate::tools::formatting::Formatter;
 use crate::tools::linting::Linter;
 use crate::tools::luau_lsp::LuauLspRunner;
@@ -405,6 +411,93 @@ where
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string(&result)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    // =========================================================================
+    // studio_generate_mesh - Generate 3D mesh from text using TRELLIS
+    // =========================================================================
+
+    pub(crate) async fn studio_generate_mesh_impl(
+        &self,
+        params: StudioGenerateMeshParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Validate prompt
+        if params.prompt.is_empty() {
+            return Err(ErrorData::invalid_params(
+                "Prompt cannot be empty".to_string(),
+                None,
+            ));
+        }
+
+        if params.prompt.len() > 500 {
+            return Err(ErrorData::invalid_params(
+                "Prompt exceeds 500 character limit".to_string(),
+                None,
+            ));
+        }
+
+        // Create HTTP client
+        let http_client = Arc::new(
+            ReqwestHttpClient::new()
+                .map_err(|e| ErrorData::internal_error(format!("Failed to create HTTP client: {}", e), None))?
+        );
+
+        // Generate mesh via TRELLIS (RunPod)
+        let trellis_config = TrellisConfig::from_env().ok_or_else(|| {
+            ErrorData::internal_error(
+                "TRELLIS not configured. Set RUNPOD_API_KEY + TRELLIS_ENDPOINT_ID".to_string(),
+                None,
+            )
+        })?;
+
+        info!("Generating mesh via TRELLIS/RunPod for prompt: {}", params.prompt);
+
+        let trellis_client = TrellisClient::new(http_client, trellis_config);
+
+        let glb_mesh = trellis_client
+            .generate_mesh(&params.prompt)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(format!("TRELLIS error: {}", e), None)
+            })?;
+
+        info!(
+            "TRELLIS mesh generated: {} vertices, {} faces",
+            glb_mesh.vertex_count(),
+            glb_mesh.face_count()
+        );
+
+        let (vertices, faces, normals, tex_coords, texture_urls) = (
+            glb_mesh.vertices,
+            glb_mesh.faces,
+            glb_mesh.normals,
+            glb_mesh.tex_coords,
+            None::<serde_json::Value>,
+        );
+
+        // Send mesh data to plugin for creation via EditableMesh
+        let result = self
+            .bridge
+            .execute_command(
+                "createMeshFromData",
+                json!({
+                    "vertices": vertices,
+                    "faces": faces,
+                    "normals": normals,
+                    "texCoords": tex_coords,
+                    "textureUrls": texture_urls,
+                    "parent": params.parent,
+                    "name": params.name,
+                    "recordUndo": params.record_undo.unwrap_or(true)
+                }),
+            )
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
     }

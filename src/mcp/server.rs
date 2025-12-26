@@ -57,6 +57,7 @@ use crate::mcp::params::{
     StudioCreateInstanceParams,
     StudioDeleteInstanceParams,
     StudioFindInstancesParams,
+    StudioGenerateMeshParams,
     StudioGetBoundsParams,
     StudioGetDataModelPaginatedParams,
     StudioGetDataModelParams,
@@ -807,6 +808,18 @@ impl<
     ) -> Result<CallToolResult, ErrorData> {
         let call = self.start_instrumentation("studio_get_output");
         let result = self.studio_get_output_impl(params).await;
+        call.finish_with(result).await
+    }
+
+    #[tool(
+        description = "Generate a 3D mesh from text using Roblox's Cube 3D AI model. The mesh is created directly in Studio. Rate limited to 5 generations per minute."
+    )]
+    async fn studio_generate_mesh(
+        &self,
+        Parameters(params): Parameters<StudioGenerateMeshParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let call = self.start_instrumentation("studio_generate_mesh");
+        let result = self.studio_generate_mesh_impl(params).await;
         call.finish_with(result).await
     }
 

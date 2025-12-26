@@ -164,6 +164,24 @@ pub struct StudioInsertR15RigParams {
     pub record_undo: Option<bool>,
 }
 
+// === MESH GENERATION PARAMS ===
+// Parameter structs for TRELLIS text-to-3D mesh generation
+// Uses TRELLIS via RunPod + EditableMesh APIs to create permanent MeshParts
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StudioGenerateMeshParams {
+    #[schemars(
+        description = "Text description of the 3D object to generate (e.g., 'medieval torch bracket', 'wooden treasure chest')"
+    )]
+    pub prompt: String,
+    #[schemars(description = "Instance path where the mesh will be placed (default: 'game.Workspace')")]
+    pub parent: Option<String>,
+    #[schemars(description = "Name for the generated MeshPart (default: 'GeneratedMesh')")]
+    pub name: Option<String>,
+    #[schemars(description = "Record undo waypoint (default: true)")]
+    pub record_undo: Option<bool>,
+}
+
 // === CLOUD PARAMS ===
 // These parameter structs define the JSON schema for Open Cloud MCP tools
 // All Cloud tools require ROBLOX_OPEN_CLOUD_API_KEY environment variable
@@ -1055,5 +1073,49 @@ mod tests {
         let debug = format!("{:?}", params);
         assert!(debug.contains("LuauLspAnalyzeParams"));
         assert!(debug.contains("src/"));
+    }
+
+    // === MESH GENERATION PARAMS TESTS ===
+
+    #[test]
+    fn test_studio_generate_mesh_params_full() {
+        let json = r#"{"prompt": "medieval torch bracket", "parent": "game.Workspace.Dungeon", "name": "TorchBracket", "record_undo": true}"#;
+        let params: StudioGenerateMeshParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.prompt, "medieval torch bracket");
+        assert_eq!(params.parent, Some("game.Workspace.Dungeon".to_string()));
+        assert_eq!(params.name, Some("TorchBracket".to_string()));
+        assert_eq!(params.record_undo, Some(true));
+    }
+
+    #[test]
+    fn test_studio_generate_mesh_params_minimal() {
+        let json = r#"{"prompt": "wooden chair"}"#;
+        let params: StudioGenerateMeshParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.prompt, "wooden chair");
+        assert!(params.parent.is_none());
+        assert!(params.name.is_none());
+        assert!(params.record_undo.is_none());
+    }
+
+    #[test]
+    fn test_studio_generate_mesh_params_with_parent_only() {
+        let json = r#"{"prompt": "treasure chest", "parent": "game.Workspace.Loot"}"#;
+        let params: StudioGenerateMeshParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.prompt, "treasure chest");
+        assert_eq!(params.parent, Some("game.Workspace.Loot".to_string()));
+        assert!(params.name.is_none());
+    }
+
+    #[test]
+    fn test_studio_generate_mesh_params_debug() {
+        let params = StudioGenerateMeshParams {
+            prompt: "stone pillar".to_string(),
+            parent: None,
+            name: None,
+            record_undo: None,
+        };
+        let debug = format!("{:?}", params);
+        assert!(debug.contains("StudioGenerateMeshParams"));
+        assert!(debug.contains("stone pillar"));
     }
 }

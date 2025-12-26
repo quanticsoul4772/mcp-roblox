@@ -1,3 +1,4 @@
+mod ai;
 mod bridge;
 mod cloud;
 mod config;
@@ -10,8 +11,8 @@ mod regex_safety;
 mod startup;
 mod tasks;
 mod tools;
+mod trellis;
 mod watcher;
-mod ai;
 
 use std::sync::Arc;
 
