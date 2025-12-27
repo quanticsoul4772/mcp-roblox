@@ -2,6 +2,8 @@
 -- Polls the MCP server for commands and executes them
 -- Features automatic reconnection with exponential backoff
 
+print("[MCP Plugin] VERSION 2025-12-27-A - UV fix loaded")
+
 local HttpService = game:GetService("HttpService")
 local Selection = game:GetService("Selection")
 local ScriptEditorService = game:GetService("ScriptEditorService")
@@ -795,47 +797,29 @@ local function executeCommand(action, params)
             end
         end
 
-        -- Add faces (triangles)
+        -- Add default UVs for each vertex (required by CreateMeshPartAsync)
+        local uvIds = {}
+        for i = 1, #params.vertices do
+            local uvId = editableMesh:AddUV(Vector2.new(0, 0))
+            uvIds[i] = uvId
+        end
+
+        -- Add faces with UVs
         for _, face in ipairs(params.faces) do
-            -- face.vertices is [v0, v1, v2] (0-based indices from parser)
             local v1 = vertexIds[face.vertices[1] + 1]
             local v2 = vertexIds[face.vertices[2] + 1]
             local v3 = vertexIds[face.vertices[3] + 1]
 
             if v1 and v2 and v3 then
                 local faceId = editableMesh:AddTriangle(v1, v2, v3)
-
-                -- Set normals if available
-                if face.normals and normalIds[face.normals[1] + 1] then
-                    editableMesh:SetFaceNormals(faceId, {
-                        normalIds[face.normals[1] + 1],
-                        normalIds[face.normals[2] + 1],
-                        normalIds[face.normals[3] + 1]
-                    })
-                end
-            end
-        end
-
-        -- Set UVs if provided (texture coordinates)
-        if params.texCoords and #params.texCoords > 0 then
-            for _, face in ipairs(params.faces) do
-                if face.tex_coords then
-                    -- Get the face vertices to find the faceId
-                    local v1 = vertexIds[face.vertices[1] + 1]
-                    local v2 = vertexIds[face.vertices[2] + 1]
-                    local v3 = vertexIds[face.vertices[3] + 1]
-
-                    -- Set UV for each vertex in the face
-                    if face.tex_coords[1] then
-                        local tc1 = params.texCoords[face.tex_coords[1] + 1]
-                        local tc2 = params.texCoords[face.tex_coords[2] + 1]
-                        local tc3 = params.texCoords[face.tex_coords[3] + 1]
-                        if tc1 and tc2 and tc3 then
-                            editableMesh:SetUV(v1, Vector2.new(tc1.u, tc1.v))
-                            editableMesh:SetUV(v2, Vector2.new(tc2.u, tc2.v))
-                            editableMesh:SetUV(v3, Vector2.new(tc3.u, tc3.v))
-                        end
-                    end
+                -- Assign UVs to face vertices
+                local uv1 = uvIds[face.vertices[1] + 1]
+                local uv2 = uvIds[face.vertices[2] + 1]
+                local uv3 = uvIds[face.vertices[3] + 1]
+                if uv1 and uv2 and uv3 then
+                    pcall(function()
+                        editableMesh:SetFaceUVs(faceId, {uv1, uv2, uv3})
+                    end)
                 end
             end
         end

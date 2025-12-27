@@ -149,7 +149,7 @@ impl<H: HttpClient> TrellisClient<H> {
             input: RunInput {
                 prompt,
                 seed: None,
-                simplify: Some(0.95),
+                simplify: Some(0.995), // Remove 99.5% of triangles - Roblox EditableMesh has ~20K triangle limit
                 texture_size: Some(1024),
             },
         };
